@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#ededed">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg?v=2" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icon.svg?v=2">
+  <title>Chan-M</title>
+  <link rel="stylesheet" href="css/m.css?v=20260715b">
+</head>
+<body>
+  <header class="wx-header">
+    <h1>Chan-M</h1>
+  </header>
+
+  <section class="wx-searchbar">
+    <input type="text" id="search-input" placeholder="输入代码或证券名称搜索" autocomplete="off">
+  </section>
+
+  <main id="sec-list" class="wx-list"></main>
+  <main id="hangqing-view" class="wx-list" style="display:none"></main>
+  <main id="bianji-view" class="wx-list" style="display:none"></main>
+  <main id="workbench-view" class="wx-list" style="display:none"></main>
+  <main id="wo-view" class="wx-list" style="display:none"></main>
+
+  <nav class="wx-tabbar">
+    <div class="wx-tab active" data-tab="dingpan">
+      <svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+      <label>盯盘</label>
+    </div>
+    <div class="wx-tab" data-tab="hangqing">
+      <svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg>
+      <label>行情</label>
+    </div>
+    <div class="wx-tab" data-tab="bianji">
+      <svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"></path><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path></svg>
+      <label>编辑</label>
+    </div>
+    <div class="wx-tab" data-tab="workbench">
+      <svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"></rect><rect x="14" y="3" width="7" height="7"></rect><rect x="14" y="14" width="7" height="7"></rect><rect x="3" y="14" width="7" height="7"></rect></svg>
+      <label>工作台</label>
+    </div>
+    <div class="wx-tab" data-tab="wo">
+      <svg class="icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle></svg>
+      <label>我</label>
+    </div>
+  </nav>
+
+  <input id="import-file" type="file" accept="application/json" hidden>
+  <script type="module" src="js/app.js?v=20260715f"></script>
+  <script>
+    // 开发模式：URL 带 ?nocache=1 时不注册 Service Worker
+    window.__CHANM_NOCACHE__ = /[?&]nocache=1/.test(location.search);
+
+    // 兜底诊断：检测 file:// 协议或 ES module 加载失败
+    function showDiag(msg) {
+      var box = document.getElementById('sec-list');
+      if (box) box.innerHTML = '<div class="empty">' + msg + '</div>';
+    }
+    if (location.protocol === 'file:') {
+      showDiag('请通过 http:// 访问（勿双击打开 HTML），运行 start_chanm.bat 启动本地服务');
+    }
+    setTimeout(function () {
+      if (!window.__CHANM_LOADED__) {
+        showDiag('脚本未加载：请按 Ctrl+F5 强制刷新清缓存');
+      }
+    }, 1500);
+  </script>
+</body>
+</html>
+

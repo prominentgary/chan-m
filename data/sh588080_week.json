@@ -1,0 +1,153 @@
+{
+  "code": "sh588080",
+  "period": "week",
+  "exportedAt": 1784038703360,
+  "segments": [
+    {
+      "id": "s_zh8gkofr",
+      "kind": "segment",
+      "period": "week",
+      "direction": "up",
+      "start": {
+        "time": 1727366400,
+        "price": 0.656
+      },
+      "end": {
+        "time": 1734019200,
+        "price": 1.095
+      }
+    },
+    {
+      "id": "s_1ozau178",
+      "kind": "segment",
+      "period": "week",
+      "direction": "down",
+      "start": {
+        "time": 1734019200,
+        "price": 1.095
+      },
+      "end": {
+        "time": 1735833600,
+        "price": 0.953
+      }
+    },
+    {
+      "id": "s_4xh6xgoi",
+      "kind": "segment",
+      "period": "week",
+      "direction": "up",
+      "start": {
+        "time": 1735833600,
+        "price": 0.953
+      },
+      "end": {
+        "time": 1740672000,
+        "price": 1.169
+      }
+    },
+    {
+      "id": "s_kw48z3lo",
+      "kind": "segment",
+      "period": "week",
+      "direction": "down",
+      "start": {
+        "time": 1740672000,
+        "price": 1.169
+      },
+      "end": {
+        "time": 1744300800,
+        "price": 0.897
+      }
+    },
+    {
+      "id": "s_z7uyhqrm",
+      "kind": "segment",
+      "period": "week",
+      "direction": "up",
+      "start": {
+        "time": 1744300800,
+        "price": 0.897
+      },
+      "end": {
+        "time": 1760025600,
+        "price": 1.631
+      }
+    },
+    {
+      "id": "s_s38a7pgl",
+      "kind": "segment",
+      "period": "week",
+      "direction": "down",
+      "start": {
+        "time": 1760025600,
+        "price": 1.631
+      },
+      "end": {
+        "time": 1763654400,
+        "price": 1.295
+      }
+    },
+    {
+      "id": "s_o4fk161n",
+      "kind": "segment",
+      "period": "week",
+      "direction": "up",
+      "start": {
+        "time": 1763654400,
+        "price": 1.295
+      },
+      "end": {
+        "time": 1769097600,
+        "price": 1.605
+      }
+    },
+    {
+      "id": "s_2i6r6pns",
+      "kind": "segment",
+      "period": "week",
+      "direction": "down",
+      "start": {
+        "time": 1769097600,
+        "price": 1.605
+      },
+      "end": {
+        "time": 1774540800,
+        "price": 1.275
+      }
+    },
+    {
+      "id": "s_j4df9swc",
+      "kind": "segment",
+      "period": "week",
+      "direction": "up",
+      "start": {
+        "time": 1774540800,
+        "price": 1.275
+      },
+      "end": {
+        "time": 1783008000,
+        "price": 2.321
+      }
+    }
+  ],
+  "zhongshus": [
+    {
+      "id": "s_m6jilccz",
+      "kind": "zhongshu",
+      "segmentIds": [
+        "s_1g1wnvwt",
+        "s_wplf0ids",
+        "s_zexmh3p8"
+      ]
+    },
+    {
+      "id": "s_t8oocuzg",
+      "kind": "zhongshu",
+      "segmentIds": [
+        "s_zrd1wcjj",
+        "s_qp87rdg3",
+        "s_4k8lir7k"
+      ]
+    }
+  ]
+}
