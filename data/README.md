@@ -9,7 +9,7 @@
     sh588080_day.json
     sz000001_30m.json
 
-这些文件随 `frontend/chan-m/` 一起推送到 Gitee Pages 后，手机端打开 Chan-M 并加载对应代码+周期时，会自动读取这里的预置画线数据。
+这些文件随 `frontend/chan-m/` 一起推送到 GitHub Pages 后，手机端打开 Chan-M 并加载对应代码+周期时，会自动读取这里的预置画线数据。
 
 ## 导出命令示例
 

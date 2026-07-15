@@ -70,7 +70,7 @@ async function tryLoadOne(code, period) {
   }
 }
 
-// 从站点静态 data 目录加载预置画线（Gitee Pages 部署用）
+// 从站点静态 data 目录加载预置画线（GitHub Pages 部署用）
 // 主代码查不到时，自动再试反向前缀（如 sh000001 ↔ sz000001），
 // 以兼容 PC 端导出时使用的市场与手机端自动推断不一致的情况。
 export async function loadStaticData(code, period) {

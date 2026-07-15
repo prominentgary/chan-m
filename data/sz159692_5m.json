@@ -1,7 +1,7 @@
 {
   "code": "sz159692",
   "period": "5m",
-  "exportedAt": 1784038703455,
+  "exportedAt": 1784131907841,
   "segments": [
     {
       "id": "s_803o5wnl",
@@ -1080,6 +1080,146 @@
         "time": 1783653900,
         "price": 1.268
       }
+    },
+    {
+      "id": "s_pom3ibcw",
+      "kind": "segment",
+      "period": "5m",
+      "direction": "down",
+      "start": {
+        "time": 1783653900,
+        "price": 1.268
+      },
+      "end": {
+        "time": 1783907100,
+        "price": 1.231
+      }
+    },
+    {
+      "id": "s_oiz3180v",
+      "kind": "segment",
+      "period": "5m",
+      "direction": "up",
+      "start": {
+        "time": 1783907100,
+        "price": 1.231
+      },
+      "end": {
+        "time": 1783908900,
+        "price": 1.252
+      }
+    },
+    {
+      "id": "s_tt417hao",
+      "kind": "segment",
+      "period": "5m",
+      "direction": "down",
+      "start": {
+        "time": 1783908900,
+        "price": 1.252
+      },
+      "end": {
+        "time": 1783919100,
+        "price": 1.235
+      }
+    },
+    {
+      "id": "s_z7wf9ie4",
+      "kind": "segment",
+      "period": "5m",
+      "direction": "up",
+      "start": {
+        "time": 1783919100,
+        "price": 1.235
+      },
+      "end": {
+        "time": 1783921200,
+        "price": 1.246
+      }
+    },
+    {
+      "id": "s_77sk42rl",
+      "kind": "segment",
+      "period": "5m",
+      "direction": "down",
+      "start": {
+        "time": 1783921200,
+        "price": 1.246
+      },
+      "end": {
+        "time": 1783993500,
+        "price": 1.217
+      }
+    },
+    {
+      "id": "s_wns38sur",
+      "kind": "segment",
+      "period": "5m",
+      "direction": "up",
+      "start": {
+        "time": 1783993500,
+        "price": 1.217
+      },
+      "end": {
+        "time": 1783995000,
+        "price": 1.236
+      }
+    },
+    {
+      "id": "s_2b8jv56c",
+      "kind": "segment",
+      "period": "5m",
+      "direction": "down",
+      "start": {
+        "time": 1783995000,
+        "price": 1.236
+      },
+      "end": {
+        "time": 1783999800,
+        "price": 1.216
+      }
+    },
+    {
+      "id": "s_ad6m0lo1",
+      "kind": "segment",
+      "period": "5m",
+      "direction": "up",
+      "start": {
+        "time": 1783999800,
+        "price": 1.216
+      },
+      "end": {
+        "time": 1784083200,
+        "price": 1.262
+      }
+    },
+    {
+      "id": "s_6wmoa5vq",
+      "kind": "segment",
+      "period": "5m",
+      "direction": "down",
+      "start": {
+        "time": 1784083200,
+        "price": 1.262
+      },
+      "end": {
+        "time": 1784092200,
+        "price": 1.254
+      }
+    },
+    {
+      "id": "s_vh924tf8",
+      "kind": "segment",
+      "period": "5m",
+      "direction": "up",
+      "start": {
+        "time": 1784092200,
+        "price": 1.254
+      },
+      "end": {
+        "time": 1784094900,
+        "price": 1.28
+      }
     }
   ],
   "zhongshus": [
@@ -1126,6 +1266,15 @@
         "s_bgyewx3n",
         "s_pxog5cii",
         "s_oqvrxuxh"
+      ]
+    },
+    {
+      "id": "s_23d9prin",
+      "kind": "zhongshu",
+      "segmentIds": [
+        "s_oiz3180v",
+        "s_tt417hao",
+        "s_z7wf9ie4"
       ]
     }
   ]

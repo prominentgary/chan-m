@@ -5,13 +5,16 @@ import { formatPrice } from './fetcher.js?v=20260714y';
 function segCard(seg, idx, ctx, readonly) {
   const st = seg._strength || { macdArea: 0, priceChangePct: 0, barCount: 0 };
   const dirUp = seg.direction === 'up';
-  const color = dirUp ? '#fa5151' : '#07c160';
-  const avatarBg = dirUp ? '#fff2f0' : '#e6f7ff';
-  const avatarTxt = dirUp ? '#fa5151' : '#07c160';
+  const color = dirUp ? 'var(--wx-red)' : 'var(--wx-green)';
+  const avatarBg = dirUp ? 'var(--wx-red-soft)' : 'var(--wx-green-soft)';
+  const avatarTxt = dirUp ? 'var(--wx-red)' : 'var(--wx-green)';
   const div = seg._divergence
     ? `<span class="badge badge-warn">${seg._divergence}</span>` : '';
+  const bsIsBuy = (seg._bsColor || '#07c160') === '#07c160';
+  const bsColor = bsIsBuy ? 'var(--wx-green)' : 'var(--wx-red)';
+  const bsSoft = bsIsBuy ? 'var(--wx-green-soft)' : 'var(--wx-red-soft)';
   const bs = seg._buySell
-    ? `<span class="badge" style="background:${seg._bsColor || '#07c160'}22;color:${seg._bsColor || '#07c160'};border:1px solid ${seg._bsColor || '#07c160'}44">${seg._bsLabel || seg._buySell}</span>`
+    ? `<span class="badge" style="background:${bsSoft};color:${bsColor};border:1px solid ${bsColor}">${seg._bsLabel || seg._buySell}</span>`
     : '';
   const pct = st.priceChangePct >= 0 ? `+${st.priceChangePct}%` : `${st.priceChangePct}%`;
   const maxArea = ctx.maxArea || 1;
@@ -20,9 +23,9 @@ function segCard(seg, idx, ctx, readonly) {
   const icons = readonly ? '' : `
       <div class="card-actions-icons">
         <button class="icon-btn" data-act="edit" data-id="${seg.id}" aria-label="编辑">
-          <svg viewBox="0 0 24 24" width="18" height="18" xmlns="http://www.w3.org/2000/svg">
-            <rect x="4" y="4" width="16" height="16" rx="2.5" fill="none" stroke="#000" stroke-width="1.8"/>
-            <path d="M16 5l3 3-7 7-3 1 1-3z" fill="none" stroke="#000" stroke-width="1.8" stroke-linejoin="round"/>
+          <svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 20h9"></path>
+            <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
           </svg>
         </button>
         <button class="icon-btn danger" data-act="del" data-id="${seg.id}" aria-label="删除">
@@ -61,7 +64,7 @@ function zhongshuHeader(zs, zi, num, ctx) {
   let extra = '';
   if (sc) {
     const isWeak = sc === '力度减弱';
-    const scColor = isWeak ? '#fa5151' : '#07c160';
+    const scColor = isWeak ? 'var(--wx-red)' : 'var(--wx-green)';
     extra = ` · <span style="color:${scColor};font-weight:600;">${sc}</span>`;
   }
   return `<div class="zs-title">中枢 ${num} · ${ids.length} 段${extra}</div>`;

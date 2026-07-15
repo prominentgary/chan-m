@@ -1,7 +1,7 @@
 {
   "code": "sz159692",
   "period": "30m",
-  "exportedAt": 1784038703468,
+  "exportedAt": 1784131907841,
   "segments": [
     {
       "id": "s_bawusii0",
@@ -211,6 +211,20 @@
       "end": {
         "time": 1783580400,
         "price": 1.277
+      }
+    },
+    {
+      "id": "s_c4vh55hg",
+      "kind": "segment",
+      "period": "30m",
+      "direction": "down",
+      "start": {
+        "time": 1783580400,
+        "price": 1.277
+      },
+      "end": {
+        "time": 1783994400,
+        "price": 1.217
       }
     }
   ],

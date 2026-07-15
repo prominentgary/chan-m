@@ -3,7 +3,7 @@
 import { fetchBars, fetchRealtimeMulti, formatTime, formatPrice } from './fetcher.js?v=20260714y';
 import { computeMACD } from './macd.js?v=20260714y';
 import { segmentStrength, detectDivergence, detectOneBuySell, detectTwoAndThreeBuySell, computeZhongshuStrength, extendZhongshus } from './algo.js?v=20260715e';
-import { renderSegments } from './table.js?v=20260715c';
+import { renderSegments } from './table.js?v=20260715d';
 import { loadStaticData } from './sync.js?v=20260714y';
 import { openEditor } from './editor.js?v=20260715z';
 
@@ -178,14 +178,121 @@ async function loadAllDrawings() {
 }
 
 // ========== 导航 ==========
+// navigate 仅负责渲染，不写历史；历史由 pushView / goBack 管理（供系统返回键 & 手势使用）
 function navigate(view, code = null, period = null) {
   state.view = view;
   state.selectedCode = code;
   state.selectedPeriod = period;
+  updateHeaderBack();
   renderDingpanView();
 }
 
+// 进入周期列表/段列表时，在顶部「Chan-M」行左端显示返回图标（<）
+function updateHeaderBack() {
+  const backBtn = document.getElementById('btn-header-back');
+  if (!backBtn) return;
+  const show = state.view === 'periods' || state.view === 'detail';
+  backBtn.hidden = !show;
+}
+
+const VIEW_DEPTH = { list: 0, periods: 1, detail: 2 };
+
+// 前进到更深视图并写入历史记录（从列表进入周期、从周期进入详情）
+function pushView(view, code = null, period = null) {
+  const curDepth = VIEW_DEPTH[state.view] ?? 0;
+  const newDepth = VIEW_DEPTH[view] ?? 0;
+  navigate(view, code, period);
+  if (newDepth > curDepth) history.pushState({ chanmView: view, code, period }, '');
+  else if (newDepth < curDepth) history.back();
+  else history.replaceState({ chanmView: view, code, period }, '');
+}
+
+// 计算上一级视图（基于当前 state，避免依赖历史栈深度）
+function backTarget() {
+  if (state.view === 'detail') return ['periods', state.selectedCode, state.selectedPeriod];
+  if (state.view === 'periods') return ['list', null, null];
+  return null;
+}
+
+function doBack() {
+  const t = backTarget();
+  if (t) navigate(t[0], t[1], t[2]);
+  return !!t;
+}
+
+// 去重锁：安卓一次滑动可能同时触发「应用内手势」与「系统返回手势」，
+// 二者都走 goBack/popstate，用 350ms 内的锁合并为一次返回，避免连跳两级。
+let lastBackAt = 0;
+
+// 返回上一级：手势、底部返回按钮、安卓/桌面硬件返回键 的统一入口
+function goBack() {
+  const t = backTarget();
+  if (!t) return; // 已在根列表，不拦截，让系统返回（退出/最小化）生效
+  if (history.state && history.state.chanmView) {
+    lastBackAt = Date.now();
+    doBack();        // 立即渲染上一级（提供跟手动画后的即时反馈）
+    history.back();  // 同步历史；随后的 popstate 会被去重跳过
+  } else {
+    doBack();
+  }
+}
+window.goBack = goBack;
+
+// 系统/浏览器返回键：popstate 渲染对应视图；与应用内手势去重
+window.addEventListener('popstate', (e) => {
+  if (Date.now() - lastBackAt < 350) { lastBackAt = Date.now(); return; }
+  lastBackAt = Date.now();
+  const s = e.state || {};
+  if (s.chanmView) navigate(s.chanmView, s.code, s.period);
+  else navigate('list');
+});
+
+// ========== 卡片进出场动画 ==========
+const STAGGER = 45; // 相邻卡片的进入延迟(ms)
+let listEnterPlayed = false; // 根列表首次加载的进入动画只播一次
+
+// 卡片自上而下依次进入（右移淡入）
+function staggerEnter(root, selector) {
+  if (!root) return;
+  const items = root.querySelectorAll(selector);
+  if (!items.length) return;
+  items.forEach((el) => el.classList.add('anim-item', 'in-start'));
+  void root.offsetWidth; // 强制回流，固定起始态，避免与进入动画冲突
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    items.forEach((el, i) => {
+      el.style.transitionDelay = (i * STAGGER) + 'ms';
+      el.classList.remove('in-start');
+    });
+  }));
+}
+
+// 返回时卡片自上而下依次左移淡出，结束后执行 goBack
+function animateBack() {
+  const b = document.getElementById('sec-list');
+  if (!b) { if (window.goBack) window.goBack(); return; }
+  const items = b.querySelectorAll('.period-row, .period-title, .plain-block, .zs-block');
+  if (!items.length) { if (window.goBack) window.goBack(); return; }
+  items.forEach((el, i) => {
+    el.classList.add('anim-item', 'out');
+    el.style.transitionDelay = (i * 40) + 'ms';
+  });
+  const total = items.length * 40 + 340;
+  setTimeout(() => { if (window.goBack) window.goBack(); }, total);
+}
+window.animateBack = animateBack;
+
+// 每次渲染盯盘视图前，清掉上一视图遗留的容器位移/阴影/动画类
+function resetContainer() {
+  const b = document.getElementById('sec-list');
+  if (!b) return;
+  b.style.transform = '';
+  b.style.transition = '';
+  b.style.boxShadow = '';
+  b.classList.remove('swiping');
+}
+
 function renderDingpanView() {
+  resetContainer();
   if (state.activeTab !== 'dingpan') return;
   if (state.view === 'list') renderSecurityList(state.searchQuery);
   else if (state.view === 'periods') renderPeriodList(state.selectedCode);
@@ -235,8 +342,13 @@ function renderSecurityList(filterQuery = '') {
     </div>`;
   }).join('');
   box.querySelectorAll('.sec-card').forEach((card) => {
-    card.addEventListener('click', () => navigate('periods', card.dataset.code));
+    card.addEventListener('click', () => pushView('periods', card.dataset.code));
   });
+  // 仅在首次加载时播一次卡片依次进入动画（搜索/重渲染不再重复）
+  if (!listEnterPlayed) {
+    listEnterPlayed = true;
+    staggerEnter(box, '.sec-card');
+  }
 }
 
 // 监听证券头部吸顶状态：吸顶后切换为紧凑一行布局
@@ -288,11 +400,12 @@ function renderPeriodList(code) {
     <div class="nav-back nav-back-bottom" data-back="list">← 返回证券列表</div>
   `;
   const backBtn = box.querySelector('[data-back="list"]');
-  if (backBtn) backBtn.addEventListener('click', () => navigate('list'));
+  if (backBtn) backBtn.addEventListener('click', () => animateBack());
   box.querySelectorAll('.period-row').forEach((row) => {
-    row.addEventListener('click', () => navigate('detail', code, row.dataset.period));
+    row.addEventListener('click', () => pushView('detail', code, row.dataset.period));
   });
   watchStickyCompact(box.querySelector('.sec-header'));
+  staggerEnter(box, '.period-row');
 }
 
 // ========== 周期详情渲染 ==========
@@ -320,7 +433,7 @@ async function renderPeriodDetail(code, period) {
     <div class="nav-back nav-back-bottom" data-back="periods">← 返回周期列表</div>
   `;
   const backBtn = box.querySelector('[data-back="periods"]');
-  if (backBtn) backBtn.addEventListener('click', () => navigate('periods', code));
+  if (backBtn) backBtn.addEventListener('click', () => animateBack());
   const addBtn = box.querySelector('.add-seg-btn');
   if (addBtn) addBtn.addEventListener('click', () => addSegment(code, period));
   watchStickyCompact(box.querySelector('.sec-header'));
@@ -378,6 +491,7 @@ function renderSinglePeriodDetail(detail, code, g, hideBefore = null) {
   if (g.loaded || g.error) {
     renderSegments(detail, g.segments || [], g.zhongshus || [], (t) => fmt(t, g.period), code, false, hideBefore);
   }
+  staggerEnter(detail, '.period-title, .plain-block, .zs-block, .empty');
 }
 
 // ========== 实时行情 ==========
@@ -648,7 +762,7 @@ function renderBianjiView() {
       sec.drawings[firstPeriod] = d;
       saveLocalEdits(state.selectedCode, sec.drawings);
       switchTab('dingpan');
-      navigate('detail', state.selectedCode, firstPeriod);
+      pushView('detail', state.selectedCode, firstPeriod);
     });
   };
 }
@@ -754,10 +868,31 @@ function onSearchInput(e) {
 
 // ========== 初始化 ==========
 function init() {
+  // 配色主题：默认黑白（隐藏红涨绿跌），顶部按钮可切换回彩色
+  const THEME_KEY = 'chan-m-theme';
+  const themeBtn = document.getElementById('btn-theme-toggle');
+  const themeClr = document.getElementById('theme-clr');
+  const applyTheme = (mono) => {
+    document.body.classList.toggle('mono', mono);
+    // CLR. 文本：黑白态→黑字（代表黑白设置），彩色态→红字（代表彩色设置）
+    if (themeClr) themeClr.style.color = mono ? '#111111' : '#fa5151';
+    if (themeBtn) themeBtn.setAttribute('aria-label', mono ? '点击切换为彩色' : '点击切换为黑白');
+  };
+  const saved = localStorage.getItem(THEME_KEY);
+  applyTheme(saved ? saved === 'mono' : true); // 无记录时默认黑白
+  if (themeBtn) themeBtn.addEventListener('click', () => {
+    const mono = !document.body.classList.contains('mono');
+    applyTheme(mono);
+    localStorage.setItem(THEME_KEY, mono ? 'mono' : 'color');
+  });
+
   $('#sec-list').addEventListener('click', (e) => {
     const actionBtn = e.target.closest('[data-act]');
     if (actionBtn) { onDetailAction(e); }
   });
+
+  const headerBack = document.getElementById('btn-header-back');
+  if (headerBack) headerBack.addEventListener('click', () => animateBack());
 
   $$('.wx-tab').forEach((tab) => {
     const name = tab.dataset.tab || '';
@@ -773,6 +908,7 @@ function init() {
   }
 
   switchTab('dingpan');
+  history.replaceState({ chanmView: 'list' }, '');
   startIndexRealtime();
 
   // 自动加载画线数据（file:// 模式下跳过）
@@ -781,7 +917,7 @@ function init() {
   }
 
   if ('serviceWorker' in navigator && !window.__CHANM_NOCACHE__) {
-    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js?v=20260715b').catch(() => {}));
+    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js?v=20260715d').catch(() => {}));
   }
 
   window.__CHANM_LOADED__ = true;
