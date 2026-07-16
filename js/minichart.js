@@ -19,6 +19,38 @@ function computeZsBox(zs, segMap) {
   };
 }
 
+// 把时间戳换算成「交易时间坐标」：只累计交易时段的分钟数，剔除午休/隔夜/周末/节假日。
+// 这样横轴按真实交易时长展开，非交易空白被压缩，避免段被拉得忽宽忽窄。
+//   - 每个工作日计 240 个交易分钟：上午 9:30–11:30、下午 13:00–15:00
+//   - 午休(11:30–13:00)、收盘后、周末均不计
+//   注：A 股法定节假日无法仅凭日期判断，会被压缩成 1 个交易日宽度（无难看空白），属可接受近似。
+//   日期/周几用 UTC 计算以保证跨时区一致；日内时分用本地时间（交易时段按本地计）。
+function tradingTimeCoord(t) {
+  const dt = new Date(t * 1000);
+  // 自 1970-01-01(周四) 起经过的完整工作日数（UTC 日期，避免时区导致跨日错位）
+  const baseUtc = Date.UTC(1970, 0, 1);
+  const todayUtc = Date.UTC(dt.getUTCFullYear(), dt.getUTCMonth(), dt.getUTCDate());
+  const diffDays = Math.round((todayUtc - baseUtc) / 86400000);
+  const fullWeeks = Math.floor(diffDays / 7);
+  let weekdays = fullWeeks * 5;
+  const rem = diffDays - fullWeeks * 7;
+  let wd = (4 + fullWeeks * 7) % 7; // 1970-01-01 为周四
+  for (let i = 0; i < rem; i++) {
+    if (wd !== 0 && wd !== 6) weekdays++;
+    wd = (wd + 1) % 7;
+  }
+  // 日内交易分钟：按北京时间(UTC+8)计算，不依赖设备本地时区，避免非 CST 环境算错
+  const cst = new Date(t * 1000 + 8 * 3600 * 1000);
+  const hm = cst.getUTCHours() * 60 + cst.getUTCMinutes();
+  let mins;
+  if (hm <= 570) mins = 0;            // 9:30 前 → 当日开盘
+  else if (hm <= 690) mins = hm - 570; // 9:30–11:30
+  else if (hm < 780) mins = 120;       // 11:30–13:00 午休 → 夹到上午收盘
+  else if (hm <= 900) mins = 120 + (hm - 780); // 13:00–15:00
+  else mins = 240;                     // 15:00 后 → 当日收盘
+  return weekdays * 240 + mins;
+}
+
 // 在 container 内绘制段简图
 //   segments : 已按 hideBefore 过滤后的可见段
 //   zhongshus: 引用了可见段的 中枢（未引用可见段的会被过滤掉）
@@ -38,15 +70,17 @@ export function renderMiniChart(container, segments, zhongshus, opts = {}) {
   const segMap = {};
   segs.forEach((s) => { segMap[s.id] = s; });
 
-  // 时间域：含段端点与中枢时间范围
-  const times = [];
-  segs.forEach((s) => { times.push(s.start.time, s.end.time); });
   const zsList = (zhongshus || [])
     .map((z) => computeZsBox(z, segMap))
     .filter(Boolean);
-  zsList.forEach((z) => { times.push(z.tStart, z.tEnd); });
-  const tMin = Math.min(...times);
-  const tMax = Math.max(...times);
+
+  // 时间域：用「交易时间坐标」替代原始时间戳，剔除午休/隔夜/周末等非交易时段，
+  // 使横轴按真实交易时长展开，避免非交易空白把段拉得忽宽忽窄。
+  const coords = [];
+  segs.forEach((s) => { coords.push(tradingTimeCoord(s.start.time), tradingTimeCoord(s.end.time)); });
+  zsList.forEach((z) => { coords.push(tradingTimeCoord(z.tStart), tradingTimeCoord(z.tEnd)); });
+  const cMin = Math.min(...coords);
+  const cMax = Math.max(...coords);
 
   // 价格域：含段端点与中枢区间
   const prices = [];
@@ -58,7 +92,10 @@ export function renderMiniChart(container, segments, zhongshus, opts = {}) {
   pMin -= pPad;
   pMax += pPad;
 
-  const xOf = (t) => pad.l + (tMax === tMin ? (W - pad.l - pad.r) / 2 : ((t - tMin) / (tMax - tMin)) * (W - pad.l - pad.r));
+  const xOf = (t) => {
+    const c = tradingTimeCoord(t);
+    return pad.l + (cMax === cMin ? (W - pad.l - pad.r) / 2 : ((c - cMin) / (cMax - cMin)) * (W - pad.l - pad.r));
+  };
   const yOf = (p) => pad.t + (pMax === pMin ? (H - pad.t - pad.b) / 2 : ((pMax - p) / (pMax - pMin)) * (H - pad.t - pad.b));
 
   let svg = `<svg class="mini-chart-svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="段走势简图">`;

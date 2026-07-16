@@ -4,7 +4,7 @@ import { fetchBars, fetchRealtimeMulti, formatTime, formatPrice } from './fetche
 import { computeMACD } from './macd.js?v=20260714y';
 import { segmentStrength, detectDivergence, detectOneBuySell, detectTwoAndThreeBuySell, computeZhongshuStrength, extendZhongshus } from './algo.js?v=20260715e';
 import { renderSegments } from './table.js?v=20260715d';
-import { renderMiniChart } from './minichart.js?v=20260717a';
+import { renderMiniChart } from './minichart.js?v=20260717b';
 import { loadStaticData } from './sync.js?v=20260714y';
 import { openEditor } from './editor.js?v=20260715z';
 
@@ -59,6 +59,32 @@ function periodBarStart(t, period) {
   const dt = new Date(t * 1000);
   dt.setHours(Math.floor(startHm / 60), startHm % 60, 0, 0);
   return Math.floor(dt.getTime() / 1000);
+}
+
+// 计算低级别周期的 hideBefore：优先用更高周期中时间上最新的一段（end 最大），
+// 以其终点对齐到更高周期 K 线起点，使低周期图聚焦到「最新一段覆盖的交易日」。
+// 安全回退：若更高周期数据比当前周期段更新（如 30m 末段 end 晚于 5m 末段 start），
+// 纯按 end 对齐会把当前周期图清空，此时退回旧逻辑——用更高周期所有段的 max(start) 对齐，
+// 保留更多历史段（例如 5m 图从 30m 起点起显示，而非变空或只剩 1 段）。
+function computeHideBefore(higherSegments, higherPeriod, curSegments) {
+  if (!higherPeriod || !higherSegments || !higherSegments.length) return null;
+  let lastEnd = 0, maxStart = 0;
+  for (const s of higherSegments) {
+    const e = s.end?.time ?? s.start?.time ?? 0;
+    const st = s.start?.time ?? s.end?.time ?? 0;
+    if (e > lastEnd) lastEnd = e;
+    if (st > maxStart) maxStart = st;
+  }
+  const hbEnd = lastEnd ? periodBarStart(lastEnd, higherPeriod) : null;
+  if (hbEnd != null && curSegments && curSegments.length) {
+    let curLastStart = 0;
+    for (const s of curSegments) {
+      const st = s.start?.time ?? s.end?.time ?? 0;
+      if (st > curLastStart) curLastStart = st;
+    }
+    if (hbEnd > curLastStart) return maxStart ? periodBarStart(maxStart, higherPeriod) : hbEnd;
+  }
+  return hbEnd;
 }
 
 const STORE_KEY_PREFIX = 'chan-m-sec-';
@@ -379,10 +405,7 @@ function countVisible(sec, period) {
   const zhongshus = d.zhongshus || [];
   const higherPeriod = getHigherPeriod(period, sec.periods || []);
   const higherSegments = (higherPeriod && sec.drawings[higherPeriod]?.segments) || [];
-  const higherLastStart = higherSegments.length
-    ? Math.max(...higherSegments.map((s) => s.start?.time ?? 0))
-    : null;
-  const hideBefore = higherLastStart != null ? periodBarStart(higherLastStart, higherPeriod) : null;
+  const hideBefore = computeHideBefore(higherSegments, higherPeriod, segments);
   let visibleSegs = segments;
   if (hideBefore != null) {
     visibleSegs = segments.filter((s) => (s.start?.time ?? s.end?.time ?? 0) >= hideBefore);
@@ -444,10 +467,7 @@ function openMiniSheet(code, period) {
   // 复用与详情页一致的 hideBefore 过滤，保证简图段集合与段卡片一致
   const higherPeriod = getHigherPeriod(period, sec.periods || []);
   const higherSegments = (higherPeriod && sec.drawings[higherPeriod]?.segments) || [];
-  const higherLastStart = higherSegments.length
-    ? Math.max(...higherSegments.map((s) => s.start?.time ?? 0))
-    : null;
-  const hideBefore = higherLastStart != null ? periodBarStart(higherLastStart, higherPeriod) : null;
+  const hideBefore = computeHideBefore(higherSegments, higherPeriod, d.segments);
   let segs = [...(d.segments || [])];
   if (hideBefore != null) segs = segs.filter((s) => (s.start?.time ?? s.end?.time ?? 0) >= hideBefore);
   const visibleIds = new Set(segs.map((s) => s.id));
@@ -573,12 +593,9 @@ async function loadAndRenderPeriodDetail(code, period) {
   const d = sec.drawings[period] || { segments: [], zhongshus: [] };
   const group = { period, label: periodLabel(period), segments: [...d.segments], zhongshus: [...d.zhongshus], loaded: false, error: null };
 
-  // 更高周期最后一段起点：用于在低级别周期隐藏过早的段卡片
+  // 更高周期最新一段终点：用于在低级别周期隐藏过早的段卡片（聚焦到最新一段覆盖的交易日）
   const higherPeriod = getHigherPeriod(period, sec.periods || []);
   const higherSegments = (higherPeriod && sec.drawings[higherPeriod]?.segments) || [];
-  const higherLastStart = higherSegments.length
-    ? Math.max(...higherSegments.map((s) => s.start?.time ?? 0))
-    : null;
 
   try {
     const curRes = await fetchBars(code, period, 400);
@@ -587,7 +604,7 @@ async function loadAndRenderPeriodDetail(code, period) {
     computeMACD(bars);
     computeStrengths(bars, group.segments, group.zhongshus);
     group.loaded = true;
-    const hideBefore = higherLastStart != null ? periodBarStart(higherLastStart, higherPeriod) : null;
+    const hideBefore = computeHideBefore(higherSegments, higherPeriod, group.segments);
     if (!$('#period-detail')) return;
     renderSinglePeriodDetail(detail, code, group, hideBefore);
   } catch (err) {
