@@ -2,7 +2,7 @@ import { formatPrice } from './fetcher.js?v=20260714y';
 
 // table.js —— 段/中枢 的微信会话列表风格渲染（无图表）
 
-function segCard(seg, idx, ctx, readonly) {
+function segCard(seg, idx, ctx, readonly, extraClass = '') {
   const st = seg._strength || { macdArea: 0, priceChangePct: 0, barCount: 0 };
   const dirUp = seg.direction === 'up';
   const color = dirUp ? 'var(--wx-red)' : 'var(--wx-green)';
@@ -35,7 +35,7 @@ function segCard(seg, idx, ctx, readonly) {
         </button>
       </div>`;
   return `
-  <div class="card" data-id="${seg.id}">
+  <div class="card ${extraClass}" data-id="${seg.id}">
     <div class="card-avatar" style="background:${avatarBg};color:${avatarTxt}">${idx}</div>
     <div class="card-body">
       <div class="card-head">
@@ -127,10 +127,8 @@ export function renderSegments(container, segments, zhongshus, fmt, code = '', r
       run.forEach((seg) => (html += segCard(seg, total - pos++, ctx, readonly)));
       html += `</div>`;
     } else {
-      // 普通段：中性卡片块
-      html += `<div class="plain-block">`;
-      run.forEach((seg) => (html += segCard(seg, total - pos++, ctx, readonly)));
-      html += `</div>`;
+      // 普通段：每张卡片独立、互不相连
+      run.forEach((seg) => (html += segCard(seg, total - pos++, ctx, readonly, 'plain-card')));
     }
     i = j;
   }

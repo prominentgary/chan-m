@@ -4,6 +4,7 @@ import { fetchBars, fetchRealtimeMulti, formatTime, formatPrice } from './fetche
 import { computeMACD } from './macd.js?v=20260714y';
 import { segmentStrength, detectDivergence, detectOneBuySell, detectTwoAndThreeBuySell, computeZhongshuStrength, extendZhongshus } from './algo.js?v=20260715e';
 import { renderSegments } from './table.js?v=20260715d';
+import { renderMiniChart } from './minichart.js?v=20260717a';
 import { loadStaticData } from './sync.js?v=20260714y';
 import { openEditor } from './editor.js?v=20260715z';
 
@@ -15,6 +16,8 @@ const PERIODS = [
   ['day', '日'], ['week', '周'],
 ];
 const periodLabel = (p) => (PERIODS.find((x) => x[0] === p) || [p, p])[1];
+
+let longPressFired = false; // 周期行长按触发简图后，吞掉随后冒泡的 click，避免误进段详情
 
 // 返回当前周期在证券可用周期列表中的下一个更高级别周期
 function getHigherPeriod(period, availablePeriods) {
@@ -79,6 +82,7 @@ const state = {
   _rtPrices: {},
   _currentBars: null,
   searchQuery: '',
+  editMode: false, // 段详情页是否处于「编辑」模式（显示卡片编辑/删除按钮）
 };
 
 function fmt(sec, period) { return formatTime(sec, period !== 'day'); }
@@ -270,7 +274,7 @@ function staggerEnter(root, selector) {
 function animateBack() {
   const b = document.getElementById('sec-list');
   if (!b) { if (window.goBack) window.goBack(); return; }
-  const items = b.querySelectorAll('.period-row, .period-title, .plain-block, .zs-block');
+  const items = b.querySelectorAll('.period-row, .period-title, .plain-card, .zs-block');
   if (!items.length) { if (window.goBack) window.goBack(); return; }
   items.forEach((el, i) => {
     el.classList.add('anim-item', 'out');
@@ -351,14 +355,12 @@ function renderSecurityList(filterQuery = '') {
   }
 }
 
-// 监听证券头部吸顶状态：吸顶后切换为紧凑一行布局
+// 监听证券头部吸顶状态：下滚后为紧凑一行布局，未下滚为展开两行布局
 function watchStickyCompact(header) {
   if (!header) return;
-  const HEADER_HEIGHT = 48;
   let ticking = false;
   function update() {
-    const rect = header.getBoundingClientRect();
-    header.classList.toggle('compact', rect.top <= HEADER_HEIGHT);
+    header.classList.toggle('compact', window.scrollY > 0);
     ticking = false;
   }
   function onScroll() {
@@ -370,6 +372,26 @@ function watchStickyCompact(header) {
   update();
 }
 
+// 与详情页一致的可见段/中枢计数：剔除被更高级别周期遮挡的隐藏段、隐藏中枢
+function countVisible(sec, period) {
+  const d = sec.drawings[period] || { segments: [], zhongshus: [] };
+  const segments = d.segments || [];
+  const zhongshus = d.zhongshus || [];
+  const higherPeriod = getHigherPeriod(period, sec.periods || []);
+  const higherSegments = (higherPeriod && sec.drawings[higherPeriod]?.segments) || [];
+  const higherLastStart = higherSegments.length
+    ? Math.max(...higherSegments.map((s) => s.start?.time ?? 0))
+    : null;
+  const hideBefore = higherLastStart != null ? periodBarStart(higherLastStart, higherPeriod) : null;
+  let visibleSegs = segments;
+  if (hideBefore != null) {
+    visibleSegs = segments.filter((s) => (s.start?.time ?? s.end?.time ?? 0) >= hideBefore);
+  }
+  const visibleIds = new Set(visibleSegs.map((s) => s.id));
+  const visibleZs = (zhongshus || []).filter((z) => (z.segmentIds || []).some((id) => visibleIds.has(id)));
+  return { segCount: visibleSegs.length, zsCount: visibleZs.length };
+}
+
 // ========== 周期列表渲染 ==========
 function renderPeriodList(code) {
   const box = $('#sec-list');
@@ -379,9 +401,7 @@ function renderPeriodList(code) {
   const name = sec.name || rt?.name || code;
   const displayCode = sec.code.toUpperCase();
   const rows = sec.periods.map((p) => {
-    const d = sec.drawings[p] || { segments: [], zhongshus: [] };
-    const segCount = d.segments?.length || 0;
-    const zsCount = d.zhongshus?.length || 0;
+    const { segCount, zsCount } = countVisible(sec, p);
     return `
     <div class="period-row" data-period="${p}">
       <div class="period-row-info">
@@ -402,14 +422,101 @@ function renderPeriodList(code) {
   const backBtn = box.querySelector('[data-back="list"]');
   if (backBtn) backBtn.addEventListener('click', () => animateBack());
   box.querySelectorAll('.period-row').forEach((row) => {
-    row.addEventListener('click', () => pushView('detail', code, row.dataset.period));
+    const p = row.dataset.period;
+    row.addEventListener('click', () => {
+      if (longPressFired) { longPressFired = false; return; } // 长按已触发简图，吞掉随后的 click
+      pushView('detail', code, p);
+    });
+    attachPeriodRowLongPress(row, code, p);
   });
   watchStickyCompact(box.querySelector('.sec-header'));
   staggerEnter(box, '.period-row');
 }
 
+// ========== 长按周期行 → 宽简图（底部抽屉） ==========
+function openMiniSheet(code, period) {
+  const sec = state.securities.find((s) => s.code === code);
+  if (!sec) return;
+  const rt = state._rtPrices?.[code];
+  const name = sec.name || rt?.name || code;
+  const d = sec.drawings[period] || { segments: [], zhongshus: [] };
+
+  // 复用与详情页一致的 hideBefore 过滤，保证简图段集合与段卡片一致
+  const higherPeriod = getHigherPeriod(period, sec.periods || []);
+  const higherSegments = (higherPeriod && sec.drawings[higherPeriod]?.segments) || [];
+  const higherLastStart = higherSegments.length
+    ? Math.max(...higherSegments.map((s) => s.start?.time ?? 0))
+    : null;
+  const hideBefore = higherLastStart != null ? periodBarStart(higherLastStart, higherPeriod) : null;
+  let segs = [...(d.segments || [])];
+  if (hideBefore != null) segs = segs.filter((s) => (s.start?.time ?? s.end?.time ?? 0) >= hideBefore);
+  const visibleIds = new Set(segs.map((s) => s.id));
+  const zss = (d.zhongshus || []).filter((z) => (z.segmentIds || []).some((id) => visibleIds.has(id)));
+
+  let backdrop = document.getElementById('mini-sheet-backdrop');
+  if (!backdrop) {
+    backdrop = document.createElement('div');
+    backdrop.id = 'mini-sheet-backdrop';
+    backdrop.className = 'mini-sheet-backdrop';
+    backdrop.addEventListener('click', closeMiniSheet);
+    document.body.appendChild(backdrop);
+
+    const sheet = document.createElement('div');
+    sheet.id = 'mini-sheet';
+    sheet.className = 'mini-sheet';
+    sheet.innerHTML = `
+      <div class="mini-sheet-head">
+        <span class="mini-sheet-title" id="mini-sheet-title"></span>
+        <button class="mini-sheet-close" id="mini-sheet-close" type="button" aria-label="关闭">✕</button>
+      </div>
+      <div class="mini-sheet-body" id="mini-sheet-body"></div>`;
+    document.body.appendChild(sheet);
+    document.getElementById('mini-sheet-close').addEventListener('click', closeMiniSheet);
+  }
+
+  document.getElementById('mini-sheet-title').textContent =
+    `${name} · ${periodLabel(period)} · ${segs.length} 段 · ${zss.length} 中枢`;
+  const body = document.getElementById('mini-sheet-body');
+  renderMiniChart(body, segs, zss, { height: 210 });
+  backdrop.classList.add('show');
+  document.getElementById('mini-sheet').classList.add('show');
+  document.body.style.overflow = 'hidden';
+}
+
+function closeMiniSheet() {
+  const backdrop = document.getElementById('mini-sheet-backdrop');
+  const sheet = document.getElementById('mini-sheet');
+  if (backdrop) backdrop.classList.remove('show');
+  if (sheet) sheet.classList.remove('show');
+  document.body.style.overflow = '';
+}
+
+// 长按周期行：按住 480ms 直接下拉出宽简图；移动超过 10px 视为滑动/滚动，取消
+function attachPeriodRowLongPress(row, code, period) {
+  let timer = null;
+  let sx = 0, sy = 0;
+  const LONG_MS = 480;
+  const start = (x, y) => {
+    longPressFired = false;
+    sx = x; sy = y;
+    timer = setTimeout(() => {
+      longPressFired = true;
+      openMiniSheet(code, period);
+    }, LONG_MS);
+  };
+  const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  row.addEventListener('pointerdown', (e) => { start(e.clientX, e.clientY); });
+  row.addEventListener('pointermove', (e) => {
+    if (Math.abs(e.clientX - sx) > 10 || Math.abs(e.clientY - sy) > 10) cancel();
+  });
+  row.addEventListener('pointerup', cancel);
+  row.addEventListener('pointercancel', cancel);
+  row.addEventListener('contextmenu', (e) => e.preventDefault());
+}
+
 // ========== 周期详情渲染 ==========
 async function renderPeriodDetail(code, period) {
+  state.editMode = false;
   const box = $('#sec-list');
   const sec = state.securities.find((s) => s.code === code);
   if (!sec) { navigate('list'); return; }
@@ -418,9 +525,17 @@ async function renderPeriodDetail(code, period) {
   const displayCode = sec.code.toUpperCase();
   box.innerHTML = `
     <div class="sec-header">
-      <div class="sec-name" data-name="${code}">${name}</div>
-      <div class="header-right">
+      <div class="sec-head-main">
+        <div class="sec-name" data-name="${code}">${name}</div>
         <div class="sec-meta">${displayCode} · ${periodLabel(period)}</div>
+      </div>
+      <div class="sec-header-actions">
+        <button class="edit-seg-btn" type="button" aria-label="编辑段">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 20h9"></path>
+            <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
+          </svg>
+        </button>
         <button class="add-seg-btn" aria-label="添加段">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <line x1="12" y1="5" x2="12" y2="19"/>
@@ -436,8 +551,19 @@ async function renderPeriodDetail(code, period) {
   if (backBtn) backBtn.addEventListener('click', () => animateBack());
   const addBtn = box.querySelector('.add-seg-btn');
   if (addBtn) addBtn.addEventListener('click', () => addSegment(code, period));
+  const editBtn = box.querySelector('.edit-seg-btn');
+  if (editBtn) editBtn.addEventListener('click', () => toggleEditMode(code, period));
   watchStickyCompact(box.querySelector('.sec-header'));
   await loadAndRenderPeriodDetail(code, period);
+}
+
+// 进入/退出段编辑模式：点击顶部「编辑」按钮后，卡片右上角才显示编辑/删除按钮
+function toggleEditMode(code, period) {
+  state.editMode = !state.editMode;
+  const detail = $('#period-detail');
+  if (detail) detail.classList.toggle('editing', state.editMode);
+  const editBtn = document.querySelector('.edit-seg-btn');
+  if (editBtn) editBtn.classList.toggle('active', state.editMode);
 }
 
 async function loadAndRenderPeriodDetail(code, period) {
@@ -491,7 +617,7 @@ function renderSinglePeriodDetail(detail, code, g, hideBefore = null) {
   if (g.loaded || g.error) {
     renderSegments(detail, g.segments || [], g.zhongshus || [], (t) => fmt(t, g.period), code, false, hideBefore);
   }
-  staggerEnter(detail, '.period-title, .plain-block, .zs-block, .empty');
+  staggerEnter(detail, '.period-title, .plain-card, .zs-block, .empty');
 }
 
 // ========== 实时行情 ==========
@@ -575,7 +701,7 @@ function computeStrengths(bars, segments, zhongshus) {
 }
 
 // ========== 新增段 ==========
-function priceAtTime(bars, t) {
+function barAtTime(bars, t) {
   if (!bars || !bars.length) return null;
   let nearest = bars[0];
   let min = Math.abs(bars[0].time - t);
@@ -583,7 +709,23 @@ function priceAtTime(bars, t) {
     const d = Math.abs(b.time - t);
     if (d < min) { min = d; nearest = b; }
   }
-  return nearest.close;
+  return nearest;
+}
+
+function priceAtTime(bars, t) {
+  const bar = barAtTime(bars, t);
+  return bar ? bar.close : null;
+}
+
+// 按段涨跌方向，返回某根 K 线在起点/终点处应取的价格：
+//   上涨段：起点=最低价(low)，终点=最高价(high)
+//   下跌段：起点=最高价(high)，终点=最低价(low)
+//   水平段：取收盘价(close)
+function endpointPrice(bar, isStart, direction) {
+  if (!bar) return null;
+  if (direction === 'up') return isStart ? bar.low : bar.high;
+  if (direction === 'down') return isStart ? bar.high : bar.low;
+  return bar.close;
 }
 
 async function ensureBars(code, period) {
@@ -622,11 +764,14 @@ async function addSegment(code, period) {
   };
   openEditor(null, (startTime, endTime) => {
     if (endTime <= startTime) { alert('终点必须晚于起点'); return; }
-    const sPrice = priceAtTime(bars, startTime) || 0;
-    const ePrice = priceAtTime(bars, endTime) || 0;
+    // 先确定方向（无前段时用收盘价判断趋势），再按涨跌方向取对应端点高低价
+    const sBar = barAtTime(bars, startTime);
+    const eBar = barAtTime(bars, endTime);
     const direction = prevSeg
       ? oppositeDirection(prevSeg.direction)
-      : (ePrice >= sPrice ? 'up' : 'down');
+      : (eBar && sBar && eBar.close >= sBar.close ? 'up' : 'down');
+    const sPrice = endpointPrice(sBar, true, direction) ?? 0;
+    const ePrice = endpointPrice(eBar, false, direction) ?? 0;
     const seg = {
       id: 's_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6),
       kind: 'segment',
@@ -660,10 +805,23 @@ function onDetailAction(e) {
   if (!targetSeg) return;
 
   if (act === 'edit') {
-    openEditor(targetSeg, (newStart, newEnd) => {
+    openEditor(targetSeg, async (newStart, newEnd) => {
+      let bars;
+      try {
+        bars = await ensureBars(code, period);
+      } catch {
+        alert('行情数据加载失败，请检查网络后重新编辑');
+        return;
+      }
+      // 编辑起点/终点时间后，按原段涨跌方向从腾讯财经 K 线取对应高低价，避免沿用 PC 导出旧价格
+      const sBar = barAtTime(bars, newStart);
+      const eBar = barAtTime(bars, newEnd);
+      const direction = targetSeg.direction;
       targetSeg.start.time = newStart;
+      targetSeg.start.price = endpointPrice(sBar, true, direction) ?? targetSeg.start.price;
       targetSeg.end.time = newEnd;
-      targetSeg.direction = targetSeg.end.price >= targetSeg.start.price ? 'up' : 'down';
+      targetSeg.end.price = endpointPrice(eBar, false, direction) ?? targetSeg.end.price;
+      targetSeg.direction = direction;
       saveLocalEdits(code, sec.drawings);
       loadAndRenderPeriodDetail(code, period);
     });
@@ -917,7 +1075,8 @@ function init() {
   }
 
   if ('serviceWorker' in navigator && !window.__CHANM_NOCACHE__) {
-    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js?v=20260715d').catch(() => {}));
+    navigator.serviceWorker.addEventListener('controllerchange', () => location.reload());
+    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js?v=20260716a').catch(() => {}));
   }
 
   window.__CHANM_LOADED__ = true;

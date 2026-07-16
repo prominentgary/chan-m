@@ -38,13 +38,17 @@ export function normTime(t) {
 export function makeSegment({ startSec, endSec, period, bars }) {
   const s = barAtOrBefore(bars, startSec);
   const e = barAtOrAfter(bars, endSec);
-  const start = { time: startSec, price: s ? s.close : 0 };
-  const end = { time: endSec, price: e ? e.close : 0 };
+  // 先按收盘价判断趋势方向，再按涨跌方向取对应端点高低价：
+  //   上涨段：起点=最低价(low)，终点=最高价(high)
+  //   下跌段：起点=最高价(high)，终点=最低价(low)
+  const direction = (e && s && e.close >= s.close) ? 'up' : 'down';
+  const start = { time: startSec, price: s ? (direction === 'up' ? s.low : s.high) : 0 };
+  const end = { time: endSec, price: e ? (direction === 'up' ? e.high : e.low) : 0 };
   return {
     id: uid('seg'),
     kind: 'segment',
     period,
-    direction: end.price >= start.price ? 'up' : 'down',
+    direction,
     start, end,
   };
 }
