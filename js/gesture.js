@@ -11,6 +11,14 @@
   let active = false, decided = false, edge = null, pointerId = null;
 
   const box = () => document.getElementById('sec-list');
+  const miniEl = () => document.getElementById('mini-sheet');
+  const miniBackdrop = () => document.getElementById('mini-sheet-backdrop');
+
+  // 简图（底部抽屉）是否打开
+  function isMiniSheetOpen() {
+    const b = miniBackdrop();
+    return !!(b && b.classList.contains('show'));
+  }
 
   // 仅当「盯盘」子视图中存在返回按钮时，才允许手势返回
   function canBack() {
@@ -21,11 +29,13 @@
 
   function onDown(e) {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
-    if (!canBack()) return;
+    const miniOpen = isMiniSheetOpen();
+    if (!miniOpen && !canBack()) return;
     const w = window.innerWidth;
     if (e.clientX <= EDGE) edge = 'left';
     else if (e.clientX >= w - EDGE) edge = 'right';
     else return;
+    // 简图开启时：左边缘右滑与右边缘左滑均可退出（inward 方向由 onMove 统一判断）
     startX = e.clientX; startY = e.clientY;
     curX = startX; lastX = startX; lastT = e.timeStamp; vx = 0;
     active = true; decided = false; pointerId = e.pointerId;
@@ -52,6 +62,16 @@
     const dt = Math.max(1, e.timeStamp - lastT);
     vx = (curX - lastX) / dt;
     lastX = curX; lastT = e.timeStamp;
+
+    // 简图开启：横向拖拽简图本身，并同步淡化遮罩，作为跟手反馈
+    if (isMiniSheetOpen()) {
+      const m = miniEl();
+      const bd = miniBackdrop();
+      if (m) { m.style.transition = 'none'; m.style.transform = 'translateX(' + dx + 'px)'; }
+      if (bd) { bd.style.transition = 'none'; bd.style.opacity = String(Math.max(0, 1 - Math.abs(dx) / 400)); }
+      return;
+    }
+
     const b = box();
     if (b) {
       b.classList.add('swiping');
@@ -64,8 +84,32 @@
   function onUp() {
     if (!active) { cleanup(); return; }
     const dx = curX - startX;
-    const b = box();
+    const miniOpen = isMiniSheetOpen();
     const commit = Math.abs(dx) > THRESHOLD || (Math.abs(vx) > VELOCITY && Math.abs(dx) > 24);
+
+    // 简图开启：左边缘右滑达标则退出简图，否则回弹归位
+    if (miniOpen) {
+      const m = miniEl();
+      const bd = miniBackdrop();
+      if (commit) {
+        if (m) { m.style.transition = 'transform .22s ease'; m.style.transform = 'translateX(' + (edge === 'left' ? '100%' : '-100%') + ')'; }
+        if (bd) { bd.style.transition = 'opacity .22s ease'; bd.style.opacity = '0'; }
+        cleanup(true);
+        setTimeout(() => { if (window.closeMiniSheet) window.closeMiniSheet(); }, 220);
+        return;
+      }
+      if (m) { m.style.transition = 'transform .22s ease'; m.style.transform = 'translateX(0)'; }
+      if (bd) { bd.style.transition = 'opacity .22s ease'; bd.style.opacity = ''; }
+      setTimeout(() => {
+        const mm = miniEl(), bb = miniBackdrop();
+        if (mm) { mm.style.transition = ''; mm.style.transform = ''; }
+        if (bb) { bb.style.transition = ''; bb.style.opacity = ''; }
+      }, 230);
+      cleanup();
+      return;
+    }
+
+    const b = box();
     if (b) {
       b.classList.remove('swiping');
       if (commit) {

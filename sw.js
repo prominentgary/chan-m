@@ -1,10 +1,10 @@
 // sw.js —— 离线缓存（PWA）
-const CACHE = 'chan-m-v34';
+const CACHE = 'chan-m-v50';
 const ASSETS = [
   './', './index.html', './manifest.webmanifest', './icon.svg',
-  './css/m.css?v=20260717a',
-  './js/app.js?v=20260717d', './js/gesture.js?v=20260715b', './js/fetcher.js?v=20260714y', './js/macd.js?v=20260714y', './js/model.js?v=20260714y',
-  './js/algo.js?v=20260715e', './js/store.js?v=20260714y', './js/table.js?v=20260715d', './js/editor.js?v=20260715z', './js/sync.js?v=20260714y', './js/minichart.js?v=20260717b',
+  './css/m.css?v=20260719a',
+  './js/app.js?v=20260719d', './js/gesture.js?v=20260715c', './js/fetcher.js?v=20260714y', './js/macd.js?v=20260714y', './js/model.js?v=20260719c',
+  './js/algo.js?v=20260719b', './js/store.js?v=20260714y', './js/table.js?v=20260718e', './js/editor.js?v=20260715z', './js/sync.js?v=20260719c', './js/minichart.js?v=20260717b',
   './data/manifest.json',
 ];
 

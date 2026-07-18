@@ -1,7 +1,7 @@
 {
   "code": "sz159611",
   "period": "30m",
-  "exportedAt": 1784221347563,
+  "exportedAt": 1784395291579,
   "segments": [
     {
       "id": "s_h7dcg273",
@@ -156,39 +156,27 @@
         "time": 1783575000,
         "price": 0.996
       }
-    },
-    {
-      "id": "s_zfm6psjl",
-      "kind": "segment",
-      "period": "30m",
-      "direction": "up",
-      "start": {
-        "time": 1783575000,
-        "price": 0.996
-      },
-      "end": {
-        "time": 1784167200,
-        "price": 1.029
-      }
     }
   ],
   "zhongshus": [
     {
-      "id": "s_73zkzwax",
+      "id": "s_1lk7uwoj",
+      "kind": "zhongshu",
+      "segmentIds": [
+        "s_egpbkqm7",
+        "s_gimf17u4",
+        "s_tgvlpeo5",
+        "s_kzd59omb",
+        "s_2qkms7jh"
+      ]
+    },
+    {
+      "id": "s_7avi756l",
       "kind": "zhongshu",
       "segmentIds": [
         "s_fjfltmbf",
         "s_d51f8us6",
         "s_qjogkepd"
-      ]
-    },
-    {
-      "id": "s_zpritnxr",
-      "kind": "zhongshu",
-      "segmentIds": [
-        "s_egpbkqm7",
-        "s_gimf17u4",
-        "s_tgvlpeo5"
       ]
     }
   ]

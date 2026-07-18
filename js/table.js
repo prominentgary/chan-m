@@ -8,8 +8,12 @@ function segCard(seg, idx, ctx, readonly, extraClass = '') {
   const color = dirUp ? 'var(--wx-red)' : 'var(--wx-green)';
   const avatarBg = dirUp ? 'var(--wx-red-soft)' : 'var(--wx-green-soft)';
   const avatarTxt = dirUp ? 'var(--wx-red)' : 'var(--wx-green)';
-  const div = seg._divergence
-    ? `<span class="badge badge-warn">${seg._divergence}</span>` : '';
+  const si = seg._strengthIndicator;
+  const siColor = si === '力度减弱' ? 'var(--wx-green)' : 'var(--wx-red)';
+  const siSoft = si === '力度减弱' ? 'var(--wx-green-soft)' : 'var(--wx-red-soft)';
+  const siHtml = si
+    ? `<span class="badge" style="background:${siSoft};color:${siColor};border:1px solid ${siColor}">${si}</span>`
+    : '';
   const bsIsBuy = (seg._bsColor || '#07c160') === '#07c160';
   const bsColor = bsIsBuy ? 'var(--wx-green)' : 'var(--wx-red)';
   const bsSoft = bsIsBuy ? 'var(--wx-green-soft)' : 'var(--wx-red-soft)';
@@ -20,20 +24,6 @@ function segCard(seg, idx, ctx, readonly, extraClass = '') {
   const maxArea = ctx.maxArea || 1;
   const w = Math.min(100, (Math.abs(st.macdArea) / maxArea) * 100);
   const macdAreaInt = Math.round(st.macdArea || 0);
-  const icons = readonly ? '' : `
-      <div class="card-actions-icons">
-        <button class="icon-btn" data-act="edit" data-id="${seg.id}" aria-label="编辑">
-          <svg class="icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 20h9"></path>
-            <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
-          </svg>
-        </button>
-        <button class="icon-btn danger" data-act="del" data-id="${seg.id}" aria-label="删除">
-          <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
-            <path d="M5 5l14 14M19 5L5 19"/>
-          </svg>
-        </button>
-      </div>`;
   return `
   <div class="card ${extraClass}" data-id="${seg.id}">
     <div class="card-avatar" style="background:${avatarBg};color:${avatarTxt}">${idx}</div>
@@ -42,10 +32,8 @@ function segCard(seg, idx, ctx, readonly, extraClass = '') {
         <div class="card-name">
           <span class="dir" style="color:${color}">${dirUp ? '上涨' : '下跌'}</span>
           <span class="pct" style="color:${color}">${pct}</span>
-          <span class="strength-val">力度 ${macdAreaInt}</span>
-          ${bs}${div}
+          ${bs}${siHtml}
         </div>
-        ${icons}
       </div>
       <div class="card-desc">
         <div class="point-row"><span class="point-label">起点</span> ${ctx.fmt(seg.start.time)} <span class="point-price">${formatPrice(ctx.code, seg.start.price)}</span></div>
@@ -53,6 +41,7 @@ function segCard(seg, idx, ctx, readonly, extraClass = '') {
       </div>
       <div class="strength">
         <div class="bar"><div class="bar-fill" style="width:${w}%;background:${color}"></div></div>
+        <span class="strength-val">${macdAreaInt}</span>
       </div>
     </div>
   </div>`;
@@ -60,14 +49,7 @@ function segCard(seg, idx, ctx, readonly, extraClass = '') {
 
 function zhongshuHeader(zs, zi, num, ctx) {
   const ids = zs.segmentIds || [];
-  const sc = zs._strengthCompare;
-  let extra = '';
-  if (sc) {
-    const isWeak = sc === '力度减弱';
-    const scColor = isWeak ? 'var(--wx-red)' : 'var(--wx-green)';
-    extra = ` · <span style="color:${scColor};font-weight:600;">${sc}</span>`;
-  }
-  return `<div class="zs-title">中枢 ${num} · ${ids.length} 段${extra}</div>`;
+  return `<div class="zs-title">中枢 ${num} · ${ids.length} 段</div>`;
 }
 
 export function renderSegments(container, segments, zhongshus, fmt, code = '', readonly = false, hideBefore = null) {
@@ -122,7 +104,7 @@ export function renderSegments(container, segments, zhongshus, fmt, code = '', r
       j++;
     }
     if (cat != null) {
-      // 中枢：用原「中枢框」样式圈出，并加强区分
+      // 中枢：用「中枢框」样式圈出，内部段贴在一起
       html += `<div class="zs-block">${zhongshuHeader(zsArr[cat], cat, zsNumber[cat], ctx)}`;
       run.forEach((seg) => (html += segCard(seg, total - pos++, ctx, readonly)));
       html += `</div>`;

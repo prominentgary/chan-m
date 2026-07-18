@@ -137,13 +137,12 @@ body {
 }
 .zs-title.plain { background: transparent; border: none; padding: 0 14px; }
 
-/* 段/中枢详情：去掉白色背景板，仅保留描边与分割线（不影响编辑/我的下的同类卡片） */
-#period-detail .plain-card,
-#period-detail .zs-block,
-#period-detail .zs-block .card { background: transparent; }
+/* 周期详情内的中枢分组需要白底（外层 #period-detail 已无白色背景） */
+#period-detail .zs-block { background: var(--wx-card); }
 
 /* 段卡片（企业微信会话项风格） */
 .card {
+  position: relative;
   background: var(--wx-card); padding: 12px 14px;
   border-bottom: 1px solid var(--wx-line);
   display: flex; gap: 12px; align-items: flex-start;
@@ -157,7 +156,7 @@ body {
   border: 1px solid var(--wx-line);
   box-shadow: 0 1px 2px rgba(0,0,0,.04);
   margin-bottom: 10px;
-  background: transparent;
+  background: var(--wx-card);
 }
 
 .card-avatar {
@@ -185,7 +184,7 @@ body {
 
 .dir { font-size: 14px; font-weight: 500; }
 .pct { font-size: 14px; font-weight: 500; }
-.strength-val { font-size: 13px; color: var(--wx-muted); }
+.strength-val { font-size: 13px; color: var(--wx-muted); min-width: 36px; text-align: right; }
 .badge {
   font-size: 11px; padding: 2px 8px; border-radius: 999px; font-weight: 500;
   display: inline-block; margin-left: 4px;
@@ -200,12 +199,42 @@ body {
 .bar { flex: 1; height: 6px; background: #e6e6e6; border-radius: 999px; overflow: hidden; }
 .bar-fill { height: 100%; border-radius: 999px; }
 
-.card-actions-icons {
-  display: flex; gap: 6px; flex-shrink: 0;
+/* 段卡片长按蒙板 */
+.card-overlay {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: rgba(255, 255, 255, 0.42);
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 0 14px;
+  z-index: 5;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
 }
-/* 段编辑/删除图标：默认隐藏，仅在详情页「编辑」模式下显示 */
-#period-detail .card-actions-icons { display: none; }
-#period-detail.editing .card-actions-icons { display: flex; }
+.card-overlay.show { opacity: 1; pointer-events: auto; }
+.overlay-btn {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: var(--wx-card);
+  border: 1px solid var(--wx-line);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.10);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--wx-txt);
+  cursor: pointer;
+}
+.overlay-btn.icon svg { fill: none; }
+.overlay-btn:active { background: #f2f2f2; }
+.overlay-btn.danger { color: var(--wx-red); }
+
 .icon-btn {
   background: none; border: none; padding: 4px;
   display: flex; align-items: center; justify-content: center;
@@ -340,7 +369,7 @@ body {
 .period-block:last-child { margin-bottom: 0; }
 .period-title {
   font-size: 13px; font-weight: 600; color: var(--wx-blue);
-  padding: 8px 12px; background: #fafafa; border-bottom: 1px solid var(--wx-line);
+  padding: 8px 2px; background: transparent; border: none;
 }
 
 /* 导航返回 */
@@ -375,71 +404,7 @@ body {
   will-change: transform, opacity;
 }
 .anim-item.in-start { transform: translateX(28px); opacity: 0; }
-.anim-item.out { transform: translateX(-110%); opacity: 0; }
-
-/* 证券头部（周期列表/详情页） */
-.sec-header {
-  position: sticky;
-  top: 48px;
-  z-index: 10;
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  background: var(--wx-card);
-  border: 1px solid var(--wx-line);
-  border-radius: 12px;
-  padding: 14px;
-  margin-bottom: 10px;
-  transition: padding 0.18s ease;
-}
-/* 未下滚（展开态）：名称与代码·周期分两行靠左 */
-.sec-head-main {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-/* 下滚收缩态：名称与代码·周期并入同一行 */
-.sec-header.compact { padding: 8px 14px; }
-.sec-header.compact .sec-head-main { flex-direction: row; align-items: baseline; gap: 8px; }
-.sec-header .sec-name {
-  font-size: 17px;
-  font-weight: 600;
-  color: var(--wx-txt);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.sec-header .sec-meta {
-  font-size: 14px;
-  color: var(--wx-muted);
-  white-space: nowrap;
-}
-.add-seg-btn {
-  display: flex; align-items: center; justify-content: center;
-  width: 32px; height: 32px; padding: 0;
-  border: 1px solid var(--wx-accent); border-radius: 50%;
-  background: #fff; color: var(--wx-accent);
-  cursor: pointer;
-}
-.add-seg-btn:active { background: #fef3d0; }
-
-/* 详情页头部右侧按钮组：编辑按钮 + 加号按钮 */
-.sec-header-actions {
-  display: flex; align-items: center; gap: 8px; flex-shrink: 0;
-}
-.edit-seg-btn {
-  display: flex; align-items: center; justify-content: center;
-  width: 32px; height: 32px; padding: 0;
-  border: 1px solid var(--wx-accent); border-radius: 50%;
-  background: #fff; color: var(--wx-accent);
-  cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
-}
-.edit-seg-btn:active { background: #fef3d0; }
-.edit-seg-btn.active { background: var(--wx-accent); color: #fff; }
+.anim-item.out { transform: translateX(110%); opacity: 0; }
 
 /* 周期列表 */
 .period-list {
@@ -464,13 +429,11 @@ body {
 .period-row-name { font-size: 16px; font-weight: 600; color: var(--wx-txt); }
 .period-row-meta { font-size: 13px; color: var(--wx-muted); }
 
-/* 周期详情 */
+/* 周期详情：外层无大卡片，内部用 margin 控制卡片间距 */
 #period-detail {
-  background: var(--wx-card);
-  border: 1px solid var(--wx-line);
-  border-radius: 12px;
-  overflow: hidden;
-  margin-bottom: 64px;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: 64px;
 }
 
 /* 长按周期行 → 宽简图（底部抽屉） */

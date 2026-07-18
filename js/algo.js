@@ -37,21 +37,69 @@ export function segmentStrength(bars, seg, prevDir = null) {
   };
 }
 
-// 背驰检测：相邻同方向段比较
-// 上涨段：价格更高但 macdArea 更小 -> 顶背驰（卖点）
-// 下跌段：价格更低但 macdArea 更小 -> 底背驰（买点）
-export function detectDivergence(prev, cur) {
-  if (!prev || prev.direction !== cur.direction) return null;
-  const prevStr = prev._strength || { macdArea: 0 };
-  const curStr = cur._strength || { macdArea: 0 };
-  const strongerPrice = cur.direction === 'up'
-    ? cur.end.price > prev.end.price
-    : cur.end.price < prev.end.price;
-  const weakerMacd = Math.abs(curStr.macdArea) < Math.abs(prevStr.macdArea);
-  if (strongerPrice && weakerMacd) {
-    return cur.direction === 'up' ? '顶背驰·卖点' : '底背驰·买点';
+// 普通 strength indicator（与 PC 端 drawing.js 判断逻辑对齐，展示形式按移动端要求）
+// 仅对时间最新的“当前段”计算：
+//   - 当前段 b 起点连接中枢右边界：参考段 a = 该中枢之前的进入段
+//   - 否则：a = b 的上上段
+// b 力度 < a 力度 → 力度减弱，否则力度增强
+export function detectStrengthIndicators(segments, zhongshus) {
+  if (!segments || !segments.length) return;
+  const segMap = {};
+  segments.forEach((s) => {
+    segMap[s.id] = s;
+    delete s._strengthIndicator;
+  });
+
+  // 只给时间最新的当前段计算
+  const sorted = [...segments].sort((a, b) => (a.start?.time ?? 0) - (b.start?.time ?? 0));
+  const current = sorted[sorted.length - 1];
+  if (!current) return;
+
+  const chains = buildLineChains(segments);
+  const zsList = zhongshus || [];
+
+  let chain = null;
+  let idx = -1;
+  for (const c of chains) {
+    const i = c.findIndex((l) => l.id === current.id);
+    if (i >= 0) {
+      chain = c;
+      idx = i;
+      break;
+    }
   }
-  return null;
+  if (!chain || idx < 0) return;
+
+  const b = current;
+  const bStr = b._strength || { macdArea: 0 };
+  let a = null;
+
+  // 当前段起点是否连接某个中枢的右边界
+  if (idx > 0) {
+    for (const zs of zsList) {
+      const ids = zs.segmentIds || [];
+      if (ids.length < 3) continue;
+      const lastSeg = segMap[ids[ids.length - 1]];
+      if (!lastSeg || lastSeg.end.time !== b.start.time) continue;
+      // 参考段取该中枢之前的进入段
+      const firstSeg = segMap[ids[0]];
+      if (!firstSeg) continue;
+      const firstIdx = chain.findIndex((l) => l.id === firstSeg.id);
+      if (firstIdx > 0) a = chain[firstIdx - 1];
+      break;
+    }
+  }
+
+  // 未连中枢，使用上上段
+  if (!a && idx >= 2) {
+    a = chain[idx - 2];
+  }
+
+  if (!a) return;
+
+  const aStr = a._strength || { macdArea: 0 };
+  const isWeaker = Math.abs(bStr.macdArea) < Math.abs(aStr.macdArea);
+  b._strengthIndicator = isWeaker ? '力度减弱' : '力度增强';
 }
 
 // 中枢进出段力度比较
@@ -107,17 +155,18 @@ export function computeZhongshuStrength(bars, segments, zhongshus) {
 export function detectOneBuySell(segments, zhongshus) {
   if (!zhongshus || !zhongshus.length) return;
   const segMap = {};
-  segments.forEach((s) => { segMap[s.id] = s; });
-
-  // 按时间排序所有中枢
-  const sorted = [...zhongshus].sort((a, b) => {
-    const aSegs = (a.segmentIds || []).map((id) => segMap[id]).filter(Boolean);
-    const bSegs = (b.segmentIds || []).map((id) => segMap[id]).filter(Boolean);
-    if (!aSegs.length || !bSegs.length) return 0;
-    return aSegs[0].start.time - bSegs[0].start.time;
+  segments.forEach((s) => {
+    segMap[s.id] = s;
+    // 清除旧买卖点标记，避免缓存/历史数据残留
+    delete s._buySell;
+    delete s._bsLabel;
+    delete s._bsColor;
+    delete s._bsZsId;
   });
 
-  sorted.forEach((zs, idx) => {
+  const sortedAll = [...segments].sort((a, b) => a.start.time - b.start.time);
+
+  zhongshus.forEach((zs) => {
     const ids = zs.segmentIds || [];
     const zsSegs = ids.map((id) => segMap[id]).filter(Boolean);
     if (zsSegs.length < 3) return;
@@ -127,20 +176,7 @@ export function detectOneBuySell(segments, zhongshus) {
     const zsEnd = zsSegs[zsSegs.length - 1].end.time;
     const zsIds = new Set(ids);
 
-    // 检查是否与上一个中枢重叠（重叠则非趋势末中枢）
-    if (idx > 0) {
-      const prevZs = sorted[idx - 1];
-      const prevIds = prevZs.segmentIds || [];
-      const prevZsSegs = prevIds.map((id) => segMap[id]).filter(Boolean);
-      if (prevZsSegs.length) {
-        prevZsSegs.sort((a, b) => a.start.time - b.start.time);
-        const prevEnd = prevZsSegs[prevZsSegs.length - 1].end.time;
-        if (prevEnd >= zsStart) return; // 重叠，不是最后一个趋势中枢
-      }
-    }
-
     // 找出离开段（中枢后第一个非中枢段）
-    const sortedAll = [...segments].sort((a, b) => a.start.time - b.start.time);
     let leaveSeg = null;
     for (const s of sortedAll) {
       if (!zsIds.has(s.id) && s.start.time >= zsEnd) {
@@ -158,6 +194,33 @@ export function detectOneBuySell(segments, zhongshus) {
       }
     }
     if (!enterSeg) return;
+
+    // 找前一个中枢：其右边界时间等于进入段起点（与 PC 端对齐）
+    let prevZs = null;
+    for (const z of zhongshus) {
+      if (z.id === zs.id) continue;
+      const zIds = z.segmentIds || [];
+      const zSegs = zIds.map((id) => segMap[id]).filter(Boolean);
+      if (zSegs.length < 3) continue;
+      zSegs.sort((a, b) => a.start.time - b.start.time);
+      const zEnd = zSegs[zSegs.length - 1].end.time;
+      if (zEnd === enterSeg.start.time) {
+        prevZs = z;
+        break;
+      }
+    }
+
+    // 没有前中枢，不是趋势中的中枢，不标一类买卖点
+    if (!prevZs) return;
+
+    // 检查当前中枢是否为趋势中最后一个中枢（与前中枢震荡区间无重叠）
+    const r1 = getZhongshuRange(zs, segMap);
+    const r2 = getZhongshuRange(prevZs, segMap);
+    if (r1 && r2) {
+      // 无重叠：本中枢最低 > 前中枢最高，或本中枢最高 < 前中枢最低
+      const noOverlap = r1.minLow > r2.maxHigh || r1.maxHigh < r2.minLow;
+      if (!noOverlap) return; // 震荡区间重叠，不是最后一个趋势中枢
+    }
 
     // 比较力度
     const enterStr = enterSeg._strength || { macdArea: 0 };
@@ -356,42 +419,3 @@ export function endpointHint(seg) {
   return seg.direction === 'up' ? '上涨段' : '下跌段';
 }
 
-// 中枢延伸：在基础 3 段之外，把后续仍与中枢区间重叠的段并入。
-// 缠论中「中枢」由至少 3 段重叠构成，并可在右侧继续延伸（离开段不再重叠时停止）。
-// 桌面端把延伸段只存在视觉层（extendedLineIds），导出时未携带，故移动端自行补全。
-export function extendZhongshus(segments, zhongshus) {
-  if (!zhongshus || !zhongshus.length) return;
-  const segMap = {};
-  segments.forEach((s) => { segMap[s.id] = s; });
-  // 线段链（按时间升序），用于沿「后续段」顺序向右延伸
-  const chain = [...segments].sort((a, b) => (a.start?.time ?? 0) - (b.start?.time ?? 0));
-
-  zhongshus.forEach((zs) => {
-    const ids = zs.segmentIds || [];
-    if (ids.length < 3) return;
-    const base = ids.map((id) => segMap[id]).filter(Boolean);
-    if (base.length < 3) return;
-    base.sort((a, b) => (a.start?.time ?? 0) - (b.start?.time ?? 0));
-    const lows = base.map((s) => Math.min(s.start.price, s.end.price));
-    const highs = base.map((s) => Math.max(s.start.price, s.end.price));
-    const zLow = Math.max(...lows);
-    const zHigh = Math.min(...highs);
-    if (!(zHigh > zLow)) return; // 基础 3 段无重叠区间，无法延伸
-
-    const startIdx = chain.findIndex((s) => s.id === base[0].id);
-    if (startIdx < 0) return;
-
-    const extended = ids.slice();
-    const MAX_EXTEND = 9; // 安全上限，避免异常数据导致无限延伸
-    for (let k = startIdx + 3; k < chain.length && extended.length < 3 + MAX_EXTEND; k++) {
-      const seg = chain[k];
-      if (extended.includes(seg.id)) continue;
-      // 延伸段终点必须落在中枢震荡区间内；一旦离开即停止
-      const endPrice = seg.end?.price;
-      if (endPrice == null) break;
-      if (endPrice < zLow || endPrice > zHigh) break;
-      extended.push(seg.id);
-    }
-    zs.segmentIds = extended;
-  });
-}

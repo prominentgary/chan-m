@@ -2,10 +2,10 @@
 // 注意：所有 import 路径均带版本号，每次发布新版本时请同步修改 html/js/sw 中的版本号
 import { fetchBars, fetchRealtimeMulti, formatTime, formatPrice } from './fetcher.js?v=20260714y';
 import { computeMACD } from './macd.js?v=20260714y';
-import { segmentStrength, detectDivergence, detectOneBuySell, detectTwoAndThreeBuySell, computeZhongshuStrength, extendZhongshus } from './algo.js?v=20260715e';
-import { renderSegments } from './table.js?v=20260715d';
+import { segmentStrength, detectStrengthIndicators, detectOneBuySell, detectTwoAndThreeBuySell, computeZhongshuStrength } from './algo.js?v=20260719b';
+import { renderSegments } from './table.js?v=20260718e';
 import { renderMiniChart } from './minichart.js?v=20260717b';
-import { loadStaticData } from './sync.js?v=20260714y';
+import { loadStaticData } from './sync.js?v=20260719c';
 import { openEditor } from './editor.js?v=20260715z';
 
 const $ = (s) => document.querySelector(s);
@@ -108,7 +108,6 @@ const state = {
   _rtPrices: {},
   _currentBars: null,
   searchQuery: '',
-  editMode: false, // 段详情页是否处于「编辑」模式（显示卡片编辑/删除按钮）
 };
 
 function fmt(sec, period) { return formatTime(sec, period !== 'day'); }
@@ -231,10 +230,34 @@ const VIEW_DEPTH = { list: 0, periods: 1, detail: 2 };
 function pushView(view, code = null, period = null) {
   const curDepth = VIEW_DEPTH[state.view] ?? 0;
   const newDepth = VIEW_DEPTH[view] ?? 0;
-  navigate(view, code, period);
-  if (newDepth > curDepth) history.pushState({ chanmView: view, code, period }, '');
-  else if (newDepth < curDepth) history.back();
-  else history.replaceState({ chanmView: view, code, period }, '');
+  if (newDepth > curDepth) {
+    // 前进：先执行退场动画，再渲染新视图
+    animateForward(() => {
+      navigate(view, code, period);
+      history.pushState({ chanmView: view, code, period }, '');
+    });
+  } else if (newDepth < curDepth) {
+    navigate(view, code, period);
+    history.back();
+  } else {
+    history.replaceState({ chanmView: view, code, period }, '');
+  }
+}
+
+// 前进时卡片依次右移淡出，结束后执行回调
+function animateForward(onDone) {
+  const b = document.getElementById('sec-list');
+  if (!b) { onDone(); return; }
+  let selector = '.sec-card';
+  if (state.view === 'periods') selector = '.sec-card, .period-row';
+  const items = b.querySelectorAll(selector);
+  if (!items.length) { onDone(); return; }
+  items.forEach((el, i) => {
+    el.classList.add('anim-item', 'out');
+    el.style.transitionDelay = (i * STAGGER) + 'ms';
+  });
+  const total = items.length * STAGGER + 340;
+  setTimeout(onDone, total);
 }
 
 // 计算上一级视图（基于当前 state，避免依赖历史栈深度）
@@ -246,7 +269,10 @@ function backTarget() {
 
 function doBack() {
   const t = backTarget();
-  if (t) navigate(t[0], t[1], t[2]);
+  if (t) {
+    if (t[0] === 'list') listEnterPlayed = false; // 返回列表时允许重播动画
+    navigate(t[0], t[1], t[2]);
+  }
   return !!t;
 }
 
@@ -296,17 +322,23 @@ function staggerEnter(root, selector) {
   }));
 }
 
-// 返回时卡片自上而下依次左移淡出，结束后执行 goBack
+// 返回时卡片自上而下依次右移淡出，结束后执行 goBack
 function animateBack() {
   const b = document.getElementById('sec-list');
   if (!b) { if (window.goBack) window.goBack(); return; }
-  const items = b.querySelectorAll('.period-row, .period-title, .plain-card, .zs-block');
+  let selector = '.period-row, .period-title, .plain-card, .zs-block';
+  if (state.view === 'periods') {
+    selector = '.sec-card, .period-row, .nav-back-bottom';
+  } else if (state.view === 'detail') {
+    selector = '.sec-card, .period-title, .plain-card, .zs-block, .nav-back-bottom';
+  }
+  const items = b.querySelectorAll(selector);
   if (!items.length) { if (window.goBack) window.goBack(); return; }
   items.forEach((el, i) => {
     el.classList.add('anim-item', 'out');
-    el.style.transitionDelay = (i * 40) + 'ms';
+    el.style.transitionDelay = (i * STAGGER) + 'ms';
   });
-  const total = items.length * 40 + 340;
+  const total = items.length * STAGGER + 340;
   setTimeout(() => { if (window.goBack) window.goBack(); }, total);
 }
 window.animateBack = animateBack;
@@ -381,23 +413,6 @@ function renderSecurityList(filterQuery = '') {
   }
 }
 
-// 监听证券头部吸顶状态：下滚后为紧凑一行布局，未下滚为展开两行布局
-function watchStickyCompact(header) {
-  if (!header) return;
-  let ticking = false;
-  function update() {
-    header.classList.toggle('compact', window.scrollY > 0);
-    ticking = false;
-  }
-  function onScroll() {
-    if (ticking) return;
-    ticking = true;
-    requestAnimationFrame(update);
-  }
-  window.addEventListener('scroll', onScroll, { passive: true });
-  update();
-}
-
 // 与详情页一致的可见段/中枢计数：剔除被更高级别周期遮挡的隐藏段、隐藏中枢
 function countVisible(sec, period) {
   const d = sec.drawings[period] || { segments: [], zhongshus: [] };
@@ -423,6 +438,9 @@ function renderPeriodList(code) {
   const rt = state._rtPrices?.[code];
   const name = sec.name || rt?.name || code;
   const displayCode = sec.code.toUpperCase();
+  const change = fmtIndexChange(rt?.price, rt?.prevClose);
+  const priceText = rt?.price ? formatPrice(code, rt.price) : '';
+  const periodTags = sec.periods.map((p) => periodLabel(p)).join('/');
   const rows = sec.periods.map((p) => {
     const { segCount, zsCount } = countVisible(sec, p);
     return `
@@ -435,9 +453,19 @@ function renderPeriodList(code) {
     </div>`;
   }).join('');
   box.innerHTML = `
-    <div class="sec-header">
-      <div class="sec-name" data-name="${code}">${name}</div>
-      <div class="sec-meta">${displayCode} · ${sec.periods.length} 周期</div>
+    <div class="sec-card">
+      <div class="sec-head">
+        <div class="sec-info">
+          <div class="sec-name" data-name="${code}">${name}</div>
+          <div class="sec-meta">${displayCode} · ${periodTags}</div>
+        </div>
+        <div class="sec-right">
+          <div class="sec-quote" data-rt="${code}">
+            <div class="sec-price">${priceText}</div>
+            <div class="sec-change ${change.cls}">${change.text}</div>
+          </div>
+        </div>
+      </div>
     </div>
     <div class="period-list">${rows}</div>
     <div class="nav-back nav-back-bottom" data-back="list">← 返回证券列表</div>
@@ -452,8 +480,7 @@ function renderPeriodList(code) {
     });
     attachPeriodRowLongPress(row, code, p);
   });
-  watchStickyCompact(box.querySelector('.sec-header'));
-  staggerEnter(box, '.period-row');
+  staggerEnter(box, '.sec-card, .period-row');
 }
 
 // ========== 长按周期行 → 宽简图（底部抽屉） ==========
@@ -506,10 +533,11 @@ function openMiniSheet(code, period) {
 function closeMiniSheet() {
   const backdrop = document.getElementById('mini-sheet-backdrop');
   const sheet = document.getElementById('mini-sheet');
-  if (backdrop) backdrop.classList.remove('show');
-  if (sheet) sheet.classList.remove('show');
+  if (backdrop) { backdrop.classList.remove('show'); backdrop.style.opacity = ''; backdrop.style.transition = ''; }
+  if (sheet) { sheet.classList.remove('show'); sheet.style.transform = ''; sheet.style.transition = ''; }
   document.body.style.overflow = '';
 }
+window.closeMiniSheet = closeMiniSheet;
 
 // 长按周期行：按住 480ms 直接下拉出宽简图；移动超过 10px 视为滑动/滚动，取消
 function attachPeriodRowLongPress(row, code, period) {
@@ -536,32 +564,27 @@ function attachPeriodRowLongPress(row, code, period) {
 
 // ========== 周期详情渲染 ==========
 async function renderPeriodDetail(code, period) {
-  state.editMode = false;
   const box = $('#sec-list');
   const sec = state.securities.find((s) => s.code === code);
   if (!sec) { navigate('list'); return; }
   const rt = state._rtPrices?.[code];
   const name = sec.name || rt?.name || code;
   const displayCode = sec.code.toUpperCase();
+  const change = fmtIndexChange(rt?.price, rt?.prevClose);
+  const priceText = rt?.price ? formatPrice(code, rt.price) : '';
   box.innerHTML = `
-    <div class="sec-header">
-      <div class="sec-head-main">
-        <div class="sec-name" data-name="${code}">${name}</div>
-        <div class="sec-meta">${displayCode} · ${periodLabel(period)}</div>
-      </div>
-      <div class="sec-header-actions">
-        <button class="edit-seg-btn" type="button" aria-label="编辑段">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 20h9"></path>
-            <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"></path>
-          </svg>
-        </button>
-        <button class="add-seg-btn" aria-label="添加段">
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <line x1="12" y1="5" x2="12" y2="19"/>
-            <line x1="5" y1="12" x2="19" y2="12"/>
-          </svg>
-        </button>
+    <div class="sec-card">
+      <div class="sec-head">
+        <div class="sec-info">
+          <div class="sec-name" data-name="${code}">${name}</div>
+          <div class="sec-meta">${displayCode} · ${periodLabel(period)}</div>
+        </div>
+        <div class="sec-right">
+          <div class="sec-quote" data-rt="${code}">
+            <div class="sec-price">${priceText}</div>
+            <div class="sec-change ${change.cls}">${change.text}</div>
+          </div>
+        </div>
       </div>
     </div>
     <div id="period-detail"><div class="empty">加载中…</div></div>
@@ -569,21 +592,8 @@ async function renderPeriodDetail(code, period) {
   `;
   const backBtn = box.querySelector('[data-back="periods"]');
   if (backBtn) backBtn.addEventListener('click', () => animateBack());
-  const addBtn = box.querySelector('.add-seg-btn');
-  if (addBtn) addBtn.addEventListener('click', () => addSegment(code, period));
-  const editBtn = box.querySelector('.edit-seg-btn');
-  if (editBtn) editBtn.addEventListener('click', () => toggleEditMode(code, period));
-  watchStickyCompact(box.querySelector('.sec-header'));
   await loadAndRenderPeriodDetail(code, period);
-}
-
-// 进入/退出段编辑模式：点击顶部「编辑」按钮后，卡片右上角才显示编辑/删除按钮
-function toggleEditMode(code, period) {
-  state.editMode = !state.editMode;
-  const detail = $('#period-detail');
-  if (detail) detail.classList.toggle('editing', state.editMode);
-  const editBtn = document.querySelector('.edit-seg-btn');
-  if (editBtn) editBtn.classList.toggle('active', state.editMode);
+  staggerEnter(box, '.sec-card');
 }
 
 async function loadAndRenderPeriodDetail(code, period) {
@@ -598,7 +608,7 @@ async function loadAndRenderPeriodDetail(code, period) {
   const higherSegments = (higherPeriod && sec.drawings[higherPeriod]?.segments) || [];
 
   try {
-    const curRes = await fetchBars(code, period, 400);
+    const curRes = await fetchBars(code, period, 800);
     const bars = curRes.bars || [];
     state._currentBars = { code, period, bars };
     computeMACD(bars);
@@ -633,8 +643,147 @@ function renderSinglePeriodDetail(detail, code, g, hideBefore = null) {
   detail.appendChild(header);
   if (g.loaded || g.error) {
     renderSegments(detail, g.segments || [], g.zhongshus || [], (t) => fmt(t, g.period), code, false, hideBefore);
+    attachSegmentCardActions(code, g.period);
   }
   staggerEnter(detail, '.period-title, .plain-card, .zs-block, .empty');
+}
+
+// 长按段卡片：显示覆盖在该卡片上的操作蒙板（编辑 / 删除 / 新增）
+function attachSegmentCardActions(code, period) {
+  const detail = $('#period-detail');
+  if (!detail) return;
+  detail.querySelectorAll('.card').forEach((card) => {
+    attachSegmentLongPress(card, code, period);
+  });
+}
+
+let activeCardOverlay = null;
+
+function attachSegmentLongPress(card, code, period) {
+  let timer = null;
+  let sx = 0, sy = 0;
+  const LONG_MS = 480;
+  const start = (x, y) => {
+    sx = x; sy = y;
+    timer = setTimeout(() => {
+      showCardOverlay(card, code, period);
+    }, LONG_MS);
+  };
+  const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  card.addEventListener('pointerdown', (e) => { start(e.clientX, e.clientY); });
+  card.addEventListener('pointermove', (e) => {
+    if (Math.abs(e.clientX - sx) > 10 || Math.abs(e.clientY - sy) > 10) cancel();
+  });
+  card.addEventListener('pointerup', cancel);
+  card.addEventListener('pointercancel', cancel);
+  card.addEventListener('contextmenu', (e) => e.preventDefault());
+}
+
+function showCardOverlay(card, code, period) {
+  hideCardOverlay();
+  const overlay = document.createElement('div');
+  overlay.className = 'card-overlay';
+  overlay.innerHTML = `
+    <button class="overlay-btn icon" data-act="edit" aria-label="编辑">
+      <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="3" width="18" height="18" rx="4"/>
+        <path d="M15 5 L19 9"/>
+        <path d="M13 7 L17 11"/>
+      </svg>
+    </button>
+    <button class="overlay-btn icon danger" data-act="del" aria-label="删除">
+      <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="18" y1="6" x2="6" y2="18"/>
+        <line x1="6" y1="6" x2="18" y2="18"/>
+      </svg>
+    </button>
+    <button class="overlay-btn icon" data-act="add" aria-label="新增">
+      <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="12" y1="5" x2="12" y2="19"/>
+        <line x1="5" y1="12" x2="19" y2="12"/>
+      </svg>
+    </button>
+  `;
+  card.appendChild(overlay);
+  activeCardOverlay = overlay;
+
+  // 下一帧触发显示动画
+  requestAnimationFrame(() => overlay.classList.add('show'));
+
+  overlay.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-act]');
+    if (!btn) {
+      hideCardOverlay();
+      return;
+    }
+    e.stopPropagation();
+    const segId = card.dataset.id;
+    hideCardOverlay();
+    handleSegmentAction(btn.dataset.act, segId, code, period);
+  });
+
+  // 点击卡片外部关闭蒙板
+  setTimeout(() => {
+    document.addEventListener('pointerdown', closeCardOverlayOnOutside, { once: true, capture: true });
+  }, 0);
+}
+
+function closeCardOverlayOnOutside(e) {
+  if (activeCardOverlay && !activeCardOverlay.contains(e.target)) {
+    hideCardOverlay();
+  }
+}
+
+function hideCardOverlay() {
+  if (activeCardOverlay) {
+    activeCardOverlay.classList.remove('show');
+    activeCardOverlay.remove();
+    activeCardOverlay = null;
+  }
+  document.removeEventListener('pointerdown', closeCardOverlayOnOutside, { capture: true });
+}
+
+function handleSegmentAction(act, segId, code, period) {
+  const sec = state.securities.find((s) => s.code === code);
+  if (!sec) return;
+  const d = sec.drawings[period];
+  if (!d) return;
+  const targetSeg = (d.segments || []).find((s) => s.id === segId);
+
+  if (act === 'add') {
+    addSegment(code, period);
+  } else if (act === 'edit') {
+    if (!targetSeg) return;
+    openEditor(targetSeg, async (newStart, newEnd) => {
+      let bars;
+      try {
+        bars = await ensureBars(code, period);
+      } catch {
+        alert('行情数据加载失败，请检查网络后重新编辑');
+        return;
+      }
+      const sBar = barAtTime(bars, newStart);
+      const eBar = barAtTime(bars, newEnd);
+      const direction = targetSeg.direction;
+      targetSeg.start.time = newStart;
+      targetSeg.start.price = endpointPrice(sBar, true, direction) ?? targetSeg.start.price;
+      targetSeg.end.time = newEnd;
+      targetSeg.end.price = endpointPrice(eBar, false, direction) ?? targetSeg.end.price;
+      targetSeg.direction = direction;
+      saveLocalEdits(code, sec.drawings);
+      loadAndRenderPeriodDetail(code, period);
+    });
+  } else if (act === 'del') {
+    if (!targetSeg) return;
+    if (!confirm('确定删除此段？')) return;
+    d.segments = d.segments.filter((s) => s.id !== segId);
+    (d.zhongshus || []).forEach((z) => {
+      z.segmentIds = (z.segmentIds || []).filter((id) => id !== segId);
+    });
+    d.zhongshus = (d.zhongshus || []).filter((z) => (z.segmentIds || []).length >= 3);
+    saveLocalEdits(code, sec.drawings);
+    loadAndRenderPeriodDetail(code, period);
+  }
 }
 
 // ========== 实时行情 ==========
@@ -699,7 +848,6 @@ function startIndexRealtime() {
 
 // ========== 算力 ==========
 function computeStrengths(bars, segments, zhongshus) {
-  extendZhongshus(segments, zhongshus); // 先补全中枢延伸段（移动端自行计算）
   const sorted = [...segments].sort((a, b) => a.start.time - b.start.time);
   let prevDir = null;
   sorted.forEach((s) => {
@@ -709,12 +857,7 @@ function computeStrengths(bars, segments, zhongshus) {
   computeZhongshuStrength(bars, segments, zhongshus);
   detectOneBuySell(segments, zhongshus);
   detectTwoAndThreeBuySell(segments, zhongshus);
-  const last = { up: null, down: null };
-  sorted.forEach((s) => {
-    const prev = last[s.direction];
-    s._divergence = prev ? detectDivergence(prev, s) : null;
-    last[s.direction] = s;
-  });
+  detectStrengthIndicators(segments, zhongshus);
 }
 
 // ========== 新增段 ==========
@@ -749,7 +892,7 @@ async function ensureBars(code, period) {
   if (state._currentBars && state._currentBars.code === code && state._currentBars.period === period) {
     return state._currentBars.bars;
   }
-  const res = await fetchBars(code, period, 400);
+  const res = await fetchBars(code, period, 800);
   const bars = res.bars || [];
   state._currentBars = { code, period, bars };
   return bars;
@@ -802,56 +945,6 @@ async function addSegment(code, period) {
     saveLocalEdits(code, sec.drawings);
     loadAndRenderPeriodDetail(code, period);
   }, defaults);
-}
-
-// ========== 段编辑与删除 ==========
-function onDetailAction(e) {
-  const btn = e.target.closest('[data-act]');
-  if (!btn) return;
-  e.stopPropagation();
-  const act = btn.dataset.act;
-  const segId = btn.dataset.id;
-  const code = state.selectedCode;
-  const period = state.selectedPeriod;
-  if (!code || !period) return;
-  const sec = state.securities.find((s) => s.code === code);
-  if (!sec) return;
-  const d = sec.drawings[period];
-  if (!d) return;
-  const targetSeg = (d.segments || []).find((s) => s.id === segId);
-  if (!targetSeg) return;
-
-  if (act === 'edit') {
-    openEditor(targetSeg, async (newStart, newEnd) => {
-      let bars;
-      try {
-        bars = await ensureBars(code, period);
-      } catch {
-        alert('行情数据加载失败，请检查网络后重新编辑');
-        return;
-      }
-      // 编辑起点/终点时间后，按原段涨跌方向从腾讯财经 K 线取对应高低价，避免沿用 PC 导出旧价格
-      const sBar = barAtTime(bars, newStart);
-      const eBar = barAtTime(bars, newEnd);
-      const direction = targetSeg.direction;
-      targetSeg.start.time = newStart;
-      targetSeg.start.price = endpointPrice(sBar, true, direction) ?? targetSeg.start.price;
-      targetSeg.end.time = newEnd;
-      targetSeg.end.price = endpointPrice(eBar, false, direction) ?? targetSeg.end.price;
-      targetSeg.direction = direction;
-      saveLocalEdits(code, sec.drawings);
-      loadAndRenderPeriodDetail(code, period);
-    });
-  } else if (act === 'del') {
-    if (!confirm('确定删除此段？')) return;
-    d.segments = d.segments.filter((s) => s.id !== segId);
-    (d.zhongshus || []).forEach((z) => {
-      z.segmentIds = (z.segmentIds || []).filter((id) => id !== segId);
-    });
-    d.zhongshus = (d.zhongshus || []).filter((z) => (z.segmentIds || []).length >= 3);
-    saveLocalEdits(code, sec.drawings);
-    loadAndRenderPeriodDetail(code, period);
-  }
 }
 
 // ========== Tab 切换 ==========
@@ -1061,11 +1154,6 @@ function init() {
     localStorage.setItem(THEME_KEY, mono ? 'mono' : 'color');
   });
 
-  $('#sec-list').addEventListener('click', (e) => {
-    const actionBtn = e.target.closest('[data-act]');
-    if (actionBtn) { onDetailAction(e); }
-  });
-
   const headerBack = document.getElementById('btn-header-back');
   if (headerBack) headerBack.addEventListener('click', () => animateBack());
 
@@ -1093,7 +1181,7 @@ function init() {
 
   if ('serviceWorker' in navigator && !window.__CHANM_NOCACHE__) {
     navigator.serviceWorker.addEventListener('controllerchange', () => location.reload());
-    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js?v=20260716a').catch(() => {}));
+    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js?v=20260718b').catch(() => {}));
   }
 
   window.__CHANM_LOADED__ = true;

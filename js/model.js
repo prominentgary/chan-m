@@ -60,24 +60,52 @@ export function makeZhongshu(segmentIds) {
 // 从桌面端 drawings JSON 导入为段/中枢
 export function fromDrawings(drawings) {
   const segments = [];
-  const zhongshus = [];
+  const segById = {};
+
+  // 第一遍先收集所有段
   for (const d of drawings || []) {
-    if (d._isZhongshu) {
-      zhongshus.push({
-        id: d.id || uid('zs'),
-        kind: 'zhongshu',
-        segmentIds: d._zhongshuLines || [],
-      });
-    } else if (d.type === 'line' && d.points?.length >= 2) {
+    if (d.type === 'line' && d.points?.length >= 2) {
       const [a, b] = [d.points[0], d.points[d.points.length - 1]];
       const start = { time: normTime(a.time), price: a.price };
       const end = { time: normTime(b.time), price: b.price };
-      segments.push({
+      const seg = {
         id: d.id || uid('seg'),
         kind: 'segment',
         period: normPeriod(d.createdPeriod) || '',
         direction: end.price >= start.price ? 'up' : 'down',
         start, end,
+      };
+      segments.push(seg);
+      segById[seg.id] = seg;
+    }
+  }
+
+  const sortedSegs = [...segments].sort((a, b) => a.start.time - b.start.time);
+  const zhongshus = [];
+
+  // 第二遍处理中枢：按 PC 端矩形右边界把延伸段一起纳入
+  for (const d of drawings || []) {
+    if (d._isZhongshu) {
+      const baseIds = d._zhongshuLines || [];
+      let segmentIds = [...baseIds];
+
+      if (d.points && d.points.length >= 2 && baseIds.length >= 3) {
+        const rightSec = Math.max(normTime(d.points[0].time), normTime(d.points[1].time));
+        const baseSegs = baseIds.map((id) => segById[id]).filter(Boolean);
+        if (baseSegs.length === 3) {
+          baseSegs.sort((a, b) => a.start.time - b.start.time);
+          const startIdx = sortedSegs.findIndex((s) => s.id === baseSegs[0].id);
+          const endIdx = sortedSegs.findIndex((s) => s.end.time === rightSec);
+          if (startIdx >= 0 && endIdx >= startIdx + 2) {
+            segmentIds = sortedSegs.slice(startIdx, endIdx + 1).map((s) => s.id);
+          }
+        }
+      }
+
+      zhongshus.push({
+        id: d.id || uid('zs'),
+        kind: 'zhongshu',
+        segmentIds,
       });
     }
   }
@@ -87,6 +115,9 @@ export function fromDrawings(drawings) {
 // 导出为桌面端兼容的 drawings 结构
 export function toDrawings(segments, zhongshus) {
   const out = [];
+  const segById = {};
+  for (const s of segments) segById[s.id] = s;
+
   for (const s of segments) {
     out.push({
       id: s.id, type: 'line', variant: 'dotted',
@@ -96,10 +127,29 @@ export function toDrawings(segments, zhongshus) {
     });
   }
   for (const z of zhongshus) {
+    let zsSegs = (z.segmentIds || []).map((id) => segById[id]).filter(Boolean);
+    let points = [];
+    let zhongshuLines = z.segmentIds || [];
+    if (zsSegs.length >= 3) {
+      zsSegs = zsSegs.sort((a, b) => a.start.time - b.start.time);
+      // PC 端要求 _zhongshuLines 必须是原始 3 段；右边界通过 points 体现延伸
+      zhongshuLines = zsSegs.slice(0, 3).map((s) => s.id);
+      const base3 = zsSegs.slice(0, 3);
+      const lows = base3.map((s) => Math.min(s.start.price, s.end.price));
+      const highs = base3.map((s) => Math.max(s.start.price, s.end.price));
+      const overlapLow = Math.max(...lows);
+      const overlapHigh = Math.min(...highs);
+      const first = zsSegs[0];
+      const last = zsSegs[zsSegs.length - 1];
+      points = [
+        { time: first.start.time, price: overlapHigh },
+        { time: last.end.time, price: overlapLow },
+      ];
+    }
     out.push({
       id: z.id, type: 'rect', variant: 'dashed',
       style: { color: '#f0b429', lineType: 'dotted', width: 2 },
-      points: [], _isZhongshu: true, _zhongshuLines: z.segmentIds,
+      points, _isZhongshu: true, _zhongshuLines: zhongshuLines,
     });
   }
   return out;
