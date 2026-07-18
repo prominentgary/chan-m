@@ -398,7 +398,7 @@ body {
 #sec-list { touch-action: pan-y; }
 #sec-list.swiping { transition: none !important; }
 
-/* 卡片依次进出场：返回时自上而下依次左移淡出；进入时依次右移淡入 */
+/* 卡片进场动画：自上而下依次右移淡入 */
 .anim-item {
   transition: transform .30s cubic-bezier(.22,.61,.36,1), opacity .30s ease;
   will-change: transform, opacity;

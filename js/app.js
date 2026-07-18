@@ -230,37 +230,13 @@ const VIEW_DEPTH = { list: 0, periods: 1, detail: 2 };
 function pushView(view, code = null, period = null) {
   const curDepth = VIEW_DEPTH[state.view] ?? 0;
   const newDepth = VIEW_DEPTH[view] ?? 0;
-  if (newDepth > curDepth) {
-    // 前进：先执行退场动画，再渲染新视图
-    animateForward(() => {
-      navigate(view, code, period);
-      history.pushState({ chanmView: view, code, period }, '');
-    });
-  } else if (newDepth < curDepth) {
-    navigate(view, code, period);
-    history.back();
-  } else {
-    history.replaceState({ chanmView: view, code, period }, '');
-  }
+  navigate(view, code, period);
+  if (newDepth > curDepth) history.pushState({ chanmView: view, code, period }, '');
+  else if (newDepth < curDepth) history.back();
+  else history.replaceState({ chanmView: view, code, period }, '');
 }
 
-// 前进时卡片依次右移淡出，结束后执行回调
-function animateForward(onDone) {
-  const b = document.getElementById('sec-list');
-  if (!b) { onDone(); return; }
-  let selector = '.sec-card';
-  if (state.view === 'periods') selector = '.sec-card, .period-row';
-  const items = b.querySelectorAll(selector);
-  if (!items.length) { onDone(); return; }
-  items.forEach((el, i) => {
-    el.classList.add('anim-item', 'out');
-    el.style.transitionDelay = (i * STAGGER) + 'ms';
-  });
-  const total = items.length * STAGGER + 340;
-  setTimeout(onDone, total);
-}
-
-// 计算上一级视图（基于当前 state，避免依赖历史栈深度）
+// 返回上一级：手势、底部返回按钮、安卓/桌面硬件返回键 的统一入口
 function backTarget() {
   if (state.view === 'detail') return ['periods', state.selectedCode, state.selectedPeriod];
   if (state.view === 'periods') return ['list', null, null];
@@ -319,31 +295,15 @@ function staggerEnter(root, selector) {
       el.style.transitionDelay = (i * STAGGER) + 'ms';
       el.classList.remove('in-start');
     });
+    // 动画结束后清除内联 transitionDelay，避免影响后续退场动画
+    const lastDelay = (items.length - 1) * STAGGER;
+    setTimeout(() => {
+      items.forEach((el) => { el.style.transitionDelay = ''; });
+    }, lastDelay + 350);
   }));
 }
 
-// 返回时卡片自上而下依次右移淡出，结束后执行 goBack
-function animateBack() {
-  const b = document.getElementById('sec-list');
-  if (!b) { if (window.goBack) window.goBack(); return; }
-  let selector = '.period-row, .period-title, .plain-card, .zs-block';
-  if (state.view === 'periods') {
-    selector = '.sec-card, .period-row, .nav-back-bottom';
-  } else if (state.view === 'detail') {
-    selector = '.sec-card, .period-title, .plain-card, .zs-block, .nav-back-bottom';
-  }
-  const items = b.querySelectorAll(selector);
-  if (!items.length) { if (window.goBack) window.goBack(); return; }
-  items.forEach((el, i) => {
-    el.classList.add('anim-item', 'out');
-    el.style.transitionDelay = (i * STAGGER) + 'ms';
-  });
-  const total = items.length * STAGGER + 340;
-  setTimeout(() => { if (window.goBack) window.goBack(); }, total);
-}
-window.animateBack = animateBack;
-
-// 每次渲染盯盘视图前，清掉上一视图遗留的容器位移/阴影/动画类
+// 返回上一级：手势、底部返回按钮、安卓/桌面硬件返回键 的统一入口
 function resetContainer() {
   const b = document.getElementById('sec-list');
   if (!b) return;
@@ -471,7 +431,7 @@ function renderPeriodList(code) {
     <div class="nav-back nav-back-bottom" data-back="list">← 返回证券列表</div>
   `;
   const backBtn = box.querySelector('[data-back="list"]');
-  if (backBtn) backBtn.addEventListener('click', () => animateBack());
+  if (backBtn) backBtn.addEventListener('click', () => goBack());
   box.querySelectorAll('.period-row').forEach((row) => {
     const p = row.dataset.period;
     row.addEventListener('click', () => {
@@ -591,7 +551,7 @@ async function renderPeriodDetail(code, period) {
     <div class="nav-back nav-back-bottom" data-back="periods">← 返回周期列表</div>
   `;
   const backBtn = box.querySelector('[data-back="periods"]');
-  if (backBtn) backBtn.addEventListener('click', () => animateBack());
+  if (backBtn) backBtn.addEventListener('click', () => goBack());
   await loadAndRenderPeriodDetail(code, period);
   staggerEnter(box, '.sec-card');
 }
@@ -1155,7 +1115,7 @@ function init() {
   });
 
   const headerBack = document.getElementById('btn-header-back');
-  if (headerBack) headerBack.addEventListener('click', () => animateBack());
+  if (headerBack) headerBack.addEventListener('click', () => goBack());
 
   $$('.wx-tab').forEach((tab) => {
     const name = tab.dataset.tab || '';

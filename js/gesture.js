@@ -118,8 +118,7 @@
         b.style.boxShadow = '';
         b.style.transition = '';
         cleanup(true);
-        if (window.animateBack) window.animateBack();
-        else if (window.goBack) window.goBack();
+        if (window.goBack) window.goBack();
         return;
       }
       // 未达阈值：整块回弹
