@@ -1,9 +1,9 @@
 // sw.js —— 离线缓存（PWA）
-const CACHE = 'chan-m-v67';
+const CACHE = 'chan-m-v73';
 const ASSETS = [
   './', './index.html', './manifest.webmanifest', './icon.svg',
-  './css/m.css?v=20260719r',
-  './js/app.js?v=20260719u', './js/gesture.js?v=20260715c', './js/fetcher.js?v=20260714y', './js/macd.js?v=20260714y', './js/model.js?v=20260719i',
+  './css/m.css?v=20260719x',
+  './js/app.js?v=20260719y', './js/gesture.js?v=20260715c', './js/fetcher.js?v=20260714y', './js/macd.js?v=20260714y', './js/model.js?v=20260719i',
   './js/algo.js?v=20260719i', './js/store.js?v=20260714y', './js/table.js?v=20260719i', './js/editor.js?v=20260715z', './js/sync.js?v=20260719j', './js/minichart.js?v=20260717b',
   './data/manifest.json',
 ];
@@ -45,6 +45,8 @@ self.addEventListener('install', (e) => {
 
 self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
+  // 只拦截 http/https 请求，跳过 chrome-extension:// 等（Cache API 不支持非 http 请求）
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return;
   // JS/CSS/HTML/manifest 网络优先，保证代码更新立即生效
   const isAppAsset = url.pathname.match(/\.(js|css|html|webmanifest|svg)$/);
   // data/ 下的 JSON 也网络优先，避免 PC 端删除/精简周期后手机仍看到旧数据

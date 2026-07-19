@@ -112,6 +112,9 @@ const state = {
   searchQuery: '',
 };
 
+// 加载状态：用于区分「正在加载」与「真的没有数据」，避免首屏误报「暂无画线数据」
+const loadState = { loading: false, error: null };
+
 function fmt(sec, period) { return formatTime(sec, period !== 'day'); }
 function setStatus(t) { /* 顶部状态栏已移除，保留函数避免其它调用报错 */ }
 
@@ -174,41 +177,54 @@ async function loadManifest() {
 }
 
 async function loadAllDrawings() {
-  setStatus('导入中…');
+  loadState.loading = true;
+  loadState.error = null;
+  renderDingpanView(); // 立即刷新：若列表仍为空则显示「加载中…」
   try {
     const list = await loadManifest();
-    const securities = [];
-    let segTotal = 0;
-    const errors = [];
+    // 收集所有「证券 × 周期」任务，用 Promise.all 并行拉取，避免串行 await 造成的慢加载
+    const securities = list.map((s) => ({
+      code: s.code, name: s.name || null, periods: s.periods, drawings: {},
+    }));
+    const byCode = Object.fromEntries(securities.map((s) => [s.code, s]));
+    const tasks = [];
     for (const s of list) {
-      const staticDrawings = {};
       for (const p of s.periods) {
-        const data = await loadStaticData(s.code, p);
-        if (data && (data.segments || data.zhongshus)) {
-          staticDrawings[p] = {
-            segments: data.segments || [],
-            zhongshus: data.zhongshus || [],
-            exportedAt: data.exportedAt || 0,
-            bars: data.bars || null,
-          };
-        } else {
-          errors.push(`${s.code}_${p}.json`);
-        }
+        tasks.push(loadStaticData(s.code, p).then((data) => ({ code: s.code, p, data })));
       }
-      const drawings = mergeDrawings(staticDrawings, s.code);
-      for (const p of Object.keys(drawings)) {
-        segTotal += (drawings[p].segments || []).length;
+    }
+    const results = await Promise.all(tasks);
+    const errors = [];
+    for (const { code, p, data } of results) {
+      if (data && (data.segments || data.zhongshus)) {
+        byCode[code].drawings[p] = {
+          segments: data.segments || [],
+          zhongshus: data.zhongshus || [],
+          exportedAt: data.exportedAt || 0,
+          bars: data.bars || null,
+        };
+      } else {
+        errors.push(`${code}_${p}.json`);
       }
-      securities.push({ code: s.code, name: s.name || null, periods: s.periods, drawings });
+    }
+    // 合并本地编辑（与静态数据取较新者）
+    for (const s of list) {
+      byCode[s.code].drawings = mergeDrawings(byCode[s.code].drawings, s.code);
+    }
+    let segTotal = 0;
+    for (const sec of securities) {
+      for (const p of Object.keys(sec.drawings)) {
+        segTotal += (sec.drawings[p].segments || []).length;
+      }
     }
     state.securities = securities;
     renderDingpanView();
     startAllRealtime();
-    let msg = `已导入 ${securities.length} 个证券 · ${segTotal} 段画线`;
-    if (errors.length) msg += ` · ${errors.length} 个文件缺失`;
-    setStatus(msg);
   } catch (e) {
-    setStatus(e.message || '导入失败');
+    loadState.error = e.message || '导入失败';
+  } finally {
+    loadState.loading = false;
+    renderDingpanView(); // 收尾渲染：加载中 → 列表 / 错误提示
   }
 }
 
@@ -327,11 +343,34 @@ function renderDingpanView() {
   else if (state.view === 'detail') renderPeriodDetail(state.selectedCode, state.selectedPeriod);
 }
 
+// ========== 加载界面诗句 ==========
+// 证券列表为空（加载中或暂无数据）时，展示两首诗替代原来的文字提示。
+function renderPoems(errorMsg) {
+  return `
+    <div class="poem-screen">
+      <div class="poem">
+        <div class="poem-head">善棋道人 ·《绝句》</div>
+        <div class="poem-body">
+          <p>烂柯真诀妙通神，一局曾经几度春。</p>
+          <p>自出洞来无敌手，得饶人处且饶人。</p>
+        </div>
+      </div>
+      <div class="poem">
+        <div class="poem-head">黄庭坚 ·《杂诗七首·其一》</div>
+        <div class="poem-body">
+          <p>此身天地一蘧庐，世事消磨绿鬓疏。</p>
+          <p>毕竟几人真得鹿，不知终日梦为鱼。</p>
+        </div>
+      </div>
+      ${errorMsg ? `<div class="poem-err">${errorMsg}</div>` : ''}
+    </div>`;
+}
+
 // ========== 证券列表渲染 ==========
 function renderSecurityList(filterQuery = '') {
   const box = $('#sec-list');
   if (!state.securities.length) {
-    box.innerHTML = '<div class="empty">暂无画线数据，请先在 PC 端导出</div>';
+    box.innerHTML = renderPoems(loadState.error);
     return;
   }
   const q = String(filterQuery || '').trim().toLowerCase();
@@ -1829,7 +1868,9 @@ function init() {
     searchInput.addEventListener('input', () => { if (!isComposing) onSearchInput({ target: searchInput }); });
   }
 
-  switchTab('dingpan');
+  // file:// 模式下无法 fetch 站点数据，不进入加载态（保持「暂无画线数据」提示并引导用 start_chanm.bat）
+  if (location.protocol !== 'file:') loadState.loading = true;
+  switchTab('dingpan'); // 先渲染：若本地无缓存则显示「加载中…」而非「暂无画线数据」
   history.replaceState({ chanmView: 'list' }, '');
   startIndexRealtime();
 
@@ -1840,7 +1881,7 @@ function init() {
 
   if ('serviceWorker' in navigator && !window.__CHANM_NOCACHE__) {
     navigator.serviceWorker.addEventListener('controllerchange', () => location.reload());
-    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js?v=20260719q').catch(() => {}));
+    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js?v=20260719t').catch(() => {}));
   }
 
   window.__CHANM_LOADED__ = true;
