@@ -53,8 +53,10 @@ export function makeSegment({ startSec, endSec, period, bars }) {
   };
 }
 
-export function makeZhongshu(segmentIds) {
-  return { id: uid('zs'), kind: 'zhongshu', segmentIds: [...segmentIds] };
+export function makeZhongshu(segmentIds, baseSegmentIds) {
+  const ids = [...segmentIds];
+  const baseIds = baseSegmentIds && baseSegmentIds.length === 3 ? [...baseSegmentIds] : ids.slice(0, 3);
+  return { id: uid('zs'), kind: 'zhongshu', segmentIds: ids, baseSegmentIds: baseIds };
 }
 
 // 从桌面端 drawings JSON 导入为段/中枢
@@ -102,10 +104,17 @@ export function fromDrawings(drawings) {
         }
       }
 
+      let baseSegmentIds = baseIds.length === 3 ? baseIds : segmentIds.slice(0, 3);
+      baseSegmentIds = baseSegmentIds
+        .map((id) => segById[id])
+        .filter(Boolean)
+        .sort((a, b) => a.start.time - b.start.time)
+        .map((s) => s.id);
       zhongshus.push({
         id: d.id || uid('zs'),
         kind: 'zhongshu',
         segmentIds,
+        baseSegmentIds,
       });
     }
   }
@@ -129,12 +138,16 @@ export function toDrawings(segments, zhongshus) {
   for (const z of zhongshus) {
     let zsSegs = (z.segmentIds || []).map((id) => segById[id]).filter(Boolean);
     let points = [];
-    let zhongshuLines = z.segmentIds || [];
+    let zhongshuLines = (z.baseSegmentIds && z.baseSegmentIds.length === 3)
+      ? z.baseSegmentIds
+      : (z.segmentIds || []).slice(0, 3);
     if (zsSegs.length >= 3) {
       zsSegs = zsSegs.sort((a, b) => a.start.time - b.start.time);
       // PC 端要求 _zhongshuLines 必须是原始 3 段；右边界通过 points 体现延伸
-      zhongshuLines = zsSegs.slice(0, 3).map((s) => s.id);
-      const base3 = zsSegs.slice(0, 3);
+      let base3 = (z.baseSegmentIds && z.baseSegmentIds.length === 3)
+        ? z.baseSegmentIds.map((id) => segById[id]).filter(Boolean)
+        : zsSegs.slice(0, 3);
+      base3 = base3.sort((a, b) => a.start.time - b.start.time);
       const lows = base3.map((s) => Math.min(s.start.price, s.end.price));
       const highs = base3.map((s) => Math.max(s.start.price, s.end.price));
       const overlapLow = Math.max(...lows);

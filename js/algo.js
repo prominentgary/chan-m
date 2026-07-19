@@ -6,6 +6,68 @@ function sliceBars(bars, startSec, endSec) {
   return bars.filter((b) => b.time >= startSec && b.time <= endSec);
 }
 
+// 按 PC 端 drawing.js 规则检测中枢：连续 3 段相连且价格区间有重叠
+// 先使用端点价格判断；端点无重叠时 fallback 到段内 K 线最高/最低价
+function isSegConnected(a, b) {
+  if (!a || !b) return false;
+  return a.end.time === b.start.time && Math.abs(a.end.price - b.start.price) < 1e-3;
+}
+
+function getSegmentBarsRange(bars, seg) {
+  const sub = sliceBars(bars, seg.start.time, seg.end.time);
+  if (!sub.length) return null;
+  return {
+    low: Math.min(...sub.map((b) => b.low)),
+    high: Math.max(...sub.map((b) => b.high)),
+  };
+}
+
+export function detectZhongshu(segments, startIdx, bars = null) {
+  if (!segments || startIdx < 0 || startIdx + 2 >= segments.length) return null;
+  const sorted = [...segments].sort((a, b) => a.start.time - b.start.time);
+  const s1 = sorted[startIdx];
+  const s2 = sorted[startIdx + 1];
+  const s3 = sorted[startIdx + 2];
+
+  if (!isSegConnected(s1, s2) || !isSegConnected(s2, s3)) return null;
+
+  const lows = [
+    Math.min(s1.start.price, s1.end.price),
+    Math.min(s2.start.price, s2.end.price),
+    Math.min(s3.start.price, s3.end.price),
+  ];
+  const highs = [
+    Math.max(s1.start.price, s1.end.price),
+    Math.max(s2.start.price, s2.end.price),
+    Math.max(s3.start.price, s3.end.price),
+  ];
+  let overlapLow = Math.max(...lows);
+  let overlapHigh = Math.min(...highs);
+  let isKlineZhongshu = false;
+
+  if (overlapLow > overlapHigh) {
+    if (!bars || !bars.length) return null;
+    const r1 = getSegmentBarsRange(bars, s1);
+    const r2 = getSegmentBarsRange(bars, s2);
+    const r3 = getSegmentBarsRange(bars, s3);
+    if (!r1 || !r2 || !r3) return null;
+    overlapLow = Math.max(r1.low, r2.low, r3.low);
+    overlapHigh = Math.min(r1.high, r2.high, r3.high);
+    if (overlapLow > overlapHigh) return null;
+    isKlineZhongshu = true;
+  }
+
+  return {
+    segmentIds: [s1.id, s2.id, s3.id],
+    baseSegmentIds: [s1.id, s2.id, s3.id],
+    overlapLow,
+    overlapHigh,
+    isKlineZhongshu,
+    startTime: s1.start.time,
+    endTime: s3.end.time,
+  };
+}
+
 // 计算单段力度（与桌面端对齐：按段方向累加 MACD 柱，上涨累加正值，下跌累加负值，最后放大 10000 倍）
 export function segmentStrength(bars, seg, prevDir = null) {
   const sub = sliceBars(bars, seg.start.time, seg.end.time);

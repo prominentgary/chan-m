@@ -1,5 +1,5 @@
 // sync.js —— 与桌面端互导画线 JSON
-import { fromDrawings, toDrawings } from './model.js?v=20260719c';
+import { fromDrawings, toDrawings } from './model.js?v=20260719i';
 
 export function exportJSON(segments, zhongshus) {
   const data = toDrawings(segments, zhongshus);

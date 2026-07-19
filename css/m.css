@@ -125,6 +125,7 @@ body {
 
 /* 中枢分组（加强区分：橙色描边 + 琥珀色标题栏） */
 .zs-block {
+  position: relative;
   background: transparent; border-radius: 12px; overflow: hidden;
   border: 1px solid #ffd591; border-left: 4px solid var(--wx-accent);
   box-shadow: 0 2px 6px rgba(250,140,22,.14);
@@ -140,9 +141,101 @@ body {
 /* 周期详情内的中枢分组需要白底（外层 #period-detail 已无白色背景） */
 #period-detail .zs-block { background: var(--wx-card); }
 
+/* 中枢编辑态：边缘高亮、提示文字 */
+.zs-block.editing {
+  overflow: visible;
+  border-color: var(--wx-accent);
+  box-shadow: 0 0 0 2px rgba(240, 180, 41, .35), 0 4px 12px rgba(250, 140, 22, .18);
+  z-index: 2;
+}
+/* 中枢上下边缘拖动区 */
+.zs-edge {
+  position: absolute;
+  left: 0; right: 0;
+  height: 32px;
+  z-index: 6;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  cursor: ns-resize;
+  touch-action: none;
+  pointer-events: auto;
+}
+.zs-edge::after {
+  content: '';
+  width: 48px; height: 6px;
+  border-radius: 3px;
+  background: var(--wx-accent);
+  box-shadow: 0 1px 4px rgba(0,0,0,.15);
+  opacity: .75;
+  transition: opacity .15s ease, width .15s ease;
+}
+.zs-edge-top { top: -16px; }
+.zs-edge-bottom { bottom: -16px; }
+.zs-block.editing .zs-edge { display: flex; }
+
+/* 中枢编辑态解散按钮 */
+.zs-edit-close {
+  margin-left: auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .92);
+  color: #ad6800;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0,0,0,.10);
+}
+.zs-edit-close svg {
+  width: 12px;
+  height: 12px;
+}
+.zs-block.editing .zs-edit-close { display: inline-flex; }
+.zs-edit-close:active { background: #fff0d6; }
+.zs-block.editing .zs-edge::after {
+  animation: zs-edge-pulse 1.6s ease-in-out infinite;
+}
+@keyframes zs-edge-pulse {
+  0%, 100% { opacity: .75; transform: scaleX(1); }
+  50% { opacity: 1; transform: scaleX(1.18); }
+}
+.zs-edge.dragging { background: rgba(240, 180, 41, .14); }
+.zs-edge.dragging::after { opacity: 1; width: 62px; animation: none; }
+.zs-drag-badge {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  background: var(--wx-accent);
+  color: #fff;
+  border-radius: 999px;
+  white-space: nowrap;
+  z-index: 10;
+  pointer-events: none;
+  box-shadow: 0 2px 8px rgba(0,0,0,.15);
+}
+.zs-edge-top .zs-drag-badge { bottom: 36px; }
+.zs-edge-bottom .zs-drag-badge { top: 36px; }
+
+/* 中枢编辑纳入/剔除预览 */
+.card.zs-preview-include {
+  box-shadow: 0 0 0 2px var(--wx-accent), 0 3px 10px rgba(240, 180, 41, .18);
+  transform: scale(1.01);
+}
+.card.zs-preview-exclude {
+  opacity: .42;
+}
+
 /* 段卡片（企业微信会话项风格） */
 .card {
   position: relative;
+  transition: opacity .2s ease, box-shadow .2s ease, transform .2s ease;
   background: var(--wx-card); padding: 12px 14px;
   border-bottom: 1px solid var(--wx-line);
   display: flex; gap: 12px; align-items: flex-start;
@@ -158,6 +251,23 @@ body {
   margin-bottom: 10px;
   background: var(--wx-card);
 }
+
+/* 盯盘段卡片标记 */
+.watch-card { position: relative; }
+.watch-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  color: var(--wx-accent);
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+  pointer-events: none;
+}
+.watch-badge svg { display: block; }
 
 .card-avatar {
   width: 44px; height: 44px; border-radius: 8px; flex-shrink: 0;
@@ -234,6 +344,7 @@ body {
 .overlay-btn.icon svg { fill: none; }
 .overlay-btn:active { background: #f2f2f2; }
 .overlay-btn.danger { color: var(--wx-red); }
+.overlay-btn.accent { color: var(--wx-accent); }
 
 .icon-btn {
   background: none; border: none; padding: 4px;
@@ -360,6 +471,35 @@ body {
 .sec-change.down { color: var(--wx-green); }
 .sec-arrow { font-size: 14px; color: var(--wx-muted); }
 .sec-detail { border-top: 1px solid var(--wx-line); padding: 8px 10px 10px; }
+
+/* 周期列表内：复制盘面快照按钮（简约风） */
+.ai-snapshot-btn {
+  display: block; width: 100%; margin: 2px 0 0;
+  padding: 9px 14px; box-sizing: border-box;
+  background: var(--wx-card, #ffffff);
+  color: var(--wx-accent, #f0b429);
+  border: 1px solid rgba(240, 180, 41, .35);
+  border-radius: 8px;
+  font-size: 13px; font-weight: 500; letter-spacing: .3px;
+  text-align: center; cursor: pointer;
+}
+.ai-snapshot-btn:active { background: #f0f0f0; }
+
+/* 详情页顶部证券卡片：吸顶；下滚后折叠为单行 */
+.sec-card--detail {
+  position: sticky;
+  top: 48px;          /* 紧贴顶部标题栏下方 */
+  z-index: 9;
+  margin-bottom: 10px;
+  box-shadow: 0 1px 4px rgba(0,0,0,.06);
+}
+.sec-card--detail.sec-card--collapsed .sec-head { padding: 8px 14px; }
+.sec-card--detail.sec-card--collapsed .sec-info { flex-direction: row; align-items: baseline; gap: 8px; }
+.sec-card--detail.sec-card--collapsed .sec-name { font-size: 16px; }
+.sec-card--detail.sec-card--collapsed .sec-meta { font-size: 13px; }
+.sec-card--detail.sec-card--collapsed .sec-quote { display: flex; align-items: baseline; gap: 8px; }
+.sec-card--detail.sec-card--collapsed .sec-price { font-size: 16px; }
+.sec-card--detail.sec-card--collapsed .sec-change { font-size: 13px; }
 
 /* 周期分组块 */
 .period-block {

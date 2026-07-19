@@ -2,11 +2,13 @@
 // 注意：所有 import 路径均带版本号，每次发布新版本时请同步修改 html/js/sw 中的版本号
 import { fetchBars, fetchRealtimeMulti, formatTime, formatPrice } from './fetcher.js?v=20260714y';
 import { computeMACD } from './macd.js?v=20260714y';
-import { segmentStrength, detectStrengthIndicators, detectOneBuySell, detectTwoAndThreeBuySell, computeZhongshuStrength } from './algo.js?v=20260719b';
-import { renderSegments } from './table.js?v=20260718e';
+import { segmentStrength, detectStrengthIndicators, detectOneBuySell, detectTwoAndThreeBuySell, computeZhongshuStrength, detectZhongshu } from './algo.js?v=20260719i';
+import { renderSegments } from './table.js?v=20260719i';
 import { renderMiniChart } from './minichart.js?v=20260717b';
-import { loadStaticData } from './sync.js?v=20260719c';
+import { loadStaticData } from './sync.js?v=20260719j';
 import { openEditor } from './editor.js?v=20260715z';
+import { makeZhongshu } from './model.js?v=20260719i';
+import { buildFromStruct, formatChanSnapshot, alignPeriods } from '../shared/ai_snapshot.js?v=20260719a';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => document.querySelectorAll(s);
@@ -142,7 +144,10 @@ function mergeDrawings(staticData, code) {
     if (!ld) { result[p] = sd; continue; }
     const sdTime = sd.exportedAt || 0;
     const ldTime = local.savedAt || 0;
-    result[p] = ldTime >= sdTime ? ld : sd;
+    // 本地编辑优先，但 bars（来自导出）只存在于静态数据，需保留以计算 MACD 力度
+    result[p] = ldTime >= sdTime
+      ? { ...ld, bars: ld.bars || (sd ? sd.bars : null) }
+      : sd;
   }
   return result;
 }
@@ -184,6 +189,7 @@ async function loadAllDrawings() {
             segments: data.segments || [],
             zhongshus: data.zhongshus || [],
             exportedAt: data.exportedAt || 0,
+            bars: data.bars || null,
           };
         } else {
           errors.push(`${s.code}_${p}.json`);
@@ -426,12 +432,10 @@ function renderPeriodList(code) {
           </div>
         </div>
       </div>
+      <button class="ai-snapshot-btn" data-ai-snapshot="${code}">盘面快照 for AI</button>
     </div>
     <div class="period-list">${rows}</div>
-    <div class="nav-back nav-back-bottom" data-back="list">← 返回证券列表</div>
   `;
-  const backBtn = box.querySelector('[data-back="list"]');
-  if (backBtn) backBtn.addEventListener('click', () => goBack());
   box.querySelectorAll('.period-row').forEach((row) => {
     const p = row.dataset.period;
     row.addEventListener('click', () => {
@@ -440,8 +444,69 @@ function renderPeriodList(code) {
     });
     attachPeriodRowLongPress(row, code, p);
   });
+  const aiBtn = box.querySelector('.ai-snapshot-btn');
+  if (aiBtn) {
+    aiBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      copyChanSnapshot(code);
+    });
+  }
   staggerEnter(box, '.sec-card, .period-row');
 }
+
+  // ========== 复制盘面快照（供 AI 解读） ==========
+  function _toast(msg, ms) {
+    let el = document.getElementById('__chanm_toast');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = '__chanm_toast';
+      el.style.cssText = 'position:fixed;left:50%;top:42%;transform:translate(-50%,-50%);'
+        + 'background:rgba(0,0,0,.82);color:#fff;padding:10px 16px;border-radius:8px;'
+        + 'font-size:14px;z-index:9999;max-width:78%;text-align:center;pointer-events:none;'
+        + 'opacity:0;transition:opacity .18s;';
+      document.body.appendChild(el);
+    }
+    el.textContent = msg;
+    el.style.opacity = '1';
+    clearTimeout(el.__t);
+    el.__t = setTimeout(function () { el.style.opacity = '0'; }, ms || 2200);
+  }
+
+  function copyChanSnapshot(code) {
+    const sec = state.securities.find((s) => s.code === code);
+    if (!sec) return;
+    const periods = [];
+    Object.keys(sec.drawings || {}).forEach((p) => {
+      const d = sec.drawings[p];
+      if (!d || !d.segments || d.segments.length === 0) return;
+      // d.bars 为导出时嵌入的 K 线（含 MACD 精确力度）；缺失则退化为几何代理
+      periods.push(buildFromStruct(d.segments, d.zhongshus, p, d.bars));
+    });
+    if (!periods.length) { _toast('该证券各周期暂无画线'); return; }
+    alignPeriods(periods);
+    const text = formatChanSnapshot({ code, name: sec.name, periods });
+    copyTextToClipboard(text);
+    _toast('盘面快照已复制，粘贴到任意 AI App 即可解读');
+  }
+
+  function copyTextToClipboard(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).catch(() => fallbackCopy(text));
+    } else {
+      fallbackCopy(text);
+    }
+  }
+
+  function fallbackCopy(text) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); } catch (e) { /* ignore */ }
+    document.body.removeChild(ta);
+  }
 
 // ========== 长按周期行 → 宽简图（底部抽屉） ==========
 function openMiniSheet(code, period) {
@@ -522,6 +587,13 @@ function attachPeriodRowLongPress(row, code, period) {
   row.addEventListener('contextmenu', (e) => e.preventDefault());
 }
 
+// 详情页证券卡片：根据滚动位置切换折叠态（2 行 → 1 行）
+function onDetailScroll() {
+  const card = document.querySelector('.sec-card--detail');
+  if (!card) return;
+  card.classList.toggle('sec-card--collapsed', window.scrollY > 36);
+}
+
 // ========== 周期详情渲染 ==========
 async function renderPeriodDetail(code, period) {
   const box = $('#sec-list');
@@ -533,7 +605,7 @@ async function renderPeriodDetail(code, period) {
   const change = fmtIndexChange(rt?.price, rt?.prevClose);
   const priceText = rt?.price ? formatPrice(code, rt.price) : '';
   box.innerHTML = `
-    <div class="sec-card">
+    <div class="sec-card sec-card--detail">
       <div class="sec-head">
         <div class="sec-info">
           <div class="sec-name" data-name="${code}">${name}</div>
@@ -548,20 +620,16 @@ async function renderPeriodDetail(code, period) {
       </div>
     </div>
     <div id="period-detail"><div class="empty">加载中…</div></div>
-    <div class="nav-back nav-back-bottom" data-back="periods">← 返回周期列表</div>
   `;
-  const backBtn = box.querySelector('[data-back="periods"]');
-  if (backBtn) backBtn.addEventListener('click', () => goBack());
   await loadAndRenderPeriodDetail(code, period);
   staggerEnter(box, '.sec-card');
+  onDetailScroll(); // 同步初始折叠态（进入时若已下滚则立即折叠）
 }
 
 async function loadAndRenderPeriodDetail(code, period) {
   const sec = state.securities.find((s) => s.code === code);
   const detail = $('#period-detail');
   if (!sec || !detail) return;
-  const d = sec.drawings[period] || { segments: [], zhongshus: [] };
-  const group = { period, label: periodLabel(period), segments: [...d.segments], zhongshus: [...d.zhongshus], loaded: false, error: null };
 
   // 更高周期最新一段终点：用于在低级别周期隐藏过早的段卡片（聚焦到最新一段覆盖的交易日）
   const higherPeriod = getHigherPeriod(period, sec.periods || []);
@@ -572,19 +640,25 @@ async function loadAndRenderPeriodDetail(code, period) {
     const bars = curRes.bars || [];
     state._currentBars = { code, period, bars };
     computeMACD(bars);
+    // 1分钟图：先根据最新 K 线更新盯盘段终点，再重新构建渲染分组
+    if (period === '1m') updateWatchSegments(code, period, bars, false);
+    const d = sec.drawings[period] || { segments: [], zhongshus: [] };
+    const group = { period, label: periodLabel(period), segments: [...d.segments], zhongshus: [...d.zhongshus], loaded: false, error: null };
     computeStrengths(bars, group.segments, group.zhongshus);
     group.loaded = true;
     const hideBefore = computeHideBefore(higherSegments, higherPeriod, group.segments);
     if (!$('#period-detail')) return;
     renderSinglePeriodDetail(detail, code, group, hideBefore);
   } catch (err) {
+    const d = sec.drawings[period] || { segments: [], zhongshus: [] };
+    const group = { period, label: periodLabel(period), segments: [...d.segments], zhongshus: [...d.zhongshus], loaded: false, error: null };
     group.error = (err && err.message) || '加载失败';
     if (!$('#period-detail')) return;
     renderSinglePeriodDetail(detail, code, group, null);
   }
 }
 
-function renderSinglePeriodDetail(detail, code, g, hideBefore = null) {
+function renderSinglePeriodDetail(detail, code, g, hideBefore = null, animate = true) {
   detail.innerHTML = '';
   const header = document.createElement('div');
   header.className = 'period-title';
@@ -604,8 +678,33 @@ function renderSinglePeriodDetail(detail, code, g, hideBefore = null) {
   if (g.loaded || g.error) {
     renderSegments(detail, g.segments || [], g.zhongshus || [], (t) => fmt(t, g.period), code, false, hideBefore);
     attachSegmentCardActions(code, g.period);
+    attachZhongshuEditActions(code, g.period);
   }
-  staggerEnter(detail, '.period-title, .plain-card, .zs-block, .empty');
+  if (animate) staggerEnter(detail, '.period-title, .plain-card, .zs-block, .empty');
+}
+
+// 中枢编辑/本地修改后，不重新拉取行情，直接用缓存 bars 重新计算并渲染
+function refreshPeriodDetailWithoutFetch(code, period) {
+  const sec = state.securities.find((s) => s.code === code);
+  const detail = $('#period-detail');
+  if (!sec || !detail) return;
+  const d = sec.drawings[period] || { segments: [], zhongshus: [] };
+  const group = {
+    period,
+    label: periodLabel(period),
+    segments: [...(d.segments || [])],
+    zhongshus: [...(d.zhongshus || [])],
+    loaded: true,
+    error: null,
+  };
+  const higherPeriod = getHigherPeriod(period, sec.periods || []);
+  const higherSegments = (higherPeriod && sec.drawings[higherPeriod]?.segments) || [];
+  const bars = state._currentBars?.bars || [];
+  if (bars.length && group.segments.length) {
+    computeStrengths(bars, group.segments, group.zhongshus);
+  }
+  const hideBefore = computeHideBefore(higherSegments, higherPeriod, group.segments);
+  renderSinglePeriodDetail(detail, code, group, hideBefore, false);
 }
 
 // 长按段卡片：显示覆盖在该卡片上的操作蒙板（编辑 / 删除 / 新增）
@@ -641,9 +740,43 @@ function attachSegmentLongPress(card, code, period) {
 
 function showCardOverlay(card, code, period) {
   hideCardOverlay();
+  const segId = card.dataset.id;
+  const sec = state.securities.find((s) => s.code === code);
+  const d = sec?.drawings?.[period];
+  const sorted = [...(d?.segments || [])].sort((a, b) => a.start.time - b.start.time);
+  const idx = sorted.findIndex((s) => s.id === segId);
+  const targetSeg = sorted[idx];
+  const isWatch = targetSeg?._isWatch || false;
+  const isLatest = !isWatch && period === '1m' && targetSeg && sorted[sorted.length - 1]?.id === segId;
+  const bars = state._currentBars?.bars || [];
+  const detected = idx >= 0 ? detectZhongshu(sorted, idx, bars) : null;
+  const otherZsIds = new Set();
+  (d?.zhongshus || []).forEach((z) => {
+    (z.segmentIds || []).forEach((id) => otherZsIds.add(id));
+  });
+  const canDetect = !isWatch && detected && detected.segmentIds.every((id) => !otherZsIds.has(id));
+
+  const detectBtn = canDetect ? `
+    <button class="overlay-btn icon accent" data-act="detect" aria-label="中枢识别">
+      <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="4" y="7" width="16" height="10" rx="2"/>
+        <path d="M4 12 H20"/>
+      </svg>
+    </button>
+  ` : '';
+
+  const watchBtn = isLatest ? `
+    <button class="overlay-btn icon" data-act="watch" aria-label="盯盘">
+      <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+        <circle cx="12" cy="12" r="3"/>
+      </svg>
+    </button>
+  ` : '';
+
   const overlay = document.createElement('div');
   overlay.className = 'card-overlay';
-  overlay.innerHTML = `
+  overlay.innerHTML = isWatch ? `
     <button class="overlay-btn icon" data-act="edit" aria-label="编辑">
       <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round">
         <rect x="3" y="3" width="18" height="18" rx="4"/>
@@ -657,12 +790,28 @@ function showCardOverlay(card, code, period) {
         <line x1="6" y1="6" x2="18" y2="18"/>
       </svg>
     </button>
+  ` : `
+    <button class="overlay-btn icon" data-act="edit" aria-label="编辑">
+      <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="3" width="18" height="18" rx="4"/>
+        <path d="M15 5 L19 9"/>
+        <path d="M13 7 L17 11"/>
+      </svg>
+    </button>
+    <button class="overlay-btn icon danger" data-act="del" aria-label="删除">
+      <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="18" y1="6" x2="6" y2="18"/>
+        <line x1="6" y1="6" x2="18" y2="18"/>
+      </svg>
+    </button>
+    ${watchBtn}
     <button class="overlay-btn icon" data-act="add" aria-label="新增">
       <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
         <line x1="12" y1="5" x2="12" y2="19"/>
         <line x1="5" y1="12" x2="19" y2="12"/>
       </svg>
     </button>
+    ${detectBtn}
   `;
   card.appendChild(overlay);
   activeCardOverlay = overlay;
@@ -703,6 +852,382 @@ function hideCardOverlay() {
   document.removeEventListener('pointerdown', closeCardOverlayOnOutside, { capture: true });
 }
 
+// ========== 中枢编辑：长按标题进入编辑态，拖动上下边缘纳入/剔除段 ==========
+let activeZsEdit = null; // { zsId, block, code, period }
+const ZS_DRAG_THRESHOLD = 24;
+
+function attachZhongshuEditActions(code, period) {
+  const detail = $('#period-detail');
+  if (!detail) return;
+  detail.querySelectorAll('.zs-title').forEach((title) => {
+    attachZhongshuTitleLongPress(title, code, period);
+  });
+  // 边缘也支持长按进入编辑态，兼容用户直接长按边缘区域的操作习惯
+  detail.querySelectorAll('.zs-edge').forEach((edge) => {
+    attachZhongshuTitleLongPress(edge, code, period);
+  });
+}
+
+function attachZhongshuTitleLongPress(title, code, period) {
+  let timer = null;
+  let sx = 0, sy = 0;
+  const LONG_MS = 480;
+  const start = (x, y) => {
+    sx = x; sy = y;
+    timer = setTimeout(() => {
+      if (activeZsEdit) return; // 已在编辑态（例如边缘长按与拖动共用事件时避免重复进入）
+      enterZhongshuEditMode(title, code, period);
+    }, LONG_MS);
+  };
+  const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  title.addEventListener('pointerdown', (e) => { start(e.clientX, e.clientY); });
+  title.addEventListener('pointermove', (e) => {
+    if (Math.abs(e.clientX - sx) > 10 || Math.abs(e.clientY - sy) > 10) cancel();
+  });
+  title.addEventListener('pointerup', cancel);
+  title.addEventListener('pointercancel', cancel);
+  title.addEventListener('contextmenu', (e) => e.preventDefault());
+}
+
+function detectZsDomReversed(block, code, period) {
+  const cards = block.querySelectorAll('.card[data-id]');
+  if (cards.length < 2) return false;
+  const sec = state.securities.find((s) => s.code === code);
+  const d = sec?.drawings?.[period];
+  const segMap = {};
+  (d?.segments || []).forEach((s) => { segMap[s.id] = s; });
+  const firstSeg = segMap[cards[0].dataset.id];
+  const lastSeg = segMap[cards[cards.length - 1].dataset.id];
+  if (!firstSeg || !lastSeg) return false;
+  const t1 = firstSeg.end?.time ?? firstSeg.start?.time ?? 0;
+  const t2 = lastSeg.end?.time ?? lastSeg.start?.time ?? 0;
+  return t1 > t2;
+}
+
+function enterZhongshuEditMode(title, code, period) {
+  if (activeZsEdit) exitZhongshuEditMode();
+  const block = title.closest('.zs-block');
+  const zsId = block?.dataset.zsId;
+  if (!zsId || !block) return;
+
+  const reversed = detectZsDomReversed(block, code, period);
+  activeZsEdit = { zsId, block, code, period, reversed };
+  block.classList.add('editing');
+
+  // 编辑态右上角解散中枢按钮
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'zs-edit-close';
+  closeBtn.type = 'button';
+  closeBtn.setAttribute('aria-label', '解散中枢');
+  closeBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`;
+  closeBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    dissolveZhongshu(code, period, zsId);
+  });
+  const titleEl = block.querySelector('.zs-title');
+  if (titleEl) titleEl.appendChild(closeBtn);
+
+  block.querySelectorAll('.zs-edge').forEach((edge) => {
+    edge.addEventListener('pointerdown', onZsEdgePointerDown);
+  });
+
+  document.addEventListener('pointerdown', closeZsEditOnOutside, { capture: true });
+}
+
+function exitZhongshuEditMode() {
+  if (!activeZsEdit) return;
+  const { block } = activeZsEdit;
+  block.classList.remove('editing');
+  block.querySelectorAll('.zs-edge').forEach((edge) => {
+    edge.classList.remove('dragging');
+    edge.removeEventListener('pointerdown', onZsEdgePointerDown);
+  });
+  block.querySelectorAll('.zs-edit-close').forEach((b) => b.remove());
+  clearZsPreview();
+  activeZsEdit = null;
+  document.removeEventListener('pointerdown', closeZsEditOnOutside, { capture: true });
+}
+
+function closeZsEditOnOutside(e) {
+  if (!activeZsEdit) return;
+  if (activeZsEdit.block.contains(e.target)) return;
+  e.preventDefault();
+  exitZhongshuEditMode();
+}
+
+function onZsEdgePointerDown(e) {
+  if (!activeZsEdit) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const edgeEl = e.currentTarget;
+  const edge = edgeEl.dataset.edge;
+  const startY = e.clientY;
+  edgeEl.classList.add('dragging');
+
+  const move = (ev) => {
+    if (ev.pointerId !== e.pointerId) return;
+    const dy = ev.clientY - startY;
+    updateZsPreview(edge, dy);
+  };
+  const up = (ev) => {
+    if (ev.pointerId !== e.pointerId) return;
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', up);
+    window.removeEventListener('pointercancel', up);
+    edgeEl.classList.remove('dragging');
+    const dy = ev.clientY - startY;
+    const resolved = resolveZsDragOp(edge, dy);
+    clearZsPreview();
+    if (resolved) applyZsEdit(resolved);
+  };
+
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', up);
+  window.addEventListener('pointercancel', up);
+}
+
+function resolveZsDragOp(edge, dy) {
+  const reversed = activeZsEdit?.reversed || false;
+  let op = null;
+  let count = 0;
+  if (edge === 'top') {
+    if (dy < -ZS_DRAG_THRESHOLD) { op = reversed ? 'include-next' : 'include-prev'; count = Math.floor(-dy / ZS_DRAG_THRESHOLD); }
+    else if (dy > ZS_DRAG_THRESHOLD) { op = reversed ? 'exclude-last' : 'exclude-first'; count = Math.floor(dy / ZS_DRAG_THRESHOLD); }
+  } else if (edge === 'bottom') {
+    if (dy > ZS_DRAG_THRESHOLD) { op = reversed ? 'include-prev' : 'include-next'; count = Math.floor(dy / ZS_DRAG_THRESHOLD); }
+    else if (dy < -ZS_DRAG_THRESHOLD) { op = reversed ? 'exclude-first' : 'exclude-last'; count = Math.floor(-dy / ZS_DRAG_THRESHOLD); }
+  }
+  if (!op) return null;
+  return { op, count };
+}
+
+// 计算中枢原始震荡区间 [low, high]，基于 baseSegmentIds（原始 3 段）
+function getZhongshuRange(zs, segMap) {
+  const baseIds = zs.baseSegmentIds || zs.segmentIds?.slice(0, 3) || [];
+  const baseSegs = baseIds.map((id) => segMap[id]).filter(Boolean);
+  if (baseSegs.length < 3) return null;
+  const lows = baseSegs.map((s) => Math.min(s.start.price, s.end.price));
+  const highs = baseSegs.map((s) => Math.max(s.start.price, s.end.price));
+  return { low: Math.max(...lows), high: Math.min(...highs) };
+}
+
+// PC 端规则：段是否已离开中枢区间
+// side: 'right' 检查段终点（右边界延伸）；'left' 检查段起点（左边界延伸）
+function isSegmentLeavingZhongshu(seg, range, side) {
+  if (!range) return false;
+  const isUp = seg.end.price > seg.start.price;
+  if (side === 'right') {
+    if (isUp && seg.end.price < range.low) return true;
+    if (!isUp && seg.end.price > range.high) return true;
+  } else {
+    if (isUp && seg.start.price > range.high) return true;
+    if (!isUp && seg.start.price < range.low) return true;
+  }
+  return false;
+}
+
+// 是否与目标段在时间和价格上相连（容忍极小误差）
+function isSegmentConnected(a, b) {
+  if (!a || !b) return false;
+  return (a.end.time === b.start.time && Math.abs(a.end.price - b.start.price) < 1e-3);
+}
+
+// PC 端延伸规则：候选段可被纳入中枢当且仅当：
+// 1. 与当前边界相连；2. 自身未脱离中枢区间；3. 再外侧一段未脱离（否则候选段是离开段）
+function canIncludeInZhongshu(candidate, range, side, outerSeg) {
+  if (!candidate || !range) return false;
+  if (isSegmentLeavingZhongshu(candidate, range, side)) return false;
+  if (outerSeg && isSegmentLeavingZhongshu(outerSeg, range, side)) return false;
+  return true;
+}
+
+// 模拟一次完整的纳入/剔除操作，返回受影响的段 ID 集合、新 segmentIds、是否解散
+function computeZsEditResult(zs, d, op, count) {
+  const sorted = [...(d.segments || [])].sort((a, b) => a.start.time - b.start.time);
+  const segMap = {};
+  sorted.forEach((s) => { segMap[s.id] = s; });
+
+  // 兼容旧数据：未保存 baseSegmentIds 时按时间取前 3 段作为原始中枢
+  let baseSegmentIds = zs.baseSegmentIds;
+  if (!baseSegmentIds || baseSegmentIds.length !== 3) {
+    baseSegmentIds = zs.segmentIds
+      .map((id) => segMap[id])
+      .filter(Boolean)
+      .sort((a, b) => a.start.time - b.start.time)
+      .slice(0, 3)
+      .map((s) => s.id);
+  }
+
+  const otherZsIds = new Set();
+  (d.zhongshus || []).forEach((z) => {
+    if (z.id === zs.id) return;
+    (z.segmentIds || []).forEach((id) => otherZsIds.add(id));
+  });
+
+  const range = getZhongshuRange({ ...zs, baseSegmentIds }, segMap);
+  const baseIds = new Set(baseSegmentIds || []);
+  let resultIds = zs.segmentIds
+    .map((id) => segMap[id])
+    .filter(Boolean)
+    .sort((a, b) => a.start.time - b.start.time)
+    .map((s) => s.id);
+  let changed = false;
+  let dissolve = false;
+
+  for (let step = 0; step < count; step++) {
+    const curIds = new Set(resultIds);
+    let curFirst = -1, curLast = -1;
+    sorted.forEach((s, i) => {
+      if (curIds.has(s.id)) {
+        if (curFirst < 0) curFirst = i;
+        curLast = i;
+      }
+    });
+    if (curFirst < 0) break;
+
+    if (op === 'include-prev') {
+      const prev = sorted[curFirst - 1];
+      const prevPrev = sorted[curFirst - 2] || null;
+      if (prev && !curIds.has(prev.id) && !otherZsIds.has(prev.id) &&
+          isSegmentConnected(prev, sorted[curFirst]) &&
+          canIncludeInZhongshu(prev, range, 'left', prevPrev)) {
+        resultIds.unshift(prev.id);
+        changed = true;
+      } else break;
+    } else if (op === 'include-next') {
+      const next = sorted[curLast + 1];
+      const nextNext = sorted[curLast + 2] || null;
+      if (next && !curIds.has(next.id) && !otherZsIds.has(next.id) &&
+          isSegmentConnected(sorted[curLast], next) &&
+          canIncludeInZhongshu(next, range, 'right', nextNext)) {
+        resultIds.push(next.id);
+        changed = true;
+      } else break;
+    } else if (op === 'exclude-first') {
+      if (resultIds.length <= 3) break;
+      const first = sorted[curFirst];
+      if (first && curIds.has(first.id) && !baseIds.has(first.id)) {
+        resultIds = resultIds.filter((id) => id !== first.id);
+        changed = true;
+      } else break;
+    } else if (op === 'exclude-last') {
+      if (resultIds.length <= 3) break;
+      const last = sorted[curLast];
+      if (last && curIds.has(last.id) && !baseIds.has(last.id)) {
+        resultIds = resultIds.filter((id) => id !== last.id);
+        changed = true;
+      } else break;
+    }
+  }
+
+  return { changed, dissolve, segmentIds: resultIds, baseSegmentIds };
+}
+
+function updateZsPreview(edge, dy) {
+  clearZsPreview();
+  const resolved = resolveZsDragOp(edge, dy);
+  if (!resolved || !activeZsEdit) {
+    updateDragBadge(null, null);
+    return;
+  }
+
+  const { op, count } = resolved;
+  const { code, period, zsId } = activeZsEdit;
+  const sec = state.securities.find((s) => s.code === code);
+  const d = sec?.drawings?.[period];
+  const zs = (d?.zhongshus || []).find((z) => z.id === zsId);
+  if (!zs) {
+    updateDragBadge(null, null);
+    return;
+  }
+
+  const result = computeZsEditResult(zs, d, op, count);
+  const originalIds = new Set(zs.segmentIds || []);
+  const affected = [];
+  if (op.startsWith('include')) {
+    result.segmentIds.forEach((id) => { if (!originalIds.has(id)) affected.push(id); });
+  } else {
+    result.segmentIds.forEach((id) => { originalIds.delete(id); });
+    affected.push(...originalIds);
+  }
+
+  const cls = op.startsWith('include') ? 'zs-preview-include' : 'zs-preview-exclude';
+  affected.forEach((id) => {
+    const card = document.querySelector(`.card[data-id="${id}"]`);
+    if (card) card.classList.add(cls);
+  });
+
+  updateDragBadge(edge, dy, affected.length);
+}
+
+function updateDragBadge(edge, dy, effectiveCount) {
+  if (!activeZsEdit) return;
+  const edgeEl = edge ? activeZsEdit.block.querySelector(`.zs-edge[data-edge="${edge}"]`) : null;
+  if (!edgeEl) {
+    if (activeZsEdit) activeZsEdit.block.querySelectorAll('.zs-drag-badge').forEach((b) => b.remove());
+    return;
+  }
+  const resolved = resolveZsDragOp(edge, dy);
+  let badge = edgeEl.querySelector('.zs-drag-badge');
+  if (!resolved || effectiveCount <= 0) {
+    if (badge) badge.remove();
+    return;
+  }
+  if (!badge) {
+    badge = document.createElement('span');
+    badge.className = 'zs-drag-badge';
+    edgeEl.appendChild(badge);
+  }
+  const label = resolved.op.startsWith('include') ? '纳入' : '剔除';
+  badge.textContent = `${label} ${effectiveCount} 段`;
+}
+
+function clearZsPreview() {
+  document.querySelectorAll('.zs-preview-include, .zs-preview-exclude').forEach((el) => {
+    el.classList.remove('zs-preview-include', 'zs-preview-exclude');
+  });
+  if (activeZsEdit) {
+    activeZsEdit.block.querySelectorAll('.zs-drag-badge').forEach((b) => b.remove());
+  }
+}
+
+function applyZsEdit(resolved) {
+  if (!activeZsEdit || !resolved) return;
+  const { op, count } = resolved;
+  const { code, period, zsId } = activeZsEdit;
+  const sec = state.securities.find((s) => s.code === code);
+  const d = sec?.drawings?.[period];
+  const zs = (d?.zhongshus || []).find((z) => z.id === zsId);
+  if (!zs || !d) return;
+
+  const result = computeZsEditResult(zs, d, op, count);
+  if (!result.changed) return;
+
+  zs.segmentIds = result.segmentIds;
+  zs.baseSegmentIds = result.baseSegmentIds;
+  if (result.dissolve) {
+    d.zhongshus = (d.zhongshus || []).filter((z) => z.id !== zs.id);
+  }
+
+  try { navigator.vibrate?.(12); } catch {}
+  exitZhongshuEditMode();
+  saveLocalEdits(code, sec.drawings);
+  refreshPeriodDetailWithoutFetch(code, period);
+}
+
+// 解散中枢：移除中枢结构，内部段恢复为普通段
+function dissolveZhongshu(code, period, zsId) {
+  const sec = state.securities.find((s) => s.code === code);
+  const d = sec?.drawings?.[period];
+  if (!d) return;
+  d.zhongshus = (d.zhongshus || []).filter((z) => z.id !== zsId);
+  try { navigator.vibrate?.(12); } catch {}
+  exitZhongshuEditMode();
+  saveLocalEdits(code, sec.drawings);
+  refreshPeriodDetailWithoutFetch(code, period);
+}
+
 function handleSegmentAction(act, segId, code, period) {
   const sec = state.securities.find((s) => s.code === code);
   if (!sec) return;
@@ -712,8 +1237,34 @@ function handleSegmentAction(act, segId, code, period) {
 
   if (act === 'add') {
     addSegment(code, period);
+  } else if (act === 'watch') {
+    if (!targetSeg) return;
+    addWatchSegment(code, period, segId);
+  } else if (act === 'detect') {
+    if (!targetSeg) return;
+    const sorted = [...(d.segments || [])].sort((a, b) => a.start.time - b.start.time);
+    const idx = sorted.findIndex((s) => s.id === segId);
+    const bars = state._currentBars?.bars || [];
+    const detected = idx >= 0 ? detectZhongshu(sorted, idx, bars) : null;
+    if (!detected) {
+      alert('选中的段无法构成中枢');
+      return;
+    }
+    const otherZsIds = new Set();
+    (d.zhongshus || []).forEach((z) => {
+      (z.segmentIds || []).forEach((id) => otherZsIds.add(id));
+    });
+    if (detected.segmentIds.some((id) => otherZsIds.has(id))) {
+      alert('选中的段已存在于其它中枢中');
+      return;
+    }
+    d.zhongshus = d.zhongshus || [];
+    d.zhongshus.push(makeZhongshu(detected.segmentIds, detected.baseSegmentIds));
+    saveLocalEdits(code, sec.drawings);
+    refreshPeriodDetailWithoutFetch(code, period);
   } else if (act === 'edit') {
     if (!targetSeg) return;
+    const wasWatch = targetSeg._isWatch;
     openEditor(targetSeg, async (newStart, newEnd) => {
       let bars;
       try {
@@ -730,8 +1281,30 @@ function handleSegmentAction(act, segId, code, period) {
       targetSeg.end.time = newEnd;
       targetSeg.end.price = endpointPrice(eBar, false, direction) ?? targetSeg.end.price;
       targetSeg.direction = direction;
+      // 盯盘段编辑后变为普通段，并基于新的终点自动生成新的盯盘段
+      if (wasWatch && period === '1m') {
+        delete targetSeg._isWatch;
+        delete targetSeg._watchSourceId;
+        const startIdx = bars.findIndex((b) => b.time === targetSeg.end.time);
+        if (startIdx >= 0) {
+          const watchDir = oppositeDirection(targetSeg.direction);
+          const endInfo = calcWatchSegmentEnd(bars, startIdx, watchDir);
+          if (endInfo) {
+            d.segments.push({
+              id: 'w_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6),
+              kind: 'segment',
+              period,
+              direction: watchDir,
+              start: { time: targetSeg.end.time, price: targetSeg.end.price },
+              end: { time: endInfo.time, price: endInfo.price },
+              _isWatch: true,
+              _watchSourceId: targetSeg.id,
+            });
+          }
+        }
+      }
       saveLocalEdits(code, sec.drawings);
-      loadAndRenderPeriodDetail(code, period);
+      refreshPeriodDetailWithoutFetch(code, period);
     });
   } else if (act === 'del') {
     if (!targetSeg) return;
@@ -739,10 +1312,13 @@ function handleSegmentAction(act, segId, code, period) {
     d.segments = d.segments.filter((s) => s.id !== segId);
     (d.zhongshus || []).forEach((z) => {
       z.segmentIds = (z.segmentIds || []).filter((id) => id !== segId);
+      if (z.baseSegmentIds) {
+        z.baseSegmentIds = z.baseSegmentIds.filter((id) => id !== segId);
+      }
     });
     d.zhongshus = (d.zhongshus || []).filter((z) => (z.segmentIds || []).length >= 3);
     saveLocalEdits(code, sec.drawings);
-    loadAndRenderPeriodDetail(code, period);
+    refreshPeriodDetailWithoutFetch(code, period);
   }
 }
 
@@ -777,6 +1353,29 @@ function startAllRealtime() {
   };
   tick();
   state.rtTimers._all = setInterval(tick, 5000);
+  startDetailRealtime();
+}
+
+// 1分钟详情页：定时拉取最新 K 线并更新盯盘段终点，仅在盯盘段发生变化时重绘
+function startDetailRealtime() {
+  if (state.rtTimers._detail) return;
+  state.rtTimers._detail = setInterval(async () => {
+    if (state.view !== 'detail' || state.selectedPeriod !== '1m' || state.activeTab !== 'dingpan' || document.hidden) return;
+    const code = state.selectedCode;
+    const period = state.selectedPeriod;
+    const sec = state.securities.find((s) => s.code === code);
+    if (!sec) return;
+    const d = sec.drawings[period];
+    if (!d || !(d.segments || []).some((s) => s._isWatch)) return;
+    try {
+      const res = await fetchBars(code, period, 800);
+      const bars = res.bars || [];
+      state._currentBars = { code, period, bars };
+      computeMACD(bars);
+      const changed = updateWatchSegments(code, period, bars, false);
+      if (changed) refreshPeriodDetailWithoutFetch(code, period);
+    } catch {}
+  }, 15000);
 }
 
 // ========== 大盘指数行情 ==========
@@ -903,8 +1502,105 @@ async function addSegment(code, period) {
     d.segments = [...segs, seg];
     sec.drawings[period] = d;
     saveLocalEdits(code, sec.drawings);
-    loadAndRenderPeriodDetail(code, period);
+    refreshPeriodDetailWithoutFetch(code, period);
   }, defaults);
+}
+
+// 计算盯盘段终点：从起点所在 K 线到最新 K 线区间内的最高/最低价
+function calcWatchSegmentEnd(bars, startIdx, direction) {
+  if (!bars || startIdx < 0 || startIdx >= bars.length) return null;
+  let endBar = bars[startIdx];
+  if (direction === 'up') {
+    for (let i = startIdx + 1; i < bars.length; i++) {
+      if (bars[i].high > endBar.high) endBar = bars[i];
+    }
+  } else {
+    for (let i = startIdx + 1; i < bars.length; i++) {
+      if (bars[i].low < endBar.low) endBar = bars[i];
+    }
+  }
+  return {
+    time: endBar.time,
+    price: direction === 'up' ? endBar.high : endBar.low,
+  };
+}
+
+async function addWatchSegment(code, period, sourceSegId) {
+  if (period !== '1m') return;
+  const sec = state.securities.find((s) => s.code === code);
+  if (!sec) return;
+  let bars;
+  try {
+    bars = await ensureBars(code, period);
+  } catch (e) {
+    alert('行情数据加载失败，请检查网络后重试');
+    return;
+  }
+  const d = sec.drawings[period] || { segments: [], zhongshus: [] };
+  let segs = d.segments || [];
+  // 同一源段只能有一个盯盘段，先移除旧的
+  segs = segs.filter((s) => !(s._isWatch && s._watchSourceId === sourceSegId));
+  const sourceSeg = segs.find((s) => s.id === sourceSegId);
+  if (!sourceSeg) return;
+  const startTime = sourceSeg.end.time;
+  const startIdx = bars.findIndex((b) => b.time === startTime);
+  if (startIdx < 0) {
+    alert('未找到起点对应K线');
+    return;
+  }
+  const direction = oppositeDirection(sourceSeg.direction);
+  const endInfo = calcWatchSegmentEnd(bars, startIdx, direction);
+  if (!endInfo) return;
+  const seg = {
+    id: 'w_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6),
+    kind: 'segment',
+    period,
+    direction,
+    start: { time: startTime, price: sourceSeg.end.price },
+    end: { time: endInfo.time, price: endInfo.price },
+    _isWatch: true,
+    _watchSourceId: sourceSegId,
+  };
+  d.segments = [...segs, seg];
+  sec.drawings[period] = d;
+  saveLocalEdits(code, sec.drawings);
+  refreshPeriodDetailWithoutFetch(code, period);
+}
+
+// 根据最新行情更新盯盘段终点；refresh 为 false 时只更新数据不重新渲染
+function updateWatchSegments(code, period, bars, refresh = true) {
+  if (period !== '1m') return false;
+  const sec = state.securities.find((s) => s.code === code);
+  if (!sec) return false;
+  const d = sec.drawings[period];
+  if (!d) return false;
+  if (!bars || !bars.length) bars = state._currentBars?.bars || [];
+  if (!bars || !bars.length) return false;
+  const segs = d.segments || [];
+  let changed = false;
+  const newSegs = segs.filter((s) => {
+    if (!s._isWatch) return true;
+    const sourceSeg = segs.find((x) => x.id === s._watchSourceId);
+    if (!sourceSeg) {
+      changed = true;
+      return false;
+    }
+    const startIdx = bars.findIndex((b) => b.time === sourceSeg.end.time);
+    if (startIdx < 0) return true;
+    const direction = oppositeDirection(sourceSeg.direction);
+    const endInfo = calcWatchSegmentEnd(bars, startIdx, direction);
+    if (!endInfo) return true;
+    if (s.end.time !== endInfo.time || s.end.price !== endInfo.price) {
+      s.end = { time: endInfo.time, price: endInfo.price };
+      changed = true;
+    }
+    return true;
+  });
+  if (changed) {
+    d.segments = newSegs;
+    if (refresh) refreshPeriodDetailWithoutFetch(code, period);
+  }
+  return changed;
 }
 
 // ========== Tab 切换 ==========
@@ -1117,6 +1813,9 @@ function init() {
   const headerBack = document.getElementById('btn-header-back');
   if (headerBack) headerBack.addEventListener('click', () => goBack());
 
+  // 详情页证券卡片：下滚超过阈值时折叠为单行（吸顶由 CSS 处理）
+  window.addEventListener('scroll', onDetailScroll, { passive: true });
+
   $$('.wx-tab').forEach((tab) => {
     const name = tab.dataset.tab || '';
     tab.addEventListener('click', () => switchTab(name));
@@ -1141,7 +1840,7 @@ function init() {
 
   if ('serviceWorker' in navigator && !window.__CHANM_NOCACHE__) {
     navigator.serviceWorker.addEventListener('controllerchange', () => location.reload());
-    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js?v=20260718b').catch(() => {}));
+    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js?v=20260719q').catch(() => {}));
   }
 
   window.__CHANM_LOADED__ = true;

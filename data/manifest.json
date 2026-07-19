@@ -1,6 +1,15 @@
 {
   "securities": [
     {
+      "code": "sz159611",
+      "name": "电力ETF广发",
+      "periods": [
+        "1m",
+        "5m",
+        "30m"
+      ]
+    },
+    {
       "code": "sh588080",
       "name": "科创板50",
       "periods": [
@@ -18,24 +27,8 @@
       ]
     },
     {
-      "code": "sz399001",
-      "name": "深证成指",
-      "periods": [
-        "1m"
-      ]
-    },
-    {
       "code": "sz159692",
       "name": "证券ETF东财",
-      "periods": [
-        "1m",
-        "5m",
-        "30m"
-      ]
-    },
-    {
-      "code": "sz159611",
-      "name": "电力ETF广发",
       "periods": [
         "1m",
         "5m",
