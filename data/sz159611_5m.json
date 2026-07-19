@@ -1,7 +1,7 @@
 {
   "code": "sz159611",
   "period": "5m",
-  "exportedAt": 1784454065343,
+  "exportedAt": 1784474253260,
   "segments": [
     {
       "id": "s_x4wimzci",
@@ -968,6 +968,20 @@
         "time": 1784184000,
         "price": 1.01
       }
+    },
+    {
+      "id": "s_qibbasiv",
+      "kind": "segment",
+      "period": "5m",
+      "direction": "up",
+      "start": {
+        "time": 1784184000,
+        "price": 1.01
+      },
+      "end": {
+        "time": 1784258700,
+        "price": 1.044
+      }
     }
   ],
   "zhongshus": [
@@ -1061,6 +1075,15 @@
         "s_8unleo4b",
         "s_d0tpa87j",
         "s_cw48drwj"
+      ]
+    },
+    {
+      "id": "s_1l7j7oyw",
+      "kind": "zhongshu",
+      "segmentIds": [
+        "s_a1ok6lhn",
+        "s_d3wh41mg",
+        "s_bjsi1sc5"
       ]
     }
   ]

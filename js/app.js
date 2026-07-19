@@ -1,6 +1,6 @@
 // app.js —— Chan-M 入口：一键导入站点全部画线，按「证券 → 周期」展示，联网算力
 // 注意：所有 import 路径均带版本号，每次发布新版本时请同步修改 html/js/sw 中的版本号
-import { fetchBars, fetchRealtimeMulti, formatTime, formatPrice } from './fetcher.js?v=20260714y';
+import { fetchBars, fetchRealtimeMulti, formatTime, formatPrice, isETF } from './fetcher.js?v=20260714y';
 import { computeMACD } from './macd.js?v=20260714y';
 import { segmentStrength, detectStrengthIndicators, detectOneBuySell, detectTwoAndThreeBuySell, computeZhongshuStrength, detectZhongshu } from './algo.js?v=20260719i';
 import { renderSegments } from './table.js?v=20260719i';
@@ -90,6 +90,7 @@ function computeHideBefore(higherSegments, higherPeriod, curSegments) {
 }
 
 const STORE_KEY_PREFIX = 'chan-m-sec-';
+const ALERT_STORE_KEY = 'chan-m-alerts-v1';
 
 // 行情页固定展示的大盘指数
 const INDEX_CODES = [
@@ -110,6 +111,9 @@ const state = {
   _rtPrices: {},
   _currentBars: null,
   searchQuery: '',
+  alerts: [],
+  _alertTimer: null,
+  _alertNotified: new Set(),
 };
 
 // 加载状态：用于区分「正在加载」与「真的没有数据」，避免首屏误报「暂无画线数据」
@@ -132,6 +136,65 @@ function saveLocalEdits(code, drawings) {
   try {
     localStorage.setItem(secStoreKey(code), JSON.stringify({ drawings, savedAt: Date.now() }));
   } catch {}
+}
+
+function loadAlerts() {
+  try {
+    const raw = localStorage.getItem(ALERT_STORE_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
+}
+
+function saveAlerts() {
+  try {
+    localStorage.setItem(ALERT_STORE_KEY, JSON.stringify(state.alerts));
+  } catch {}
+}
+
+function addAlert(alert) {
+  const id = 'alert_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
+  const item = {
+    id,
+    code: alert.code,
+    name: alert.name || '',
+    type: alert.type,
+    value: alert.value,
+    enabled: true,
+    triggered: false,
+    createdAt: Date.now(),
+    triggeredAt: null,
+  };
+  state.alerts.unshift(item);
+  saveAlerts();
+  return item;
+}
+
+function removeAlert(id) {
+  state.alerts = state.alerts.filter((a) => a.id !== id);
+  saveAlerts();
+}
+
+function toggleAlert(id) {
+  const a = state.alerts.find((x) => x.id === id);
+  if (a) {
+    a.enabled = !a.enabled;
+    if (a.enabled) {
+      a.triggered = false;
+      a.triggeredAt = null;
+      state._alertNotified.delete(id);
+    }
+    saveAlerts();
+  }
+}
+
+function alertTypeLabel(type) {
+  const map = {
+    price_above: '价格上破',
+    price_below: '价格下破',
+    change_pct_up: '涨幅超过',
+    change_pct_down: '跌幅超过',
+  };
+  return map[type] || type;
 }
 
 // 合并静态数据和本地编辑：取两者中较新的
@@ -391,11 +454,12 @@ function renderSecurityList(filterQuery = '') {
     const priceText = rt?.price ? formatPrice(sec.code, rt.price) : '';
     const periodTags = sec.periods.map((p) => periodLabel(p)).join('/');
     const displayCode = sec.code.toUpperCase();
+    const hasAlert = state.alerts.some((a) => a.code === sec.code && a.enabled && !a.triggered);
     return `
     <div class="sec-card" data-code="${sec.code}">
       <div class="sec-head">
         <div class="sec-info">
-          <div class="sec-name" data-name="${sec.code}">${name}</div>
+          <div class="sec-name" data-name="${sec.code}">${name}${hasAlert ? '<span class="sec-alert-dot"></span>' : ''}</div>
           <div class="sec-meta">${displayCode} · ${periodTags}</div>
         </div>
         <div class="sec-right">
@@ -409,13 +473,43 @@ function renderSecurityList(filterQuery = '') {
     </div>`;
   }).join('');
   box.querySelectorAll('.sec-card').forEach((card) => {
-    card.addEventListener('click', () => pushView('periods', card.dataset.code));
+    const code = card.dataset.code;
+    const sec = state.securities.find((s) => s.code === code);
+    card.addEventListener('click', () => {
+      if (secCardLongPressFired) { secCardLongPressFired = false; return; }
+      pushView('periods', code);
+    });
+    attachSecCardLongPress(card, code, sec?.name || '');
   });
   // 仅在首次加载时播一次卡片依次进入动画（搜索/重渲染不再重复）
   if (!listEnterPlayed) {
     listEnterPlayed = true;
     staggerEnter(box, '.sec-card');
   }
+}
+
+let secCardLongPressFired = false;
+
+function attachSecCardLongPress(card, code, name) {
+  let timer = null;
+  let sx = 0, sy = 0;
+  const LONG_MS = 480;
+  const start = (x, y) => {
+    secCardLongPressFired = false;
+    sx = x; sy = y;
+    timer = setTimeout(() => {
+      secCardLongPressFired = true;
+      openAddAlertSheet(code, name);
+    }, LONG_MS);
+  };
+  const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  card.addEventListener('pointerdown', (e) => { start(e.clientX, e.clientY); });
+  card.addEventListener('pointermove', (e) => {
+    if (Math.abs(e.clientX - sx) > 10 || Math.abs(e.clientY - sy) > 10) cancel();
+  });
+  card.addEventListener('pointerup', cancel);
+  card.addEventListener('pointercancel', cancel);
+  card.addEventListener('contextmenu', (e) => e.preventDefault());
 }
 
 // 与详情页一致的可见段/中枢计数：剔除被更高级别周期遮挡的隐藏段、隐藏中枢
@@ -1652,7 +1746,7 @@ function switchTab(name) {
   const views = {
     dingpan: '#sec-list',
     hangqing: '#hangqing-view',
-    bianji: '#bianji-view',
+    alert: '#alert-view',
     workbench: '#workbench-view',
     wo: '#wo-view',
   };
@@ -1663,7 +1757,7 @@ function switchTab(name) {
 
   if (name === 'dingpan') renderDingpanView();
   if (name === 'hangqing') { renderHangqingView(); startIndexRealtime(); }
-  if (name === 'bianji') renderBianjiView();
+  if (name === 'alert') renderAlertView();
   if (name === 'workbench') renderWorkbenchView();
   if (name === 'wo') renderWoView();
 }
@@ -1692,42 +1786,334 @@ function renderHangqingView() {
   el.innerHTML = `<div class='index-grid'>${cards}</div>`;
 }
 
-function renderBianjiView() {
-  const el = $('#bianji-view');
+function renderAlertView() {
+  const el = $('#alert-view');
   if (!el) return;
-  el.innerHTML = `
-    <div class="bianji-content">
-      <h3>段编辑</h3>
-      <p class="empty">进入证券周期详情后，点击段卡片中的「编辑端点」或「删除」按钮进行操作。</p>
-      <h3>添加段</h3>
-      <p class="empty">点击下方按钮，手动添加一个段。</p>
-      <div style="padding:12px;display:flex;gap:8px;">
-        <button id="btn-add-seg" class="mini" style="flex:1;">添加段</button>
+  const alerts = state.alerts;
+  if (!alerts.length) {
+    el.innerHTML = `
+      <div class="alert-header">
+        <div class="alert-title">价格提醒</div>
       </div>
-    </div>`;
-  $('#btn-add-seg').onclick = () => {
-    if (!state.selectedCode) { alert('请先在盯盘页选择一个证券'); return; }
-    const sec = state.securities.find((s) => s.code === state.selectedCode);
-    if (!sec) return;
-    const firstPeriod = sec.periods?.[0] || '1m';
-    openEditor(null, (newStart, newEnd) => {
-      const d = sec.drawings[firstPeriod] || { segments: [], zhongshus: [] };
-      const seg = {
-        id: 's_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6),
-        kind: 'segment',
-        period: firstPeriod,
-        direction: 0,
-        start: { time: newStart, price: 0 },
-        end: { time: newEnd, price: 0 },
-      };
-      seg.direction = seg.end.price >= seg.start.price ? 'up' : 'down';
-      d.segments = [...(d.segments || []), seg];
-      sec.drawings[firstPeriod] = d;
-      saveLocalEdits(state.selectedCode, sec.drawings);
-      switchTab('dingpan');
-      pushView('detail', state.selectedCode, firstPeriod);
-    });
+      <div class="empty">暂无提醒<br><span style="font-size:13px;color:var(--wx-muted);">在盯盘列表长按证券可添加提醒</span></div>
+    `;
+    return;
+  }
+  const enabledCount = alerts.filter((a) => a.enabled && !a.triggered).length;
+  const triggeredCount = alerts.filter((a) => a.triggered).length;
+  el.innerHTML = `
+    <div class="alert-header">
+      <div class="alert-title">价格提醒</div>
+      <div class="alert-stats">
+        <span class="alert-stat active">监控中 ${enabledCount}</span>
+        <span class="alert-stat done">已触发 ${triggeredCount}</span>
+      </div>
+    </div>
+    <div class="alert-list">
+      ${alerts.map((a) => {
+        const rt = state._rtPrices?.[a.code];
+        const curPrice = rt?.price;
+        const name = a.name || rt?.name || a.code;
+        const typeText = alertTypeLabel(a.type);
+        let valueText = '';
+        if (a.type === 'price_above' || a.type === 'price_below') {
+          valueText = formatPrice(a.code, a.value);
+        } else {
+          valueText = (a.value > 0 ? '+' : '') + a.value.toFixed(2) + '%';
+        }
+        const statusCls = a.triggered ? 'triggered' : (a.enabled ? 'active' : 'disabled');
+        const statusText = a.triggered ? '已触发' : (a.enabled ? '监控中' : '已关闭');
+        const curText = curPrice != null ? `当前：${formatPrice(a.code, curPrice)}` : '';
+        return `
+          <div class="alert-card ${statusCls}" data-id="${a.id}">
+            <div class="alert-card-head">
+              <div class="alert-card-info">
+                <div class="alert-card-name">${name}</div>
+                <div class="alert-card-code">${a.code.toUpperCase()}</div>
+              </div>
+              <div class="alert-card-status ${statusCls}">${statusText}</div>
+            </div>
+            <div class="alert-card-body">
+              <div class="alert-card-condition">
+                <span class="alert-type-tag">${typeText}</span>
+                <span class="alert-target-value">${valueText}</span>
+              </div>
+              <div class="alert-card-cur">${curText}</div>
+            </div>
+            <div class="alert-card-actions">
+              <button class="alert-action-btn toggle-btn" data-act="toggle">${a.enabled ? '关闭' : '开启'}</button>
+              <button class="alert-action-btn delete-btn" data-act="delete">删除</button>
+            </div>
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
+  el.querySelectorAll('.alert-card').forEach((card) => {
+    const id = card.dataset.id;
+    card.querySelector('[data-act="toggle"]').onclick = (e) => {
+      e.stopPropagation();
+      toggleAlert(id);
+      renderAlertView();
+    };
+    card.querySelector('[data-act="delete"]').onclick = (e) => {
+      e.stopPropagation();
+      removeAlert(id);
+      renderAlertView();
+    };
+  });
+}
+
+// ========== 添加提醒弹窗 ==========
+let _alertSheetCode = null;
+
+function openAddAlertSheet(code, name) {
+  _alertSheetCode = code;
+  const sec = state.securities.find((s) => s.code === code);
+  const rt = state._rtPrices?.[code];
+  const curPrice = rt?.price;
+  const displayName = name || sec?.name || rt?.name || code;
+
+  const existing = document.getElementById('alert-sheet');
+  if (existing) existing.remove();
+
+  const sheet = document.createElement('div');
+  sheet.id = 'alert-sheet';
+  sheet.className = 'action-sheet-mask';
+  sheet.innerHTML = `
+    <div class="action-sheet">
+      <div class="action-sheet-title">
+        <span>${displayName}</span>
+        <button class="action-sheet-close" aria-label="关闭">×</button>
+      </div>
+      <div class="alert-sheet-body">
+        <div class="alert-type-group">
+          <div class="alert-type-label">提醒类型</div>
+          <div class="alert-type-options">
+            <button class="alert-type-opt active" data-type="price_above">价格上破</button>
+            <button class="alert-type-opt" data-type="price_below">价格下破</button>
+            <button class="alert-type-opt" data-type="change_pct_up">涨幅超过</button>
+            <button class="alert-type-opt" data-type="change_pct_down">跌幅超过</button>
+          </div>
+        </div>
+        <div class="alert-input-group">
+          <div class="alert-input-label">目标值</div>
+          <div class="alert-input-row">
+            <input type="number" id="alert-input-value" step="0.001" placeholder="${curPrice != null ? '当前价 ' + formatPrice(code, curPrice) : '请输入'}">
+            <span id="alert-input-unit">元</span>
+          </div>
+        </div>
+        <div class="alert-quick-row">
+          <button class="alert-quick-btn" data-pct="1">+1%</button>
+          <button class="alert-quick-btn" data-pct="3">+3%</button>
+          <button class="alert-quick-btn" data-pct="5">+5%</button>
+          <button class="alert-quick-btn" data-pct="-1">-1%</button>
+          <button class="alert-quick-btn" data-pct="-3">-3%</button>
+          <button class="alert-quick-btn" data-pct="-5">-5%</button>
+        </div>
+      </div>
+      <div class="action-sheet-footer">
+        <button id="alert-add-confirm" class="primary">添加提醒</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(sheet);
+
+  let selectedType = 'price_above';
+
+  const updateUnit = () => {
+    const unitEl = sheet.querySelector('#alert-input-unit');
+    if (selectedType.startsWith('change_pct')) {
+      unitEl.textContent = '%';
+    } else {
+      unitEl.textContent = isETF(code) ? '元' : '元';
+    }
   };
+
+  sheet.querySelectorAll('.alert-type-opt').forEach((btn) => {
+    btn.onclick = () => {
+      sheet.querySelectorAll('.alert-type-opt').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      selectedType = btn.dataset.type;
+      updateUnit();
+      const input = sheet.querySelector('#alert-input-value');
+      if (selectedType.startsWith('change_pct')) {
+        input.placeholder = '如 3.00';
+        input.step = '0.01';
+      } else {
+        input.placeholder = curPrice != null ? '当前价 ' + formatPrice(code, curPrice) : '请输入';
+        input.step = isETF(code) ? '0.001' : '0.01';
+      }
+    };
+  });
+
+  sheet.querySelectorAll('.alert-quick-btn').forEach((btn) => {
+    btn.onclick = () => {
+      const pct = parseFloat(btn.dataset.pct);
+      const input = sheet.querySelector('#alert-input-value');
+      if (curPrice != null) {
+        const target = curPrice * (1 + pct / 100);
+        input.value = formatPrice(code, target);
+        sheet.querySelectorAll('.alert-type-opt').forEach((b) => b.classList.remove('active'));
+        if (pct > 0) {
+          selectedType = 'price_above';
+          sheet.querySelector('[data-type="price_above"]').classList.add('active');
+        } else {
+          selectedType = 'price_below';
+          sheet.querySelector('[data-type="price_below"]').classList.add('active');
+        }
+        updateUnit();
+      }
+    };
+  });
+
+  sheet.querySelector('.action-sheet-close').onclick = () => sheet.remove();
+  sheet.onclick = (e) => { if (e.target === sheet) sheet.remove(); };
+
+  sheet.querySelector('#alert-add-confirm').onclick = () => {
+    const input = sheet.querySelector('#alert-input-value');
+    const val = parseFloat(input.value);
+    if (isNaN(val) || val <= 0) {
+      alert('请输入有效的目标值');
+      return;
+    }
+    addAlert({
+      code,
+      name: displayName,
+      type: selectedType,
+      value: val,
+    });
+    sheet.remove();
+    if (state.activeTab === 'alert') renderAlertView();
+    startAlertMonitor();
+  };
+
+  requestAnimationFrame(() => sheet.classList.add('show'));
+}
+
+// ========== 通知横幅 ==========
+function showAlertNotification(alertItem, curPrice) {
+  const existing = document.getElementById('alert-notification');
+  if (existing) existing.remove();
+
+  const name = alertItem.name || alertItem.code;
+  const typeText = alertTypeLabel(alertItem.type);
+  let valueText = '';
+  if (alertItem.type === 'price_above' || alertItem.type === 'price_below') {
+    valueText = formatPrice(alertItem.code, alertItem.value);
+  } else {
+    valueText = (alertItem.value > 0 ? '+' : '') + alertItem.value.toFixed(2) + '%';
+  }
+  const curText = curPrice != null ? `当前价 ${formatPrice(alertItem.code, curPrice)}` : '';
+
+  const el = document.createElement('div');
+  el.id = 'alert-notification';
+  el.className = 'alert-notification';
+  el.innerHTML = `
+    <div class="alert-notif-icon">🔔</div>
+    <div class="alert-notif-body">
+      <div class="alert-notif-title">${name} · ${typeText}</div>
+      <div class="alert-notif-desc">目标 ${valueText} · ${curText}</div>
+    </div>
+    <button class="alert-notif-close" aria-label="关闭">×</button>
+  `;
+  document.body.appendChild(el);
+
+  el.querySelector('.alert-notif-close').onclick = () => {
+    el.classList.remove('show');
+    setTimeout(() => el.remove(), 300);
+  };
+  el.onclick = () => {
+    el.classList.remove('show');
+    setTimeout(() => el.remove(), 300);
+    switchTab('alert');
+  };
+
+  try {
+    if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
+  } catch {}
+
+  requestAnimationFrame(() => {
+    el.classList.add('show');
+    setTimeout(() => {
+      el.classList.remove('show');
+      setTimeout(() => el.remove(), 300);
+    }, 5000);
+  });
+}
+
+// ========== 提醒检测与监控 ==========
+function checkAlerts(rtPrices) {
+  const triggered = [];
+  for (const alert of state.alerts) {
+    if (!alert.enabled || alert.triggered) continue;
+    if (state._alertNotified.has(alert.id)) continue;
+    const rt = rtPrices[alert.code];
+    if (!rt || !rt.price || !rt.prevClose) continue;
+
+    let hit = false;
+    switch (alert.type) {
+      case 'price_above':
+        hit = rt.price >= alert.value;
+        break;
+      case 'price_below':
+        hit = rt.price <= alert.value;
+        break;
+      case 'change_pct_up': {
+        const pct = ((rt.price - rt.prevClose) / rt.prevClose) * 100;
+        hit = pct >= alert.value;
+        break;
+      }
+      case 'change_pct_down': {
+        const pct = ((rt.price - rt.prevClose) / rt.prevClose) * 100;
+        hit = pct <= -Math.abs(alert.value);
+        break;
+      }
+    }
+
+    if (hit) {
+      alert.triggered = true;
+      alert.triggeredAt = Date.now();
+      state._alertNotified.add(alert.id);
+      triggered.push({ alert, curPrice: rt.price });
+    }
+  }
+  if (triggered.length) {
+    saveAlerts();
+    triggered.forEach(({ alert, curPrice }) => showAlertNotification(alert, curPrice));
+    if (state.activeTab === 'alert') renderAlertView();
+  }
+  return triggered;
+}
+
+function startAlertMonitor() {
+  if (state._alertTimer) return;
+  const activeAlerts = state.alerts.filter((a) => a.enabled && !a.triggered);
+  if (!activeAlerts.length) return;
+
+  state._alertTimer = setInterval(async () => {
+    if (document.hidden) return;
+    const activeAlerts = state.alerts.filter((a) => a.enabled && !a.triggered);
+    if (!activeAlerts.length) return;
+    const codes = [...new Set(activeAlerts.map((a) => a.code))];
+    if (!codes.length) return;
+    try {
+      const rt = await fetchRealtimeMulti(codes);
+      if (rt) {
+        state._rtPrices = { ...state._rtPrices, ...rt };
+        checkAlerts(rt);
+        if (state.activeTab === 'alert') renderAlertView();
+        if (state.activeTab === 'dingpan' && state.view === 'list') renderSecurityList(state.searchQuery);
+      }
+    } catch {}
+  }, 5000);
+}
+
+function stopAlertMonitor() {
+  if (state._alertTimer) {
+    clearInterval(state._alertTimer);
+    state._alertTimer = null;
+  }
 }
 
 function renderWorkbenchView() {
@@ -1874,6 +2260,9 @@ function init() {
   history.replaceState({ chanmView: 'list' }, '');
   startIndexRealtime();
 
+  state.alerts = loadAlerts();
+  startAlertMonitor();
+
   // 自动加载画线数据（file:// 模式下跳过）
   if (location.protocol !== 'file:') {
     loadAllDrawings();
@@ -1881,7 +2270,7 @@ function init() {
 
   if ('serviceWorker' in navigator && !window.__CHANM_NOCACHE__) {
     navigator.serviceWorker.addEventListener('controllerchange', () => location.reload());
-    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js?v=20260719t').catch(() => {}));
+    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js?v=20260720a').catch(() => {}));
   }
 
   window.__CHANM_LOADED__ = true;
