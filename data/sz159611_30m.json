@@ -1,7 +1,7 @@
 {
   "code": "sz159611",
   "period": "30m",
-  "exportedAt": 1784474253293,
+  "exportedAt": 1784560219037,
   "segments": [
     {
       "id": "s_h7dcg273",
@@ -166,6 +166,20 @@
         "s_fjfltmbf",
         "s_d51f8us6",
         "s_qjogkepd"
+      ],
+      "startTime": 1782352800,
+      "endTime": 1782957600,
+      "low": 1.044,
+      "high": 1.055,
+      "points": [
+        {
+          "time": 1782352800,
+          "price": 1.055
+        },
+        {
+          "time": 1782957600,
+          "price": 1.044
+        }
       ]
     },
     {
@@ -177,6 +191,20 @@
         "s_tgvlpeo5",
         "s_kzd59omb",
         "s_2qkms7jh"
+      ],
+      "startTime": 1780970400,
+      "endTime": 1781578800,
+      "low": 1.122,
+      "high": 1.1460000000000001,
+      "points": [
+        {
+          "time": 1780970400,
+          "price": 1.1460000000000001
+        },
+        {
+          "time": 1781578800,
+          "price": 1.122
+        }
       ]
     }
   ]

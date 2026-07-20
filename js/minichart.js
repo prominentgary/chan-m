@@ -1,22 +1,37 @@
 // minichart.js —— 段走势简图（SVG）：折线连接各段端点，叠加中枢框
 // 不依赖任何图表库，纯内联 SVG，适配移动端黑白/彩色主题。
 
-// 由中枢成员段计算其震荡区间（高/低价重叠区）与时间范围，与 algo.js 的 getZhongshuRange 一致
+// 中枢配色：统一黑色
+const ZS_COLOR = 'var(--wx-txt)';
+
+// 由中枢计算其震荡区间与时间范围。
+//   - 中枢区间（高低价）= 前 3 段（基础段）的重叠区域，与 algo.js 的 getZhongshuRange 一致。
+//   - 时间宽度 = 全部成员段（含延伸段）的跨度，体现中枢延伸。
 function computeZsBox(zs, segMap) {
-  const zsSegs = (zs.segmentIds || []).map((id) => segMap[id]).filter(Boolean);
-  if (zsSegs.length < 3) return null;
-  zsSegs.sort((a, b) => (a.start?.time ?? 0) - (b.start?.time ?? 0));
-  const lows = zsSegs.map((s) => Math.min(s.start.price, s.end.price));
-  const highs = zsSegs.map((s) => Math.max(s.start.price, s.end.price));
+  // 价格区间：基于基础 3 段
+  const baseIds = (zs.baseSegmentIds && zs.baseSegmentIds.length >= 3)
+    ? zs.baseSegmentIds
+    : (zs.segmentIds || []).slice(0, 3);
+  const baseSegs = baseIds.map((id) => segMap[id]).filter(Boolean);
+  if (baseSegs.length < 3) return null;
+  baseSegs.sort((a, b) => (a.start?.time ?? 0) - (b.start?.time ?? 0));
+  // 前 3 段的重叠区域：低点取各段低点最大值，高点取各段高点最小值
+  const lows = baseSegs.map((s) => Math.min(s.start.price, s.end.price));
+  const highs = baseSegs.map((s) => Math.max(s.start.price, s.end.price));
   const low = Math.max(...lows);
   const high = Math.min(...highs);
   if (!(high > low)) return null; // 无重叠区间，不成中枢
-  return {
-    tStart: zsSegs[0].start.time,
-    tEnd: zsSegs[zsSegs.length - 1].end.time,
-    low,
-    high,
-  };
+
+  // 时间宽度：基于全部成员段（含延伸段），取首段起点到末段终点
+  const memberSegs = (zs.segmentIds || [])
+    .map((id) => segMap[id])
+    .filter(Boolean)
+    .sort((a, b) => (a.start?.time ?? 0) - (b.start?.time ?? 0));
+  const spanSegs = memberSegs.length ? memberSegs : baseSegs;
+  const tStart = spanSegs[0].start.time;
+  const tEnd = spanSegs[spanSegs.length - 1].end.time;
+
+  return { tStart, tEnd, low, high, color: ZS_COLOR };
 }
 
 // 把时间戳换算成「交易时间坐标」：只累计交易时段的分钟数，剔除午休/隔夜/周末/节假日。
@@ -100,17 +115,23 @@ export function renderMiniChart(container, segments, zhongshus, opts = {}) {
 
   let svg = `<svg class="mini-chart-svg" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="段走势简图">`;
 
-  // 中枢框（半透明蓝，置于最底层）
+  // 中枢区间（置于最底层）：轻量填充作为分组背景，四周用与段一致的线型绘制成完整方框
   zsList.forEach((z) => {
     const x1 = xOf(z.tStart);
     const x2 = xOf(z.tEnd);
-    const y1 = yOf(z.high);
-    const y2 = yOf(z.low);
+    const yHigh = yOf(z.high);
+    const yLow = yOf(z.low);
     const x = Math.min(x1, x2);
     const w = Math.max(2, Math.abs(x2 - x1));
-    const y = Math.min(y1, y2);
-    const h = Math.max(2, Math.abs(y2 - y1));
-    svg += `<rect class="mini-zs" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" />`;
+    const y = Math.min(yHigh, yLow);
+    const h = Math.max(2, Math.abs(yLow - yHigh));
+    // 背景填充（中枢色，低透明度）
+    svg += `<rect class="mini-zs" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${w.toFixed(1)}" height="${h.toFixed(1)}" fill="${z.color}" fill-opacity="0.10" />`;
+    // 中枢方框四边：圆头实线、宽度 2，与段主线线型一致，颜色统一为中枢强调色
+    svg += `<line class="mini-zs-edge" x1="${x1.toFixed(1)}" y1="${yHigh.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${yHigh.toFixed(1)}" stroke="${z.color}" stroke-width="2" stroke-linecap="round" />`;
+    svg += `<line class="mini-zs-edge" x1="${x1.toFixed(1)}" y1="${yLow.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${yLow.toFixed(1)}" stroke="${z.color}" stroke-width="2" stroke-linecap="round" />`;
+    svg += `<line class="mini-zs-edge" x1="${x1.toFixed(1)}" y1="${yHigh.toFixed(1)}" x2="${x1.toFixed(1)}" y2="${yLow.toFixed(1)}" stroke="${z.color}" stroke-width="2" stroke-linecap="round" />`;
+    svg += `<line class="mini-zs-edge" x1="${x2.toFixed(1)}" y1="${yHigh.toFixed(1)}" x2="${x2.toFixed(1)}" y2="${yLow.toFixed(1)}" stroke="${z.color}" stroke-width="2" stroke-linecap="round" />`;
   });
 
   // 相邻段之间的连接线（中性灰，体现段与段的衔接）
@@ -120,16 +141,10 @@ export function renderMiniChart(container, segments, zhongshus, opts = {}) {
     svg += `<line class="mini-link" x1="${xOf(a.end.time).toFixed(1)}" y1="${yOf(a.end.price).toFixed(1)}" x2="${xOf(b.start.time).toFixed(1)}" y2="${yOf(b.start.price).toFixed(1)}" />`;
   }
 
-  // 段主线 + 端点圆点（按涨/跌方向配色，跟随主题）
+  // 段主线（统一黑色，不区分涨跌方向，无端点圆点）
   segs.forEach((s) => {
-    const color = s.direction === 'up'
-      ? 'var(--wx-red)'
-      : s.direction === 'down'
-        ? 'var(--wx-green)'
-        : 'var(--wx-muted)';
+    const color = 'var(--wx-txt)';
     svg += `<line x1="${xOf(s.start.time).toFixed(1)}" y1="${yOf(s.start.price).toFixed(1)}" x2="${xOf(s.end.time).toFixed(1)}" y2="${yOf(s.end.price).toFixed(1)}" stroke="${color}" stroke-width="2" stroke-linecap="round" />`;
-    svg += `<circle cx="${xOf(s.start.time).toFixed(1)}" cy="${yOf(s.start.price).toFixed(1)}" r="2" fill="${color}" />`;
-    svg += `<circle cx="${xOf(s.end.time).toFixed(1)}" cy="${yOf(s.end.price).toFixed(1)}" r="2.6" fill="${color}" />`;
   });
 
   svg += '</svg>';

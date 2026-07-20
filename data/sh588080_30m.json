@@ -1,7 +1,7 @@
 {
   "code": "sh588080",
   "period": "30m",
-  "exportedAt": 1784474253293,
+  "exportedAt": 1784560219160,
   "segments": [
     {
       "id": "s_h7x4seo8",
@@ -68,6 +68,20 @@
         "s_p1mhxk21",
         "s_w3ezhm2l",
         "s_ngpv4wqt"
+      ],
+      "startTime": 1783306800,
+      "endTime": 1784169000,
+      "low": 1.97,
+      "high": 1.99,
+      "points": [
+        {
+          "time": 1783306800,
+          "price": 1.99
+        },
+        {
+          "time": 1784169000,
+          "price": 1.97
+        }
       ]
     }
   ]

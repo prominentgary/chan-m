@@ -149,6 +149,7 @@ body {
   font-size: 13px; color: #ad6800; font-weight: 600;
   padding: 10px 14px; background: #fff7e6; border-bottom: 1px solid #ffe7ba;
   display: flex; align-items: center; gap: 6px;
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
 }
 .zs-title.plain { background: transparent; border: none; padding: 0 14px; }
 
@@ -167,6 +168,7 @@ body {
   position: absolute;
   left: 0; right: 0;
   height: 32px;
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
   z-index: 6;
   display: none;
   align-items: center;
@@ -253,6 +255,8 @@ body {
   background: var(--wx-card); padding: 12px 14px;
   border-bottom: 1px solid var(--wx-line);
   display: flex; gap: 12px; align-items: flex-start;
+  /* 长按卡片弹出操作按钮：禁用文本选择/系统菜单，避免按到文字数字时触发原生选区而吞掉长按 */
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
 }
 .card:last-child { border-bottom: none; }
 
@@ -434,8 +438,8 @@ body {
   -webkit-transform: translateZ(0);
   backface-visibility: hidden;
   -webkit-backface-visibility: hidden;
-  /* 禁止 tabbar 自身产生水平滚动 */
-  overflow-x: hidden;
+  /* 禁止 tabbar 自身产生滚动条（overflow-x:hidden 在某些桌面浏览器会隐式打开 y 轴滚动） */
+  overflow: hidden;
   /* 防止某些浏览器把 fixed 元素当作 body overflow-x:hidden 的子元素进行裁切 */
   will-change: transform;
 }
@@ -525,6 +529,7 @@ body {
 .sec-card {
   background: var(--wx-card); border-radius: 12px; overflow: hidden;
   border: 1px solid var(--wx-line); box-shadow: 0 1px 2px rgba(0,0,0,.04);
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
 }
 .sec-head {
   display: flex; align-items: center; justify-content: space-between;
@@ -683,11 +688,12 @@ body {
 
 /* 简图内元素 */
 .mini-zs {
-  fill: rgba(87, 107, 149, .12);
-  stroke: rgba(87, 107, 149, .55);
-  stroke-width: 1;
+  fill: rgba(240, 180, 41, .10);
 }
-.mini-link { stroke: var(--wx-muted); stroke-width: 1; opacity: .5; }
+.mini-zs-edge {
+  stroke-linecap: round;
+}
+.mini-link { stroke: var(--wx-txt); stroke-width: 1; opacity: .5; }
 
 /* 周期行：长按不弹出系统菜单/选区 */
 .period-row { user-select: none; -webkit-touch-callout: none; }
@@ -855,6 +861,30 @@ body {
   color: var(--wx-accent);
 }
 .alert-type-opt:active { opacity: .7; }
+
+.alert-period-options {
+  display: flex; flex-wrap: wrap; gap: 6px;
+}
+.alert-period-opt {
+  padding: 8px 12px;
+  border: 1px solid var(--wx-line);
+  border-radius: 8px;
+  background: var(--wx-bg);
+  color: var(--wx-txt);
+  font-size: 13px; font-weight: 500;
+  cursor: pointer;
+}
+.alert-period-opt.active {
+  border-color: var(--wx-accent);
+  background: rgba(240, 180, 41, .1);
+  color: var(--wx-accent);
+}
+.alert-period-opt:active { opacity: .7; }
+.alert-period-tag {
+  font-size: 12px; color: var(--wx-muted); font-weight: 500;
+  background: var(--wx-line); border-radius: 6px; padding: 2px 8px;
+  margin-left: 6px;
+}
 
 .alert-input-group { display: flex; flex-direction: column; gap: 8px; }
 .alert-input-label { font-size: 13px; color: var(--wx-muted); font-weight: 500; }

@@ -1,7 +1,7 @@
 {
   "code": "sh588080",
   "period": "week",
-  "exportedAt": 1784474253483,
+  "exportedAt": 1784560219234,
   "segments": [
     {
       "id": "s_zh8gkofr",
@@ -138,6 +138,20 @@
         "s_1ozau178",
         "s_4xh6xgoi",
         "s_kw48z3lo"
+      ],
+      "startTime": 1734019200,
+      "endTime": 1744300800,
+      "low": 0.953,
+      "high": 1.095,
+      "points": [
+        {
+          "time": 1734019200,
+          "price": 1.095
+        },
+        {
+          "time": 1744300800,
+          "price": 0.953
+        }
       ]
     },
     {
@@ -147,6 +161,20 @@
         "s_s38a7pgl",
         "s_o4fk161n",
         "s_2i6r6pns"
+      ],
+      "startTime": 1760025600,
+      "endTime": 1774540800,
+      "low": 1.295,
+      "high": 1.605,
+      "points": [
+        {
+          "time": 1760025600,
+          "price": 1.605
+        },
+        {
+          "time": 1774540800,
+          "price": 1.295
+        }
       ]
     }
   ]

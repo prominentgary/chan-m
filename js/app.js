@@ -159,6 +159,7 @@ function addAlert(alert) {
     name: alert.name || '',
     type: alert.type,
     value: alert.value,
+    period: alert.period || 'day',
     enabled: true,
     triggered: false,
     createdAt: Date.now(),
@@ -182,6 +183,7 @@ function toggleAlert(id) {
       a.triggered = false;
       a.triggeredAt = null;
       state._alertNotified.delete(id);
+      startAlertMonitor(); // 定时器可能已自清，重新拉起监控
     }
     saveAlerts();
   }
@@ -193,9 +195,25 @@ function alertTypeLabel(type) {
     price_below: '价格下破',
     change_pct_up: '涨幅超过',
     change_pct_down: '跌幅超过',
+    macd_golden: 'DIF金叉',
+    macd_death: 'DIF死叉',
+    macd_bar_shrink: '红绿柱缩短',
   };
   return map[type] || type;
 }
+// MACD 类提醒（基于某周期 K 线计算），不需要目标值
+const MACD_ALERT_TYPES = ['macd_golden', 'macd_death', 'macd_bar_shrink'];
+function isMacdAlert(a) { return MACD_ALERT_TYPES.includes(a.type); }
+// 添加提醒弹窗里展示的类型项
+const ALERT_TYPE_OPTIONS = [
+  ['price_above', '价格上破'],
+  ['price_below', '价格下破'],
+  ['change_pct_up', '涨幅超过'],
+  ['change_pct_down', '跌幅超过'],
+  ['macd_golden', 'DIF金叉'],
+  ['macd_death', 'DIF死叉'],
+  ['macd_bar_shrink', '红绿柱缩短'],
+];
 
 // 合并静态数据和本地编辑：取两者中较新的
 function mergeDrawings(staticData, code) {
@@ -1845,7 +1863,7 @@ function renderAlertView() {
   if (!alerts.length) {
     el.innerHTML = `
       <div class="alert-header">
-        <div class="alert-title">价格提醒</div>
+        <div class="alert-title">提醒</div>
       </div>
       <div class="empty">暂无提醒<br><span style="font-size:13px;color:var(--wx-muted);">在盯盘列表长按证券可添加提醒</span></div>
     `;
@@ -1868,10 +1886,12 @@ function renderAlertView() {
         const name = a.name || rt?.name || a.code;
         const typeText = alertTypeLabel(a.type);
         let valueText = '';
-        if (a.type === 'price_above' || a.type === 'price_below') {
-          valueText = formatPrice(a.code, a.value);
-        } else {
-          valueText = (a.value > 0 ? '+' : '') + a.value.toFixed(2) + '%';
+        if (!isMacdAlert(a)) {
+          if (a.type === 'price_above' || a.type === 'price_below') {
+            valueText = formatPrice(a.code, a.value);
+          } else {
+            valueText = (a.value > 0 ? '+' : '') + a.value.toFixed(2) + '%';
+          }
         }
         const statusCls = a.triggered ? 'triggered' : (a.enabled ? 'active' : 'disabled');
         const statusText = a.triggered ? '已触发' : (a.enabled ? '监控中' : '已关闭');
@@ -1888,7 +1908,8 @@ function renderAlertView() {
             <div class="alert-card-body">
               <div class="alert-card-condition">
                 <span class="alert-type-tag">${typeText}</span>
-                <span class="alert-target-value">${valueText}</span>
+                ${valueText ? `<span class="alert-target-value">${valueText}</span>` : ''}
+                ${isMacdAlert(a) ? `<span class="alert-period-tag">· ${periodLabel(a.period)}</span>` : ''}
               </div>
               <div class="alert-card-cur">${curText}</div>
             </div>
@@ -1919,12 +1940,14 @@ function renderAlertView() {
 // ========== 添加提醒弹窗 ==========
 let _alertSheetCode = null;
 
-function openAddAlertSheet(code, name) {
+function openAddAlertSheet(code, name, period) {
   _alertSheetCode = code;
   const sec = state.securities.find((s) => s.code === code);
   const rt = state._rtPrices?.[code];
   const curPrice = rt?.price;
   const displayName = name || sec?.name || rt?.name || code;
+  const availPeriods = (sec && sec.periods && sec.periods.length) ? sec.periods : PERIODS.map((p) => p[0]);
+  let selectedPeriod = (period && availPeriods.includes(period)) ? period : (availPeriods[0] || 'day');
 
   const existing = document.getElementById('alert-sheet');
   if (existing) existing.remove();
@@ -1932,6 +1955,12 @@ function openAddAlertSheet(code, name) {
   const sheet = document.createElement('div');
   sheet.id = 'alert-sheet';
   sheet.className = 'action-sheet-mask';
+  const typeOptsHtml = ALERT_TYPE_OPTIONS.map(([t, label], i) =>
+    `<button class="alert-type-opt${i === 0 ? ' active' : ''}" data-type="${t}">${label}</button>`
+  ).join('');
+  const periodOptsHtml = availPeriods.map((p) =>
+    `<button class="alert-period-opt${p === selectedPeriod ? ' active' : ''}" data-period="${p}">${periodLabel(p)}</button>`
+  ).join('');
   sheet.innerHTML = `
     <div class="action-sheet">
       <div class="action-sheet-title">
@@ -1941,21 +1970,20 @@ function openAddAlertSheet(code, name) {
       <div class="alert-sheet-body">
         <div class="alert-type-group">
           <div class="alert-type-label">提醒类型</div>
-          <div class="alert-type-options">
-            <button class="alert-type-opt active" data-type="price_above">价格上破</button>
-            <button class="alert-type-opt" data-type="price_below">价格下破</button>
-            <button class="alert-type-opt" data-type="change_pct_up">涨幅超过</button>
-            <button class="alert-type-opt" data-type="change_pct_down">跌幅超过</button>
-          </div>
+          <div class="alert-type-options">${typeOptsHtml}</div>
         </div>
-        <div class="alert-input-group">
+        <div class="alert-period-group" id="alert-period-group" style="display:none;">
+          <div class="alert-input-label">周期</div>
+          <div class="alert-period-options">${periodOptsHtml}</div>
+        </div>
+        <div class="alert-input-group" id="alert-value-group">
           <div class="alert-input-label">目标值</div>
           <div class="alert-input-row">
             <input type="number" id="alert-input-value" step="0.001" placeholder="${curPrice != null ? '当前价 ' + formatPrice(code, curPrice) : '请输入'}">
             <span id="alert-input-unit">元</span>
           </div>
         </div>
-        <div class="alert-quick-row">
+        <div class="alert-quick-row" id="alert-quick-group">
           <button class="alert-quick-btn" data-pct="1">+1%</button>
           <button class="alert-quick-btn" data-pct="3">+3%</button>
           <button class="alert-quick-btn" data-pct="5">+5%</button>
@@ -1971,15 +1999,15 @@ function openAddAlertSheet(code, name) {
   `;
   document.body.appendChild(sheet);
 
-  let selectedType = 'price_above';
+  let selectedType = ALERT_TYPE_OPTIONS[0][0];
 
-  const updateUnit = () => {
+  const updateTypeUI = () => {
+    const macd = isMacdAlert({ type: selectedType });
+    sheet.querySelector('#alert-period-group').style.display = macd ? 'block' : 'none';
+    sheet.querySelector('#alert-value-group').style.display = macd ? 'none' : 'block';
+    sheet.querySelector('#alert-quick-group').style.display = macd ? 'none' : 'flex';
     const unitEl = sheet.querySelector('#alert-input-unit');
-    if (selectedType.startsWith('change_pct')) {
-      unitEl.textContent = '%';
-    } else {
-      unitEl.textContent = isETF(code) ? '元' : '元';
-    }
+    unitEl.textContent = selectedType.startsWith('change_pct') ? '%' : '元';
   };
 
   sheet.querySelectorAll('.alert-type-opt').forEach((btn) => {
@@ -1987,7 +2015,7 @@ function openAddAlertSheet(code, name) {
       sheet.querySelectorAll('.alert-type-opt').forEach((b) => b.classList.remove('active'));
       btn.classList.add('active');
       selectedType = btn.dataset.type;
-      updateUnit();
+      updateTypeUI();
       const input = sheet.querySelector('#alert-input-value');
       if (selectedType.startsWith('change_pct')) {
         input.placeholder = '如 3.00';
@@ -1996,6 +2024,14 @@ function openAddAlertSheet(code, name) {
         input.placeholder = curPrice != null ? '当前价 ' + formatPrice(code, curPrice) : '请输入';
         input.step = isETF(code) ? '0.001' : '0.01';
       }
+    };
+  });
+
+  sheet.querySelectorAll('.alert-period-opt').forEach((btn) => {
+    btn.onclick = () => {
+      sheet.querySelectorAll('.alert-period-opt').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      selectedPeriod = btn.dataset.period;
     };
   });
 
@@ -2014,7 +2050,7 @@ function openAddAlertSheet(code, name) {
           selectedType = 'price_below';
           sheet.querySelector('[data-type="price_below"]').classList.add('active');
         }
-        updateUnit();
+        updateTypeUI();
       }
     };
   });
@@ -2023,18 +2059,17 @@ function openAddAlertSheet(code, name) {
   sheet.onclick = (e) => { if (e.target === sheet) sheet.remove(); };
 
   sheet.querySelector('#alert-add-confirm').onclick = () => {
-    const input = sheet.querySelector('#alert-input-value');
-    const val = parseFloat(input.value);
-    if (isNaN(val) || val <= 0) {
-      alert('请输入有效的目标值');
-      return;
+    if (isMacdAlert({ type: selectedType })) {
+      addAlert({ code, name: displayName, type: selectedType, value: 0, period: selectedPeriod });
+    } else {
+      const input = sheet.querySelector('#alert-input-value');
+      const val = parseFloat(input.value);
+      if (isNaN(val) || val <= 0) {
+        alert('请输入有效的目标值');
+        return;
+      }
+      addAlert({ code, name: displayName, type: selectedType, value: val, period: selectedPeriod });
     }
-    addAlert({
-      code,
-      name: displayName,
-      type: selectedType,
-      value: val,
-    });
     sheet.remove();
     if (state.activeTab === 'alert') renderAlertView();
     startAlertMonitor();
@@ -2051,12 +2086,17 @@ function showAlertNotification(alertItem, curPrice) {
   const name = alertItem.name || alertItem.code;
   const typeText = alertTypeLabel(alertItem.type);
   let valueText = '';
-  if (alertItem.type === 'price_above' || alertItem.type === 'price_below') {
-    valueText = formatPrice(alertItem.code, alertItem.value);
-  } else {
-    valueText = (alertItem.value > 0 ? '+' : '') + alertItem.value.toFixed(2) + '%';
+  if (!isMacdAlert(alertItem)) {
+    if (alertItem.type === 'price_above' || alertItem.type === 'price_below') {
+      valueText = formatPrice(alertItem.code, alertItem.value);
+    } else {
+      valueText = (alertItem.value > 0 ? '+' : '') + alertItem.value.toFixed(2) + '%';
+    }
   }
   const curText = curPrice != null ? `当前价 ${formatPrice(alertItem.code, curPrice)}` : '';
+  const descText = isMacdAlert(alertItem)
+    ? `${periodLabel(alertItem.period)}周期`
+    : `目标 ${valueText} · ${curText}`;
 
   const el = document.createElement('div');
   el.id = 'alert-notification';
@@ -2065,7 +2105,7 @@ function showAlertNotification(alertItem, curPrice) {
     <div class="alert-notif-icon">🔔</div>
     <div class="alert-notif-body">
       <div class="alert-notif-title">${name} · ${typeText}</div>
-      <div class="alert-notif-desc">目标 ${valueText} · ${curText}</div>
+      <div class="alert-notif-desc">${descText}</div>
     </div>
     <button class="alert-notif-close" aria-label="关闭">×</button>
   `;
@@ -2100,6 +2140,7 @@ function checkAlerts(rtPrices) {
   for (const alert of state.alerts) {
     if (!alert.enabled || alert.triggered) continue;
     if (state._alertNotified.has(alert.id)) continue;
+    if (isMacdAlert(alert)) continue; // MACD 类由 checkMacdAlerts 处理
     const rt = rtPrices[alert.code];
     if (!rt || !rt.price || !rt.prevClose) continue;
 
@@ -2139,32 +2180,128 @@ function checkAlerts(rtPrices) {
 }
 
 function startAlertMonitor() {
-  if (state._alertTimer) return;
-  const activeAlerts = state.alerts.filter((a) => a.enabled && !a.triggered);
-  if (!activeAlerts.length) return;
+  // 价格类提醒（基于实时价，5 秒轮询）
+  if (!state._alertTimer) {
+    const priceActive = state.alerts.some((a) => a.enabled && !a.triggered && !isMacdAlert(a));
+    if (priceActive) {
+      state._alertTimer = setInterval(async () => {
+        if (document.hidden) return;
+        const activeAlerts = state.alerts.filter((a) => a.enabled && !a.triggered && !isMacdAlert(a));
+        if (!activeAlerts.length) { clearInterval(state._alertTimer); state._alertTimer = null; return; }
+        const codes = [...new Set(activeAlerts.map((a) => a.code))];
+        if (!codes.length) return;
+        try {
+          const rt = await fetchRealtimeMulti(codes);
+          if (rt) {
+            state._rtPrices = { ...state._rtPrices, ...rt };
+            checkAlerts(rt);
+            if (state.activeTab === 'alert') renderAlertView();
+            if (state.activeTab === 'dingpan' && state.view === 'list') renderSecurityList(state.searchQuery);
+          }
+        } catch {}
+      }, 5000);
+    }
+  }
+  // MACD 类提醒（基于 K 线，低频轮询）
+  startMacdMonitor();
+}
 
-  state._alertTimer = setInterval(async () => {
+function startMacdMonitor() {
+  if (state._macdTimer) return;
+  const macdActive = state.alerts.some((a) => a.enabled && !a.triggered && isMacdAlert(a));
+  if (!macdActive) return;
+  state._macdTimer = setInterval(async () => {
     if (document.hidden) return;
-    const activeAlerts = state.alerts.filter((a) => a.enabled && !a.triggered);
-    if (!activeAlerts.length) return;
-    const codes = [...new Set(activeAlerts.map((a) => a.code))];
-    if (!codes.length) return;
+    const activeMacd = state.alerts.filter((a) => a.enabled && !a.triggered && isMacdAlert(a));
+    if (!activeMacd.length) { clearInterval(state._macdTimer); state._macdTimer = null; return; }
+    try { await checkMacdAlerts(activeMacd); } catch {}
+  }, 60000);
+  // 添加后立即检查一次，避免等待首个间隔
+  (async () => {
     try {
-      const rt = await fetchRealtimeMulti(codes);
-      if (rt) {
-        state._rtPrices = { ...state._rtPrices, ...rt };
-        checkAlerts(rt);
-        if (state.activeTab === 'alert') renderAlertView();
-        if (state.activeTab === 'dingpan' && state.view === 'list') renderSecurityList(state.searchQuery);
-      }
+      await checkMacdAlerts(state.alerts.filter((a) => a.enabled && !a.triggered && isMacdAlert(a)));
     } catch {}
-  }, 5000);
+  })();
 }
 
 function stopAlertMonitor() {
-  if (state._alertTimer) {
-    clearInterval(state._alertTimer);
-    state._alertTimer = null;
+  if (state._alertTimer) { clearInterval(state._alertTimer); state._alertTimer = null; }
+  if (state._macdTimer) { clearInterval(state._macdTimer); state._macdTimer = null; }
+}
+
+// 按 code|period 缓存 K 线，避免在轮询周期内重复请求
+const _macdBarsCache = {};
+
+// 检测最近一根已收盘 K 线上的 DIF/DEA 穿越（金叉/死叉）
+function detectMacdCross(macd, lastIdx, golden) {
+  const i = lastIdx;
+  const d0 = macd[i].dif, e0 = macd[i].dea, d1 = macd[i - 1].dif, e1 = macd[i - 1].dea;
+  if (d0 == null || e0 == null || d1 == null || e1 == null) return false;
+  if (golden) return d1 < e1 && d0 >= e0; // DIF 上穿 DEA
+  return d1 > e1 && d0 <= e0;             // DIF 下穿 DEA
+}
+
+// 检测红绿柱缩短：柱子先伸长到峰值 i，i+1 比 i 短；
+// 用户强调必须等 i+2 这根走完才能确认 i+1 比 i 短，故要求 i+2 已收盘（存在）才判定。
+function detectMacdBarShrink(macd, lastIdx, alert) {
+  const mag = (k) => Math.abs(macd[k].macd);
+  // 从最近处向前找最近的「峰值+缩短」事件
+  for (let i = lastIdx - 2; i >= 1; i--) {
+    if (macd[i].macd == null || macd[i - 1].macd == null ||
+        macd[i + 1].macd == null || macd[i + 2].macd == null) continue;
+    if (mag(i) <= mag(i - 1)) continue;       // i 不是局部峰值
+    if (mag(i) <= mag(i + 1)) continue;       // i 不是局部峰值
+    if (mag(i + 1) >= mag(i)) continue;       // i+1 不比 i 短
+    const peakKey = (macd[i + 1].time != null) ? (alert.code + '|' + alert.period + '|' + macd[i + 1].time) : (alert.code + '|' + alert.period + '|' + i);
+    if (alert._lastShrinkKey === peakKey) return false; // 本次缩短已报过，停止寻找更早的
+    alert._lastShrinkKey = peakKey;
+    return true;
+  }
+  return false;
+}
+
+// 拉取各 code|period 的 K 线，计算 MACD 并检测金叉/死叉/红绿柱缩短
+async function checkMacdAlerts(alerts) {
+  const groups = {};
+  for (const a of alerts) {
+    const key = a.code + '|' + a.period;
+    (groups[key] = groups[key] || []).push(a);
+  }
+  const triggered = [];
+  for (const key of Object.keys(groups)) {
+    const [code, period] = key.split('|');
+    let bars;
+    const cached = _macdBarsCache[key];
+    const now = Date.now();
+    if (cached && now - cached.t < 120000) {
+      bars = cached.bars;
+    } else {
+      try { const res = await fetchBars(code, period); bars = res.bars; } catch { continue; }
+      if (!bars || !bars.length) continue;
+      _macdBarsCache[key] = { bars, t: now };
+    }
+    const macd = computeMACD(bars);
+    if (!macd || macd.length < 35) continue;
+    const lastClosed = bars.length - 2; // 最近一根已收盘 K 线（最后一根可能尚未收盘）
+    if (lastClosed < 34) continue;
+    for (const a of groups[key]) {
+      if (a.triggered || !a.enabled) continue;
+      let hit = false;
+      if (a.type === 'macd_golden') hit = detectMacdCross(macd, lastClosed, true);
+      else if (a.type === 'macd_death') hit = detectMacdCross(macd, lastClosed, false);
+      else if (a.type === 'macd_bar_shrink') hit = detectMacdBarShrink(macd, lastClosed, a);
+      if (hit) {
+        a.triggered = true;
+        a.triggeredAt = Date.now();
+        state._alertNotified.add(a.id);
+        triggered.push(a);
+      }
+    }
+  }
+  if (triggered.length) {
+    saveAlerts();
+    triggered.forEach((a) => showAlertNotification(a, state._rtPrices?.[a.code]?.price));
+    if (state.activeTab === 'alert') renderAlertView();
   }
 }
 
