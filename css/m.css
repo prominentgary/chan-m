@@ -25,10 +25,18 @@ body.mono {
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
 
+html {
+  /* 确保根元素高度覆盖整个视口，为 body min-height:100% 提供参照 */
+  height: 100%;
+  height: 100dvh;
+}
+
 body {
   margin: 0;
-  /* 使用 dvh（动态视口高度）而非 vh：iOS Safari 在页面切换时底部工具栏会短暂出现，
-     vh 会被撑大导致 fixed 底部元素被推出屏幕；dvh 始终等于当前可见区域高度。 */
+  /* 多层 fallback：vh/svh 兜底，dvh 优先；避免小米等浏览器在页面切换时
+     因 dvh 延迟计算导致 body 高度不足，进而使 fixed 底部元素被裁切。 */
+  min-height: 100vh;
+  min-height: 100svh;
   min-height: 100dvh;
   background: var(--wx-bg);
   color: var(--wx-txt);
@@ -410,7 +418,11 @@ body {
 
 /* 底部 tabbar */
 .wx-tabbar {
-  position: fixed; bottom: 0; left: 0; right: 0;
+  position: fixed; left: 0; right: 0;
+  /* bottom 优先贴住安全区上沿：MIUI/小米浏览器在页面切换时，env() 可能
+     在 1~2 秒内从 0 跳变到正确值，以此避免 fixed 元素被系统手势条遮挡。
+     若浏览器不支持 env() 则回退到 0。 */
+  bottom: env(safe-area-inset-bottom, 0);
   display: flex; justify-content: space-around; align-items: center;
   height: 56px;
   width: 100%;
@@ -424,9 +436,13 @@ body {
   -webkit-backface-visibility: hidden;
   /* 禁止 tabbar 自身产生水平滚动 */
   overflow-x: hidden;
+  /* 防止某些浏览器把 fixed 元素当作 body overflow-x:hidden 的子元素进行裁切 */
+  will-change: transform;
 }
 /* 安全区填充与 tabbar 主体分离：env() 抖动时只影响 ::after 高度，
-   tabbar 内容（图标/文字）位置和高度保持不变，避免"溢出"或跳动。 */
+   tabbar 内容（图标/文字）位置和高度保持不变，避免"溢出"或跳动。
+   当 bottom 已经等于 safe-area-inset-bottom 时，::after 继续向下延伸
+   覆盖手势条区域，保证视觉连贯。 */
 .wx-tabbar::after {
   content: '';
   position: absolute;

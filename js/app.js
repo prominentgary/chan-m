@@ -773,8 +773,8 @@ async function loadAndRenderPeriodDetail(code, period) {
     const bars = curRes.bars || [];
     state._currentBars = { code, period, bars };
     computeMACD(bars);
-    // 1分钟图：先根据最新 K 线更新盯盘段终点，再重新构建渲染分组
-    if (period === '1m') updateWatchSegments(code, period, bars, false);
+    // 先根据最新 K 线更新盯盘段终点（所有周期的最后一段均支持盯盘），再重新构建渲染分组
+    updateWatchSegments(code, period, bars, false);
     const d = sec.drawings[period] || { segments: [], zhongshus: [] };
     const group = { period, label: periodLabel(period), segments: [...d.segments], zhongshus: [...d.zhongshus], loaded: false, error: null };
     computeStrengths(bars, group.segments, group.zhongshus);
@@ -880,7 +880,7 @@ function showCardOverlay(card, code, period) {
   const idx = sorted.findIndex((s) => s.id === segId);
   const targetSeg = sorted[idx];
   const isWatch = targetSeg?._isWatch || false;
-  const isLatest = !isWatch && period === '1m' && targetSeg && sorted[sorted.length - 1]?.id === segId;
+  const isLatest = !isWatch && targetSeg && sorted[sorted.length - 1]?.id === segId;
   const bars = state._currentBars?.bars || [];
   const detected = idx >= 0 ? detectZhongshu(sorted, idx, bars) : null;
   const otherZsIds = new Set();
@@ -1414,8 +1414,8 @@ function handleSegmentAction(act, segId, code, period) {
       targetSeg.end.time = newEnd;
       targetSeg.end.price = endpointPrice(eBar, false, direction) ?? targetSeg.end.price;
       targetSeg.direction = direction;
-      // 盯盘段编辑后变为普通段，并基于新的终点自动生成新的盯盘段
-      if (wasWatch && period === '1m') {
+      // 盯盘段编辑后变为普通段，并基于新的终点自动生成新的盯盘段（所有周期通用）
+      if (wasWatch) {
         delete targetSeg._isWatch;
         delete targetSeg._watchSourceId;
         const startIdx = bars.findIndex((b) => b.time === targetSeg.end.time);
@@ -1489,17 +1489,27 @@ function startAllRealtime() {
   startDetailRealtime();
 }
 
-// 1分钟详情页：定时拉取最新 K 线并更新盯盘段终点，仅在盯盘段发生变化时重绘
+// 盯盘实时刷新的轮询间隔（毫秒）：分钟线变化快用 15s，日/周线变化慢用 60s，避免无效轮询
+function watchInterval(period) {
+  return (period === 'day' || period === 'week') ? 60000 : 15000;
+}
+
+// 详情页：定时拉取最新 K 线并更新盯盘段终点（所有周期），仅在盯盘段发生变化时重绘。
+// 定时器固定 15s 触发，但按当前周期做时间戳节流：日/周线实际约 60s 才真正发请求。
 function startDetailRealtime() {
   if (state.rtTimers._detail) return;
   state.rtTimers._detail = setInterval(async () => {
-    if (state.view !== 'detail' || state.selectedPeriod !== '1m' || state.activeTab !== 'dingpan' || document.hidden) return;
+    if (state.view !== 'detail' || state.activeTab !== 'dingpan' || document.hidden) return;
     const code = state.selectedCode;
     const period = state.selectedPeriod;
+    const now = Date.now();
+    // 按周期节流：未到该周期的刷新间隔则跳过本次网络请求
+    if (now - (state._lastWatchFetch || 0) < watchInterval(period) - 200) return;
     const sec = state.securities.find((s) => s.code === code);
     if (!sec) return;
     const d = sec.drawings[period];
     if (!d || !(d.segments || []).some((s) => s._isWatch)) return;
+    state._lastWatchFetch = now;
     try {
       const res = await fetchBars(code, period, 800);
       const bars = res.bars || [];
@@ -1659,7 +1669,6 @@ function calcWatchSegmentEnd(bars, startIdx, direction) {
 }
 
 async function addWatchSegment(code, period, sourceSegId) {
-  if (period !== '1m') return;
   const sec = state.securities.find((s) => s.code === code);
   if (!sec) return;
   let bars;
@@ -1702,7 +1711,6 @@ async function addWatchSegment(code, period, sourceSegId) {
 
 // 根据最新行情更新盯盘段终点；refresh 为 false 时只更新数据不重新渲染
 function updateWatchSegments(code, period, bars, refresh = true) {
-  if (period !== '1m') return false;
   const sec = state.securities.find((s) => s.code === code);
   if (!sec) return false;
   const d = sec.drawings[period];
@@ -1736,6 +1744,46 @@ function updateWatchSegments(code, period, bars, refresh = true) {
   return changed;
 }
 
+// ========== 底部 tabbar 视口适配（修复小米等安卓机页面切换时 tabbar 被遮挡/裁切） ==========
+function adjustTabbarOffset() {
+  const tabbar = document.querySelector('.wx-tabbar');
+  if (!tabbar) return;
+
+  const vv = window.visualViewport;
+  if (!vv) {
+    tabbar.style.transform = '';
+    return;
+  }
+
+  // layout viewport 高度与 visual viewport 底部之间的差值，
+  // 即为被底部浏览器工具栏/手势条遮挡的高度。
+  const bottomOffset = window.innerHeight - (vv.offsetTop + vv.height);
+  if (bottomOffset > 1) {
+    // 将 tabbar 整体上移，使其始终位于可视区域底部；
+    // CSS 中 bottom 已基于 safe-area-inset-bottom，这里再叠加动态工具栏偏移。
+    // 保留 translateZ(0) 维持合成层，减少重绘抖动。
+    tabbar.style.transform = `translateY(${-bottomOffset}px) translateZ(0)`;
+  } else {
+    tabbar.style.transform = '';
+  }
+}
+
+function initTabbarViewportFix() {
+  adjustTabbarOffset();
+  const vv = window.visualViewport;
+  if (vv) {
+    vv.addEventListener('resize', adjustTabbarOffset);
+    vv.addEventListener('scroll', adjustTabbarOffset);
+  }
+  window.addEventListener('resize', adjustTabbarOffset);
+  window.addEventListener('orientationchange', adjustTabbarOffset);
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) setTimeout(adjustTabbarOffset, 100);
+  });
+  // 初始加载后多次校准，覆盖 MIUI 等延迟报告安全区/工具栏的场景
+  [100, 300, 600, 1200, 2500].forEach((ms) => setTimeout(adjustTabbarOffset, ms));
+}
+
 // ========== Tab 切换 ==========
 function switchTab(name) {
   state.activeTab = name;
@@ -1760,6 +1808,10 @@ function switchTab(name) {
   if (name === 'alert') renderAlertView();
   if (name === 'workbench') renderWorkbenchView();
   if (name === 'wo') renderWoView();
+
+  // 页面内容切换后，底部工具栏/安全区可能变化，重新校准 tabbar
+  requestAnimationFrame(() => adjustTabbarOffset());
+  setTimeout(adjustTabbarOffset, 100);
 }
 
 function renderHangqingView() {
@@ -2256,6 +2308,10 @@ function init() {
 
   // file:// 模式下无法 fetch 站点数据，不进入加载态（保持「暂无画线数据」提示并引导用 start_chanm.bat）
   if (location.protocol !== 'file:') loadState.loading = true;
+
+  // 先校准 tabbar 视口位置，再渲染首屏；避免小米等机型首屏时 bottom 计算延迟
+  initTabbarViewportFix();
+
   switchTab('dingpan'); // 先渲染：若本地无缓存则显示「加载中…」而非「暂无画线数据」
   history.replaceState({ chanmView: 'list' }, '');
   startIndexRealtime();
