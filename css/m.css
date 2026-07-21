@@ -29,6 +29,8 @@ html {
   /* 确保根元素高度覆盖整个视口，为 body min-height:100% 提供参照 */
   height: 100%;
   height: 100dvh;
+  /* 禁止水平滚动，防止 fixed 元素或 100vw 元素导致的横向滚动条闪现 */
+  overflow-x: hidden;
 }
 
 body {
@@ -312,7 +314,6 @@ body {
 
 .dir { font-size: 14px; font-weight: 500; }
 .pct { font-size: 14px; font-weight: 500; }
-.strength-val { font-size: 13px; color: var(--wx-muted); min-width: 36px; text-align: right; }
 .badge {
   font-size: 11px; padding: 2px 8px; border-radius: 999px; font-weight: 500;
   display: inline-block; margin-left: 4px;
@@ -320,11 +321,13 @@ body {
 .badge-warn { background: #fff2f0; color: var(--wx-red); border: 1px solid #ffccc7; }
 .badge-info { background: #e6f7ff; color: var(--wx-blue); border: 1px solid #bae7ff; }
 
-.strength {
-  display: flex; align-items: center; gap: 8px; margin-top: 8px;
-  font-size: 12px; color: var(--wx-muted);
+.card-foot {
+  display: flex; gap: 14px; margin-top: 8px;
 }
-.bar { flex: 1; height: 6px; background: #e6e6e6; border-radius: 999px; overflow: hidden; }
+.metric { flex: 1; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.metric .bar { flex: 1; min-width: 0; }
+.metric-val { font-size: 12px; color: var(--wx-muted); white-space: nowrap; }
+.bar { width: 100%; height: 6px; background: #e6e6e6; border-radius: 999px; overflow: hidden; }
 .bar-fill { height: 100%; border-radius: 999px; }
 
 /* 段卡片长按蒙板 */
@@ -363,6 +366,7 @@ body {
 .overlay-btn:active { background: #f2f2f2; }
 .overlay-btn.danger { color: var(--wx-red); }
 .overlay-btn.accent { color: var(--wx-accent); }
+.overlay-btn.ok { color: var(--wx-green); }
 
 .icon-btn {
   background: none; border: none; padding: 4px;
@@ -429,8 +433,7 @@ body {
   bottom: env(safe-area-inset-bottom, 0);
   display: flex; justify-content: space-around; align-items: center;
   height: 56px;
-  width: 100%;
-  max-width: 100vw;
+  /* 使用 left/right:0 控制宽度，避免 100vw 导致的滚动条宽度计算问题 */
   background: var(--wx-tabbar); border-top: 1px solid var(--wx-line);
   z-index: 20;
   /* 提升为合成层，避免 iOS Safari 在底部工具栏显隐/页面切换时重绘抖动 */
@@ -442,6 +445,16 @@ body {
   overflow: hidden;
   /* 防止某些浏览器把 fixed 元素当作 body overflow-x:hidden 的子元素进行裁切 */
   will-change: transform;
+  /* 初始隐藏：等 JS 校准完视口位置后再显示，避免首屏位置跳动/溢出 */
+  opacity: 0;
+  visibility: hidden;
+  /* 位置变化时平滑过渡，避免 visualViewport 变化时生硬跳动 */
+  transition: transform .2s ease-out, opacity .15s ease-out, visibility .15s ease-out;
+}
+/* JS 校准完成后添加，使 tabbar 平滑显现 */
+.wx-tabbar.ready {
+  opacity: 1;
+  visibility: visible;
 }
 /* 安全区填充与 tabbar 主体分离：env() 抖动时只影响 ::after 高度，
    tabbar 内容（图标/文字）位置和高度保持不变，避免"溢出"或跳动。

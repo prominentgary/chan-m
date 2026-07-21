@@ -2,6 +2,45 @@ import { formatPrice } from './fetcher.js?v=20260714y';
 
 // table.js —— 段/中枢 的微信会话列表风格渲染（无图表）
 
+const PERIOD_MINUTES = { '1m': 1, '5m': 5, '15m': 15, '30m': 30, '60m': 60, 'day': 1440, 'week': 10080, 'month': 43200 };
+function fmtDurVal(v) {
+  const s = v.toFixed(1);
+  return s.endsWith('.0') ? s.slice(0, -2) : s;
+}
+// 段历时：仅统计交易时段（按区间内实际 K 线根数 × 周期），不混入非交易时段
+function segDurationInfo(seg, bars, period) {
+  if (!bars || !bars.length || !seg.start || !seg.end) return null;
+  const sTime = seg.start.time, eTime = seg.end.time;
+  if (!sTime || !eTime || eTime < sTime) return null;
+  let startIdx = -1;
+  for (let i = 0; i < bars.length; i++) {
+    if (bars[i].time >= sTime) { startIdx = i; break; }
+  }
+  if (startIdx < 0) return null;
+  let endIdx = startIdx - 1;
+  for (let i = startIdx; i < bars.length; i++) {
+    if (bars[i].time <= eTime) endIdx = i; else break;
+  }
+  if (endIdx < startIdx) return null;
+  const count = endIdx - startIdx + 1;
+  if (count <= 0) return null;
+  const intervalMin = PERIOD_MINUTES[period] ?? 1;
+  const totalMin = count * intervalMin;
+  let text;
+  if (period === '1m') text = `${count}min`;
+  else if (period === 'day' || period === 'week' || period === 'month') {
+    text = `${fmtDurVal((count * intervalMin) / 1440)}d`;
+  } else {
+    text = `${fmtDurVal((count * intervalMin) / 60)}h`;
+  }
+  return { totalMin, text };
+}
+
+function segDurationText(seg, bars, period) {
+  const info = segDurationInfo(seg, bars, period);
+  return info ? info.text : '';
+}
+
 function segCard(seg, idx, ctx, readonly, extraClass = '', reversed = false) {
   const st = seg._strength || { macdArea: 0, priceChangePct: 0, barCount: 0 };
   const dirUp = seg.direction === 'up';
@@ -32,6 +71,9 @@ function segCard(seg, idx, ctx, readonly, extraClass = '', reversed = false) {
       </svg>
     </div>
   ` : '';
+  const durInfo = segDurationInfo(seg, ctx.bars, ctx.period);
+  const dur = durInfo ? durInfo.text : '';
+  const tw = durInfo ? Math.max(4, Math.min(100, (durInfo.totalMin / (ctx.maxDurationMin || 1)) * 100)) : 0;
   return `
   <div class="card ${extraClass}${seg._isWatch ? ' watch-card' : ''}" data-id="${seg.id}">
     ${watchBadge}
@@ -51,9 +93,15 @@ function segCard(seg, idx, ctx, readonly, extraClass = '', reversed = false) {
           : `<div class="point-row"><span class="point-label">起点</span> ${ctx.fmt(seg.start.time)} <span class="point-price">${formatPrice(ctx.code, seg.start.price)}</span></div>
         <div class="point-row"><span class="point-label">终点</span> ${ctx.fmt(seg.end.time)} <span class="point-price">${formatPrice(ctx.code, seg.end.price)}</span></div>`}
       </div>
-      <div class="strength">
-        <div class="bar"><div class="bar-fill" style="width:${w}%;background:${color}"></div></div>
-        <span class="strength-val">${macdAreaInt}</span>
+      <div class="card-foot">
+        <div class="metric">
+          <div class="bar"><div class="bar-fill" style="width:${tw}%;background:var(--wx-accent)"></div></div>
+          <span class="metric-val">${dur}</span>
+        </div>
+        <div class="metric">
+          <div class="bar"><div class="bar-fill" style="width:${w}%;background:${color}"></div></div>
+          <span class="metric-val">${macdAreaInt}</span>
+        </div>
       </div>
     </div>
   </div>`;
@@ -64,7 +112,7 @@ function zhongshuHeader(zs, zi, num, ctx) {
   return `<div class="zs-title" data-zs-id="${zs.id}">中枢 ${num} · ${ids.length} 段</div>`;
 }
 
-export function renderSegments(container, segments, zhongshus, fmt, code = '', readonly = false, hideBefore = null) {
+export function renderSegments(container, segments, zhongshus, fmt, code = '', readonly = false, hideBefore = null, period = '', bars = []) {
   let segs = [...segments];
   if (hideBefore != null) {
     segs = segs.filter((s) => (s.start?.time ?? s.end?.time ?? 0) >= hideBefore);
@@ -74,7 +122,8 @@ export function renderSegments(container, segments, zhongshus, fmt, code = '', r
     return;
   }
   const maxArea = Math.max(1, ...segs.map((s) => Math.abs((s._strength?.macdArea) || 0)));
-  const ctx = { fmt, maxArea, code };
+  const maxDurationMin = Math.max(1, ...segs.map((s) => (segDurationInfo(s, bars, period)?.totalMin) || 0));
+  const ctx = { fmt, maxArea, code, period, bars, maxDurationMin };
 
   const visibleIds = new Set(segs.map((s) => s.id));
   const zsArr = (zhongshus || [])

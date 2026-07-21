@@ -70,8 +70,12 @@ function periodBarStart(t, period) {
 // 保留更多历史段（例如 5m 图从 30m 起点起显示，而非变空或只剩 1 段）。
 function computeHideBefore(higherSegments, higherPeriod, curSegments) {
   if (!higherPeriod || !higherSegments || !higherSegments.length) return null;
+  // 盯盘段终点为「当前最新价」，若把它当作更高周期的最后一段来算 hideBefore，
+  // 会把低周期段几乎全部隐藏（例如 5m 盯盘导致 1m 只显示盯盘段之后）。各周期盯盘段需排除。
+  const realHigher = higherSegments.filter((s) => !s._isWatch);
+  if (!realHigher.length) return null;
   let lastEnd = 0, maxStart = 0;
-  for (const s of higherSegments) {
+  for (const s of realHigher) {
     const e = s.end?.time ?? s.start?.time ?? 0;
     const st = s.start?.time ?? s.end?.time ?? 0;
     if (e > lastEnd) lastEnd = e;
@@ -827,7 +831,7 @@ function renderSinglePeriodDetail(detail, code, g, hideBefore = null, animate = 
   }
   detail.appendChild(header);
   if (g.loaded || g.error) {
-    renderSegments(detail, g.segments || [], g.zhongshus || [], (t) => fmt(t, g.period), code, false, hideBefore);
+    renderSegments(detail, g.segments || [], g.zhongshus || [], (t) => fmt(t, g.period), code, false, hideBefore, g.period, state._currentBars?.bars || []);
     attachSegmentCardActions(code, g.period);
     attachZhongshuEditActions(code, g.period);
   }
@@ -928,6 +932,11 @@ function showCardOverlay(card, code, period) {
   const overlay = document.createElement('div');
   overlay.className = 'card-overlay';
   overlay.innerHTML = isWatch ? `
+    <button class="overlay-btn icon ok" data-act="commit" aria-label="转为普通段并继续">
+      <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="20 6 9 17 4 12"></polyline>
+      </svg>
+    </button>
     <button class="overlay-btn icon" data-act="edit" aria-label="编辑">
       <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round">
         <rect x="3" y="3" width="18" height="18" rx="4"/>
@@ -1379,7 +1388,7 @@ function dissolveZhongshu(code, period, zsId) {
   refreshPeriodDetailWithoutFetch(code, period);
 }
 
-function handleSegmentAction(act, segId, code, period) {
+async function handleSegmentAction(act, segId, code, period) {
   const sec = state.securities.find((s) => s.code === code);
   if (!sec) return;
   const d = sec.drawings[period];
@@ -1457,6 +1466,43 @@ function handleSegmentAction(act, segId, code, period) {
       saveLocalEdits(code, sec.drawings);
       refreshPeriodDetailWithoutFetch(code, period);
     });
+  } else if (act === 'commit') {
+    // 盯盘段经 ✓ 确认：转为普通段，并基于其终点自动生成下一个盯盘段，然后继续打开该盯盘段
+    if (!targetSeg || !targetSeg._isWatch) return;
+    let bars;
+    try {
+      bars = await ensureBars(code, period);
+    } catch {
+      alert('行情数据加载失败，请检查网络后重试');
+      return;
+    }
+    delete targetSeg._isWatch;
+    delete targetSeg._watchSourceId;
+    const startIdx = bars.findIndex((b) => b.time === targetSeg.end.time);
+    let newWatchId = null;
+    if (startIdx >= 0) {
+      const watchDir = oppositeDirection(targetSeg.direction);
+      const endInfo = calcWatchSegmentEnd(bars, startIdx, watchDir);
+      if (endInfo) {
+        newWatchId = 'w_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
+        d.segments.push({
+          id: newWatchId,
+          kind: 'segment',
+          period,
+          direction: watchDir,
+          start: { time: targetSeg.end.time, price: targetSeg.end.price },
+          end: { time: endInfo.time, price: endInfo.price },
+          _isWatch: true,
+          _watchSourceId: targetSeg.id,
+        });
+      }
+    }
+    saveLocalEdits(code, sec.drawings);
+    refreshPeriodDetailWithoutFetch(code, period);
+    if (newWatchId) {
+      const cardEl = $('#period-detail')?.querySelector(`.card[data-id="${newWatchId}"]`);
+      if (cardEl) showCardOverlay(cardEl, code, period);
+    }
   } else if (act === 'del') {
     if (!targetSeg) return;
     if (!confirm('确定删除此段？')) return;
@@ -1763,43 +1809,75 @@ function updateWatchSegments(code, period, bars, refresh = true) {
 }
 
 // ========== 底部 tabbar 视口适配（修复小米等安卓机页面切换时 tabbar 被遮挡/裁切） ==========
-function adjustTabbarOffset() {
+let _tabbarReady = false;
+let _tabbarAdjustTimer = null;
+let _lastBottomOffset = -1;
+
+function adjustTabbarOffset(immediate = false) {
   const tabbar = document.querySelector('.wx-tabbar');
   if (!tabbar) return;
 
   const vv = window.visualViewport;
-  if (!vv) {
-    tabbar.style.transform = '';
-    return;
+  let bottomOffset = 0;
+  if (vv) {
+    // layout viewport 高度与 visual viewport 底部之间的差值，
+    // 即为被底部浏览器工具栏/手势条遮挡的高度。
+    bottomOffset = window.innerHeight - (vv.offsetTop + vv.height);
   }
 
-  // layout viewport 高度与 visual viewport 底部之间的差值，
-  // 即为被底部浏览器工具栏/手势条遮挡的高度。
-  const bottomOffset = window.innerHeight - (vv.offsetTop + vv.height);
-  if (bottomOffset > 1) {
-    // 将 tabbar 整体上移，使其始终位于可视区域底部；
-    // CSS 中 bottom 已基于 safe-area-inset-bottom，这里再叠加动态工具栏偏移。
-    // 保留 translateZ(0) 维持合成层，减少重绘抖动。
-    tabbar.style.transform = `translateY(${-bottomOffset}px) translateZ(0)`;
+  // 偏移量变化小于 1px 则忽略，避免微小抖动
+  if (Math.abs(bottomOffset - _lastBottomOffset) < 1 && _tabbarReady) return;
+  _lastBottomOffset = bottomOffset;
+
+  const applyOffset = () => {
+    if (bottomOffset > 1) {
+      // 将 tabbar 整体上移，使其始终位于可视区域底部；
+      // CSS 中 bottom 已基于 safe-area-inset-bottom，这里再叠加动态工具栏偏移。
+      // 保留 translateZ(0) 维持合成层，减少重绘抖动。
+      tabbar.style.transform = `translateY(${-bottomOffset}px) translateZ(0)`;
+    } else {
+      tabbar.style.transform = '';
+    }
+
+    // 首次校准完成后显示 tabbar，避免首屏位置跳动/溢出
+    if (!_tabbarReady) {
+      _tabbarReady = true;
+      requestAnimationFrame(() => {
+        tabbar.classList.add('ready');
+      });
+    }
+  };
+
+  if (immediate || !_tabbarReady) {
+    // 首次校准立即执行，不做防抖，尽快让 tabbar 就位并显示
+    applyOffset();
   } else {
-    tabbar.style.transform = '';
+    // 防抖：避免 visualViewport 频繁变化（如滚动、地址栏收起动画）导致的连续跳动
+    if (_tabbarAdjustTimer) clearTimeout(_tabbarAdjustTimer);
+    _tabbarAdjustTimer = setTimeout(applyOffset, 50);
   }
 }
 
 function initTabbarViewportFix() {
-  adjustTabbarOffset();
+  // 首次立即校准并显示
+  adjustTabbarOffset(true);
+
   const vv = window.visualViewport;
   if (vv) {
-    vv.addEventListener('resize', adjustTabbarOffset);
-    vv.addEventListener('scroll', adjustTabbarOffset);
+    vv.addEventListener('resize', () => adjustTabbarOffset(false));
+    vv.addEventListener('scroll', () => adjustTabbarOffset(false));
   }
-  window.addEventListener('resize', adjustTabbarOffset);
-  window.addEventListener('orientationchange', adjustTabbarOffset);
+  window.addEventListener('resize', () => adjustTabbarOffset(false));
+  window.addEventListener('orientationchange', () => adjustTabbarOffset(true));
   document.addEventListener('visibilitychange', () => {
-    if (!document.hidden) setTimeout(adjustTabbarOffset, 100);
+    if (!document.hidden) {
+      // 从后台切回时，视口可能已变化，立即校准
+      adjustTabbarOffset(true);
+    }
   });
   // 初始加载后多次校准，覆盖 MIUI 等延迟报告安全区/工具栏的场景
-  [100, 300, 600, 1200, 2500].forEach((ms) => setTimeout(adjustTabbarOffset, ms));
+  // 时间间隔递增，给浏览器稳定时间，避免频繁调整
+  [80, 200, 500, 1000].forEach((ms) => setTimeout(() => adjustTabbarOffset(false), ms));
 }
 
 // ========== Tab 切换 ==========

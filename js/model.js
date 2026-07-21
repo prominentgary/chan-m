@@ -63,6 +63,8 @@ export function makeZhongshu(segmentIds, baseSegmentIds) {
 export function fromDrawings(drawings) {
   const segments = [];
   const segById = {};
+  const endToId = {};
+  const watchSegs = [];
 
   // 第一遍先收集所有段
   for (const d of drawings || []) {
@@ -77,9 +79,21 @@ export function fromDrawings(drawings) {
         direction: end.price >= start.price ? 'up' : 'down',
         start, end,
       };
+      // 盯盘段：保留标记，加载后按最新 K 线自动延伸
+      if (d._isWatch) {
+        seg._isWatch = true;
+        watchSegs.push(seg);
+      }
       segments.push(seg);
       segById[seg.id] = seg;
+      endToId[`${seg.end.time}|${seg.end.price}`] = seg.id;
     }
+  }
+
+  // 解析盯盘段的源线段：盯盘段起点 = 源段终点（优先用导出时附带的 _watchSourceId）
+  for (const seg of watchSegs) {
+    const key = `${seg.start.time}|${seg.start.price}`;
+    seg._watchSourceId = seg._watchSourceId || endToId[key] || seg.id;
   }
 
   const sortedSegs = [...segments].sort((a, b) => a.start.time - b.start.time);
@@ -128,12 +142,18 @@ export function toDrawings(segments, zhongshus) {
   for (const s of segments) segById[s.id] = s;
 
   for (const s of segments) {
-    out.push({
+    const segOut = {
       id: s.id, type: 'line', variant: 'dotted',
       createdPeriod: s.period,
       style: { color: s.direction === 'up' ? '#ef4444' : '#22c55e', lineType: 'solid', width: 2 },
       points: [{ time: s.start.time, price: s.start.price }, { time: s.end.time, price: s.end.price }],
-    });
+    };
+    // 保留盯盘段标记，PC 端可继续作为盯盘段还原
+    if (s._isWatch) {
+      segOut._isWatch = true;
+      if (s._watchSourceId) segOut._watchSourceId = s._watchSourceId;
+    }
+    out.push(segOut);
   }
   for (const z of zhongshus) {
     let zsSegs = (z.segmentIds || []).map((id) => segById[id]).filter(Boolean);

@@ -1,7 +1,7 @@
 {
   "code": "sz159611",
   "period": "5m",
-  "exportedAt": 1784560219122,
+  "exportedAt": 1784634322707,
   "segments": [
     {
       "id": "s_x4wimzci",
@@ -967,6 +967,20 @@
       "end": {
         "time": 1784184000,
         "price": 1.01
+      }
+    },
+    {
+      "id": "s_79fxvgob",
+      "kind": "segment",
+      "period": "5m",
+      "direction": "up",
+      "start": {
+        "time": 1784184000,
+        "price": 1.01
+      },
+      "end": {
+        "time": 1784600100,
+        "price": 1.084
       }
     }
   ],
