@@ -5,6 +5,7 @@ import { computeMACD } from './macd.js?v=20260714y';
 import { segmentStrength, detectStrengthIndicators, detectOneBuySell, detectTwoAndThreeBuySell, computeZhongshuStrength, detectZhongshu } from './algo.js?v=20260719i';
 import { renderSegments } from './table.js?v=20260719i';
 import { renderMiniChart } from './minichart.js?v=20260717b';
+import { renderKlineChart, sliceSegmentBars } from './klinechart.js?v=20260722b';
 import { loadStaticData } from './sync.js?v=20260719j';
 import { openEditor } from './editor.js?v=20260715z';
 import { makeZhongshu } from './model.js?v=20260719i';
@@ -202,11 +203,13 @@ function alertTypeLabel(type) {
     macd_golden: 'DIF金叉',
     macd_death: 'DIF死叉',
     macd_bar_shrink: '红绿柱缩短',
+    macd_red_shrink: '红柱缩短',
+    macd_green_shrink: '绿柱缩短',
   };
   return map[type] || type;
 }
 // MACD 类提醒（基于某周期 K 线计算），不需要目标值
-const MACD_ALERT_TYPES = ['macd_golden', 'macd_death', 'macd_bar_shrink'];
+const MACD_ALERT_TYPES = ['macd_golden', 'macd_death', 'macd_bar_shrink', 'macd_red_shrink', 'macd_green_shrink'];
 function isMacdAlert(a) { return MACD_ALERT_TYPES.includes(a.type); }
 // 添加提醒弹窗里展示的类型项
 const ALERT_TYPE_OPTIONS = [
@@ -216,7 +219,8 @@ const ALERT_TYPE_OPTIONS = [
   ['change_pct_down', '跌幅超过'],
   ['macd_golden', 'DIF金叉'],
   ['macd_death', 'DIF死叉'],
-  ['macd_bar_shrink', '红绿柱缩短'],
+  ['macd_red_shrink', '红柱缩短'],
+  ['macd_green_shrink', '绿柱缩短'],
 ];
 
 // 合并静态数据和本地编辑：取两者中较新的
@@ -742,11 +746,26 @@ function attachPeriodRowLongPress(row, code, period) {
   row.addEventListener('contextmenu', (e) => e.preventDefault());
 }
 
-// 详情页证券卡片：根据滚动位置切换折叠态（2 行 → 1 行）
+// 详情页证券卡片：根据卡片实际位置切换折叠态（2 行 → 1 行）
+// 判定依据卡片「吸顶后的实际渲染位置」而非 window.scrollY：
+//   卡片吸顶后其 top 固定在 sticky 位置（top:48），折叠只会缩小高度、不会移动 top，
+//   因此一旦折叠就稳定停留，不会因高度变化而反复横跳（彻底消除抖动）。
+// 同时用 requestAnimationFrame 节流，并加 4px 滞回，避免临界处频繁切换。
+let _detailScrollRaf = 0;
 function onDetailScroll() {
-  const card = document.querySelector('.sec-card--detail');
-  if (!card) return;
-  card.classList.toggle('sec-card--collapsed', window.scrollY > 36);
+  if (_detailScrollRaf) return;
+  _detailScrollRaf = requestAnimationFrame(() => {
+    _detailScrollRaf = 0;
+    const card = document.querySelector('.sec-card--detail');
+    if (!card) return;
+    const header = document.querySelector('.wx-header');
+    const stickyTop = (header ? header.offsetHeight : 48) + 1; // 卡片吸顶时的视口 top
+    const top = card.getBoundingClientRect().top;
+    const collapsed = card.classList.contains('sec-card--collapsed');
+    // 已折叠时多给 4px 滞回，防止在阈值边缘来回弹
+    const shouldCollapse = collapsed ? (top <= stickyTop + 4) : (top <= stickyTop);
+    if (shouldCollapse !== collapsed) card.classList.toggle('sec-card--collapsed', shouldCollapse);
+  });
 }
 
 // ========== 周期详情渲染 ==========
@@ -868,8 +887,145 @@ function attachSegmentCardActions(code, period) {
   if (!detail) return;
   detail.querySelectorAll('.card').forEach((card) => {
     attachSegmentLongPress(card, code, period);
+    const avatar = card.querySelector('.card-avatar');
+    if (avatar) attachSegmentAvatarLongPress(card, avatar, code, period);
   });
 }
+
+// ========== 长按段号 → K 线弹层（自写 Canvas，零图表库依赖） ==========
+let _klineView = null;   // { code, period, segId }
+let _klineSub = 'macd';  // 'macd' | 'vol'
+
+// 长按段号：弹出 K 线弹层；stopPropagation 阻止冒泡到卡片级长按（避免同时弹出操作蒙板）
+function attachSegmentAvatarLongPress(card, avatar, code, period) {
+  let timer = null;
+  let sx = 0, sy = 0;
+  const LONG_MS = 480;
+  const start = (x, y) => {
+    sx = x; sy = y;
+    timer = setTimeout(() => { openKlineSheet(code, period, card.dataset.id); }, LONG_MS);
+  };
+  const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  avatar.addEventListener('pointerdown', (e) => { e.stopPropagation(); start(e.clientX, e.clientY); });
+  avatar.addEventListener('pointermove', (e) => {
+    if (Math.abs(e.clientX - sx) > 10 || Math.abs(e.clientY - sy) > 10) cancel();
+  });
+  avatar.addEventListener('pointerup', cancel);
+  avatar.addEventListener('pointercancel', cancel);
+  avatar.addEventListener('contextmenu', (e) => e.preventDefault());
+}
+
+function ensureKlineSheet() {
+  let backdrop = document.getElementById('kline-sheet-backdrop');
+  if (backdrop) return;
+  backdrop = document.createElement('div');
+  backdrop.id = 'kline-sheet-backdrop';
+  backdrop.className = 'kline-sheet-backdrop';
+  backdrop.addEventListener('click', closeKlineSheet);
+  document.body.appendChild(backdrop);
+
+  const sheet = document.createElement('div');
+  sheet.id = 'kline-sheet';
+  sheet.className = 'kline-sheet';
+  sheet.innerHTML = `
+    <div class="kline-sheet-head">
+      <div class="kline-sheet-title" id="kline-sheet-title"></div>
+      <button class="kline-sheet-close" id="kline-sheet-close" type="button" aria-label="关闭">✕</button>
+    </div>
+    <canvas id="kline-main" class="kline-canvas"></canvas>
+    <canvas id="kline-sub" class="kline-canvas"></canvas>`;
+  document.body.appendChild(sheet);
+  document.getElementById('kline-sheet-close').addEventListener('click', closeKlineSheet);
+
+  // 点击副图：在 MACD 与成交量之间切换
+  document.getElementById('kline-sub').addEventListener('click', () => {
+    _klineSub = _klineSub === 'macd' ? 'vol' : 'macd';
+    paintKline();
+  });
+  // Esc 关闭
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeKlineSheet(); });
+  // 尺寸变化时重绘（弹层开启时）
+  window.addEventListener('resize', () => {
+    if (document.getElementById('kline-sheet-backdrop')?.classList.contains('show')) paintKline();
+  });
+}
+
+function closeKlineSheet() {
+  const backdrop = document.getElementById('kline-sheet-backdrop');
+  const sheet = document.getElementById('kline-sheet');
+  if (backdrop) backdrop.classList.remove('show');
+  if (sheet) sheet.classList.remove('show');
+  document.body.style.overflow = '';
+  _klineView = null;
+}
+window.closeKlineSheet = closeKlineSheet;
+
+// 取数 + 切片 + 渲染（弹层已存在时仅重绘）
+function paintKline() {
+  if (!_klineView) return;
+  const { code, period, segId } = _klineView;
+  const sec = state.securities.find((s) => s.code === code);
+  const d = sec?.drawings?.[period];
+  const seg = (d?.segments || []).find((s) => s.id === segId);
+  if (!seg) return;
+  const cb = state._currentBars;
+  const bars = (cb && cb.code === code && cb.period === period && cb.bars) ? cb.bars : [];
+  const sliced = sliceSegmentBars(bars, seg);
+  const digits = isETF(code) ? 3 : 2;
+  const title = document.getElementById('kline-sheet-title');
+  if (title) {
+    const dirUp = seg.direction === 'up';
+    const avatarBg = dirUp ? 'var(--wx-red-soft)' : 'var(--wx-green-soft)';
+    const avatarTxt = dirUp ? 'var(--wx-red)' : 'var(--wx-green)';
+    const st = seg.start, en = seg.end;
+    const cardEl = document.querySelector(`.card[data-id="${segId}"]`);
+    const segNo = (cardEl?.querySelector('.card-avatar')?.textContent || '').trim() || segId;
+    title.innerHTML =
+      `<span class="kline-seg-no" style="background:${avatarBg};color:${avatarTxt}">${segNo}</span> ` +
+      `<span class="kline-seg-range">${fmt(st.time, period)} ${formatPrice(code, st.price)} → ${fmt(en.time, period)} ${formatPrice(code, en.price)}</span>`;
+  }
+  const main = document.getElementById('kline-main');
+  const sub = document.getElementById('kline-sub');
+  renderKlineChart(main, sub, sliced, { seg, sub: _klineSub, period, digits, subH: 96 });
+}
+
+async function openKlineSheet(code, period, segId) {
+  const sec = state.securities.find((s) => s.code === code);
+  if (!sec) return;
+  const d = sec.drawings[period];
+  const seg = (d?.segments || []).find((s) => s.id === segId);
+  if (!seg) return;
+
+  ensureKlineSheet();
+
+  const cb = state._currentBars;
+  let bars;
+  if (cb && cb.code === code && cb.period === period && cb.bars && cb.bars.length) {
+    bars = cb.bars;
+  } else {
+    try { bars = await ensureBars(code, period); computeMACD(bars); }
+    catch { bars = []; }
+  }
+  _klineView = { code, period, segId };
+  paintKline();
+  const backdrop = document.getElementById('kline-sheet-backdrop');
+  const sheet = document.getElementById('kline-sheet');
+  backdrop.classList.add('show');
+  sheet.classList.add('show');
+  document.body.style.overflow = 'hidden';
+  // 弹层首次展示后尺寸已确定，再绘制一次以修正 canvas 物理像素尺寸
+  requestAnimationFrame(() => paintKline());
+}
+
+// 详情页实时刷新：K 线弹层打开且匹配当前周期时，重切并重绘（盯盘段专用）
+function refreshKlineSheet() {
+  if (!_klineView) return;
+  const { code, period } = _klineView;
+  const cb = state._currentBars;
+  if (!cb || cb.code !== code || cb.period !== period) return;
+  if (document.getElementById('kline-sheet-backdrop')?.classList.contains('show')) paintKline();
+}
+window.refreshKlineSheet = refreshKlineSheet;
 
 let activeCardOverlay = null;
 
@@ -902,7 +1058,10 @@ function showCardOverlay(card, code, period) {
   const idx = sorted.findIndex((s) => s.id === segId);
   const targetSeg = sorted[idx];
   const isWatch = targetSeg?._isWatch || false;
+  const hasWatchSeg = (d?.segments || []).some((s) => s._isWatch);
+  // 有盯盘卡片时任何段都不允许出现「增加段」；无盯盘卡片时仅最近段允许
   const isLatest = !isWatch && targetSeg && sorted[sorted.length - 1]?.id === segId;
+  const canAdd = !hasWatchSeg && isLatest;
   const bars = state._currentBars?.bars || [];
   const detected = idx >= 0 ? detectZhongshu(sorted, idx, bars) : null;
   const otherZsIds = new Set();
@@ -965,12 +1124,13 @@ function showCardOverlay(card, code, period) {
       </svg>
     </button>
     ${watchBtn}
+    ${canAdd ? `
     <button class="overlay-btn icon" data-act="add" aria-label="新增">
       <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
         <line x1="12" y1="5" x2="12" y2="19"/>
         <line x1="5" y1="12" x2="19" y2="12"/>
       </svg>
-    </button>
+    </button>` : ''}
     ${detectBtn}
   `;
   card.appendChild(overlay);
@@ -1425,6 +1585,10 @@ async function handleSegmentAction(act, segId, code, period) {
   } else if (act === 'edit') {
     if (!targetSeg) return;
     const wasWatch = targetSeg._isWatch;
+    const sorted = [...(d.segments || [])].sort((a, b) => a.start.time - b.start.time);
+    const idx = sorted.findIndex((s) => s.id === segId);
+    // 起点即为上一段终点（之前连接着段）→ 起点不可编辑
+    const startLocked = idx > 0 && sorted[idx - 1].end.time === targetSeg.start.time;
     openEditor(targetSeg, async (newStart, newEnd) => {
       let bars;
       try {
@@ -1465,7 +1629,7 @@ async function handleSegmentAction(act, segId, code, period) {
       }
       saveLocalEdits(code, sec.drawings);
       refreshPeriodDetailWithoutFetch(code, period);
-    });
+    }, null, startLocked);
   } else if (act === 'commit') {
     // 盯盘段经 ✓ 确认：转为普通段，并基于其终点自动生成下一个盯盘段，然后继续打开该盯盘段
     if (!targetSeg || !targetSeg._isWatch) return;
@@ -1581,6 +1745,7 @@ function startDetailRealtime() {
       computeMACD(bars);
       const changed = updateWatchSegments(code, period, bars, false);
       if (changed) refreshPeriodDetailWithoutFetch(code, period);
+      refreshKlineSheet();
     } catch {}
   }, 15000);
 }
@@ -2321,7 +2486,8 @@ function detectMacdCross(macd, lastIdx, golden) {
 
 // 检测红绿柱缩短：柱子先伸长到峰值 i，i+1 比 i 短；
 // 用户强调必须等 i+2 这根走完才能确认 i+1 比 i 短，故要求 i+2 已收盘（存在）才判定。
-function detectMacdBarShrink(macd, lastIdx, alert) {
+// mode: 'red' 仅红柱(正)峰值缩短；'green' 仅绿柱(负)峰值缩短；'both' 任意方向（兼容旧提醒）。
+function detectMacdBarShrink(macd, lastIdx, alert, mode) {
   const mag = (k) => Math.abs(macd[k].macd);
   // 从最近处向前找最近的「峰值+缩短」事件
   for (let i = lastIdx - 2; i >= 1; i--) {
@@ -2330,6 +2496,9 @@ function detectMacdBarShrink(macd, lastIdx, alert) {
     if (mag(i) <= mag(i - 1)) continue;       // i 不是局部峰值
     if (mag(i) <= mag(i + 1)) continue;       // i 不是局部峰值
     if (mag(i + 1) >= mag(i)) continue;       // i+1 不比 i 短
+    const isRed = macd[i].macd > 0;           // 峰值柱颜色：正为红，负为绿
+    if (mode === 'red' && !isRed) continue;
+    if (mode === 'green' && isRed) continue;
     const peakKey = (macd[i + 1].time != null) ? (alert.code + '|' + alert.period + '|' + macd[i + 1].time) : (alert.code + '|' + alert.period + '|' + i);
     if (alert._lastShrinkKey === peakKey) return false; // 本次缩短已报过，停止寻找更早的
     alert._lastShrinkKey = peakKey;
@@ -2367,7 +2536,9 @@ async function checkMacdAlerts(alerts) {
       let hit = false;
       if (a.type === 'macd_golden') hit = detectMacdCross(macd, lastClosed, true);
       else if (a.type === 'macd_death') hit = detectMacdCross(macd, lastClosed, false);
-      else if (a.type === 'macd_bar_shrink') hit = detectMacdBarShrink(macd, lastClosed, a);
+      else if (a.type === 'macd_bar_shrink') hit = detectMacdBarShrink(macd, lastClosed, a, 'both');
+      else if (a.type === 'macd_red_shrink') hit = detectMacdBarShrink(macd, lastClosed, a, 'red');
+      else if (a.type === 'macd_green_shrink') hit = detectMacdBarShrink(macd, lastClosed, a, 'green');
       if (hit) {
         a.triggered = true;
         a.triggeredAt = Date.now();
@@ -2541,7 +2712,7 @@ function init() {
 
   if ('serviceWorker' in navigator && !window.__CHANM_NOCACHE__) {
     navigator.serviceWorker.addEventListener('controllerchange', () => location.reload());
-    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js?v=20260720a').catch(() => {}));
+    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js?v=20260722a').catch(() => {}));
   }
 
   window.__CHANM_LOADED__ = true;
@@ -2549,3 +2720,4 @@ function init() {
 
 init();
 window.navigate = navigate;
+

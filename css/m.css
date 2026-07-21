@@ -51,6 +51,10 @@ body {
   overflow-x: hidden;
   /* 让整屏（含内容下方的空白区）把横向边缘滑动交给 JS 处理，避免被系统/浏览器吞掉 */
   touch-action: pan-y;
+  /* 关键：关闭滚动锚定。详情页证券卡片折叠会改变其高度，若开启锚定，浏览器会为保持
+     下方内容稳定而回调整 scrollY，越过折叠阈值后反复横跳 —— 即“强烈抖动”。关闭后折叠
+     不会触发 scrollY 回调整，彻底消除抖动。 */
+  overflow-anchor: none;
 }
 
 /* 顶部标题栏（企业微信风格） */
@@ -137,7 +141,7 @@ body {
 .wx-actions button:active { background: #f2f2f2; }
 
 /* 列表 */
-.wx-list { padding: 0 12px 12px; display: flex; flex-direction: column; gap: 10px; }
+.wx-list { padding: 0 12px 12px; display: flex; flex-direction: column; gap: 10px; overflow-anchor: none; }
 
 /* 中枢分组（加强区分：橙色描边 + 琥珀色标题栏） */
 .zs-block {
@@ -340,7 +344,7 @@ body {
   -webkit-backdrop-filter: blur(14px) saturate(140%);
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: center;
   gap: 10px;
   padding: 0 14px;
   z-index: 5;
@@ -495,6 +499,11 @@ body {
   width: 100%; margin-top: 6px; padding: 11px; font-size: 15px;
   border-radius: 8px; border: 1px solid var(--wx-line); background: #fafafa; color: var(--wx-txt);
 }
+.modal input.locked {
+  background: #f0f0f0; color: #b0b0b0; cursor: not-allowed;
+  border-style: dashed;
+}
+.modal .locked-hint { font-size: 11px; color: var(--wx-muted); margin: -8px 0 14px; }
 .modal-actions { display: flex; gap: 10px; margin-top: 4px; }
 .modal-actions .mini,
 .modal-actions .primary { flex: 1; padding: 10px 16px; border-radius: 6px; text-align: center; font-size: 15px; }
@@ -581,6 +590,17 @@ body {
   z-index: 9;
   margin-bottom: 10px;
   box-shadow: 0 1px 4px rgba(0,0,0,.06);
+  /* 折叠过渡更顺滑（高度随内边距/字号变化而平滑收起，下方内容跟随，无跳变） */
+  transition: box-shadow .18s ease;
+}
+.sec-card--detail .sec-head,
+.sec-card--detail .sec-info,
+.sec-card--detail .sec-name,
+.sec-card--detail .sec-meta,
+.sec-card--detail .sec-quote,
+.sec-card--detail .sec-price,
+.sec-card--detail .sec-change {
+  transition: padding .18s ease, font-size .18s ease, gap .18s ease;
 }
 .sec-card--detail.sec-card--collapsed .sec-head { padding: 8px 14px; }
 .sec-card--detail.sec-card--collapsed .sec-info { flex-direction: row; align-items: baseline; gap: 8px; }
@@ -966,4 +986,47 @@ body {
   flex-shrink: 0;
 }
 .alert-notif-close:active { opacity: .6; }
+
+/* ========== K 线弹层（长按段号） ========== */
+.kline-sheet-backdrop {
+  position: fixed; inset: 0; z-index: 45;
+  background: rgba(0, 0, 0, .45);
+  opacity: 0; visibility: hidden;
+  transition: opacity .25s ease, visibility .25s ease;
+}
+.kline-sheet-backdrop.show { opacity: 1; visibility: visible; }
+.kline-sheet {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 46;
+  background: var(--wx-card);
+  border-radius: 16px 16px 0 0;
+  box-shadow: 0 -4px 20px rgba(0, 0, 0, .15);
+  transform: translateY(100%);
+  transition: transform .28s cubic-bezier(.22, .61, .36, 1);
+  max-height: 86vh;
+  display: flex; flex-direction: column;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.kline-sheet.show { transform: translateY(0); }
+.kline-sheet-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; padding: 12px 14px 8px;
+  border-bottom: 1px solid var(--wx-line);
+}
+.kline-sheet-title {
+  font-size: 13px; font-weight: 600; color: var(--wx-txt);
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  min-width: 0;
+}
+.kline-seg-no { font-size: 13px; font-weight: 700; padding: 1px 7px; border-radius: 6px; line-height: 1.4; }
+.kline-seg-range { color: var(--wx-muted); font-weight: 400; }
+.kline-sheet-close {
+  width: 30px; height: 30px; padding: 0; border: none; background: transparent;
+  font-size: 18px; color: var(--wx-muted); cursor: pointer; line-height: 1; flex-shrink: 0;
+}
+.kline-sheet-close:active { opacity: .6; }
+.kline-canvas {
+  display: block; width: 100%;
+  touch-action: none;
+}
+
 
