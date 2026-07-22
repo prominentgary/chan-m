@@ -125,6 +125,7 @@ export function renderKlineChart(main, sub, bars, opts = {}) {
   repaintMain();
   repaintSub();
   bindCrosshair();
+  bindSubSwipe();
 }
 
 function repaintMain(cross) {
@@ -301,8 +302,8 @@ function drawSubCanvas(canvas, bars, subType, colors, period, subH) {
 }
 
 // 主图十字光标 + OHLC 读数
-// 交互：鼠标悬停实时跟随；触摸长按图形区域(>350ms)显示十字并实时展示坐标，
-// 触摸横向滑动(非边缘)切换上/下段，边缘滑动交给全局手势退出弹窗。
+// 交互：鼠标悬停实时跟随；触摸长按图形区域(>350ms)显示十字并实时展示坐标。
+// 左右滑切换段已移至副图（bindSubSwipe），主图只负责十字光标。
 function bindCrosshair() {
   const main = _view.main;
   if (main._klBound) return;
@@ -310,11 +311,10 @@ function bindCrosshair() {
 
   const EDGE = 28;        // 与全局边缘手势一致：边缘滑动用于退出弹窗
   const LONG_MS = 350;    // 长按阈值
-  const SWIPE_PX = 46;    // 切换段所需的最小水平位移
   let sx = 0, sy = 0;     // pointerdown 起点
   let lpTimer = null;     // 长按定时器
   let lpFired = false;    // 是否已进入十字态
-  let swiping = false;    // 是否已判定为滑动(未达长按)
+  let moved = false;      // 长按未触发前是否明显位移（用于取消长按）
 
   const crossPos = (e) => {
     const rect = main.getBoundingClientRect();
@@ -339,17 +339,23 @@ function bindCrosshair() {
   const hideCross = () => { if (_view && _view.crossActive) { _view.crossActive = false; repaintMain(); } };
 
   main.addEventListener('pointerdown', (e) => {
-    if (e.pointerType === 'mouse') return; // 鼠标走悬停
-    const EDGE = 28; // 与全局边缘手势一致：边缘区域留给「退出弹窗」手势
-    if (e.clientX <= EDGE || e.clientX >= window.innerWidth - EDGE) return;
+    if (e.clientX <= EDGE || e.clientX >= window.innerWidth - EDGE) return; // 边缘区交给退出弹窗手势
+    // 阻止浏览器长按选择/系统菜单等默认行为，避免其触发 pointercancel 打断长按
+    if (e.cancelable) e.preventDefault();
     sx = e.clientX; sy = e.clientY;
-    lpFired = false; swiping = false;
+    lpFired = false; moved = false;
     clearLp();
-    lpTimer = setTimeout(() => {
-      lpFired = true;
+    if (e.pointerType === 'mouse') {
+      // 鼠标：按下即显示并跟随
       _view.crossActive = true;
       showAt(e);
-    }, LONG_MS);
+    } else {
+      lpTimer = setTimeout(() => {
+        lpFired = true;
+        _view.crossActive = true;
+        showAt(e);
+      }, LONG_MS);
+    }
   });
 
   main.addEventListener('pointermove', (e) => {
@@ -359,17 +365,55 @@ function bindCrosshair() {
       showAt(e);
       return;
     }
-    // 长按未触发前出现明显位移 → 视为滑动，取消长按，交由 pointerup 判定切换
-    if (!swiping && (Math.abs(e.clientX - sx) > 10 || Math.abs(e.clientY - sy) > 10)) {
-      swiping = true;
+    // 长按未触发前出现明显位移 → 取消长按（不切换段），避免误触十字态
+    if (!moved && (Math.abs(e.clientX - sx) > 12 || Math.abs(e.clientY - sy) > 12)) {
+      moved = true;
       clearLp();
     }
   });
 
   main.addEventListener('pointerup', (e) => {
-    if (e.pointerType === 'mouse') return;
+    if (e.pointerType === 'mouse') { hideCross(); return; }
     clearLp();
-    if (_view.crossActive) { hideCross(); return; } // 长按态结束
+    if (_view.crossActive) hideCross(); // 长按态结束
+  });
+  main.addEventListener('pointercancel', () => { clearLp(); hideCross(); });
+  main.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse') repaintMain(); });
+  main.addEventListener('contextmenu', (e) => e.preventDefault());
+}
+
+// 副图左右滑切换上/下段（左滑→下一段，右滑→上一段）；边缘滑动交给全局手势退出弹窗。
+function bindSubSwipe() {
+  const sub = _view.sub;
+  if (sub._klBound) return;
+  sub._klBound = true;
+
+  const EDGE = 28;        // 与全局边缘手势一致：边缘滑动用于退出弹窗
+  const SWIPE_PX = 46;    // 切换段所需的最小水平位移
+  let sx = 0, sy = 0;     // pointerdown 起点
+  let swiping = false;    // 是否已判定为横向滑动
+  let moved = false;      // 是否发生明显位移
+
+  sub.addEventListener('pointerdown', (e) => {
+    if (e.clientX <= EDGE || e.clientX >= window.innerWidth - EDGE) return; // 边缘区交给退出弹窗手势
+    sx = e.clientX; sy = e.clientY;
+    swiping = false; moved = false;
+  });
+
+  sub.addEventListener('pointermove', (e) => {
+    if (moved) return;
+    const dx = e.clientX - sx, dy = e.clientY - sy;
+    if (Math.abs(dx) > 12 || Math.abs(dy) > 12) {
+      moved = true;
+      // 判定为横向滑动后阻止页面滚动，保证切换顺滑；纵向位移不拦截
+      if (Math.abs(dx) > Math.abs(dy)) {
+        swiping = true;
+        if (e.cancelable) e.preventDefault();
+      }
+    }
+  });
+
+  sub.addEventListener('pointerup', (e) => {
     if (swiping) {
       const dx = e.clientX - sx;
       const dy = e.clientY - sy;
@@ -382,8 +426,8 @@ function bindCrosshair() {
       }
     }
   });
-  main.addEventListener('pointercancel', () => { clearLp(); hideCross(); });
-  main.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse') repaintMain(); });
+  sub.addEventListener('pointercancel', () => { swiping = false; moved = false; });
+  sub.addEventListener('contextmenu', (e) => e.preventDefault());
 }
 
 function drawMainCross(meta, cross) {

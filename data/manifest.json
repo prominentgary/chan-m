@@ -7,6 +7,20 @@
         "1m",
         "5m",
         "30m"
+      ],
+      "presets": [
+        {
+          "id": "default",
+          "name": "方案2"
+        },
+        {
+          "id": "preset_uf6b7pbc",
+          "name": "方案1"
+        },
+        {
+          "id": "preset_0m59mbzv",
+          "name": "方案3"
+        }
       ]
     },
     {
@@ -18,6 +32,12 @@
         "30m",
         "day",
         "week"
+      ],
+      "presets": [
+        {
+          "id": "default",
+          "name": "默认方案"
+        }
       ]
     },
     {
@@ -25,6 +45,12 @@
       "name": "科创成长",
       "periods": [
         "1m"
+      ],
+      "presets": [
+        {
+          "id": "default",
+          "name": "默认方案"
+        }
       ]
     },
     {
@@ -34,6 +60,12 @@
         "1m",
         "5m",
         "30m"
+      ],
+      "presets": [
+        {
+          "id": "default",
+          "name": "默认方案"
+        }
       ]
     }
   ]

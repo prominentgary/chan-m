@@ -57,11 +57,22 @@ async function tryLoadOne(code, period) {
       return { segments: d.segments, zhongshus: d.zhongshus, exportedAt: 0 };
     }
     if (json.segments) {
-      return {
+      const result = {
         segments: json.segments,
         zhongshus: json.zhongshus || [],
         exportedAt: json.exportedAt || 0,
       };
+      // 包含多方案信息
+      if (json.presets && Array.isArray(json.presets) && json.presets.length > 0) {
+        result.presets = json.presets;
+        result.activePreset = json.activePreset || 'default';
+        result.presetName = json.presetName || null;
+      }
+      // 包含 K 线 bars
+      if (json.bars) {
+        result.bars = json.bars;
+      }
+      return result;
     }
     return null;
   } catch (e) {

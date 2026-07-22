@@ -5,8 +5,8 @@ import { computeMACD } from './macd.js?v=20260714y';
 import { segmentStrength, detectStrengthIndicators, detectOneBuySell, detectTwoAndThreeBuySell, computeZhongshuStrength, detectZhongshu } from './algo.js?v=20260719i';
 import { renderSegments } from './table.js?v=20260719i';
 import { renderMiniChart } from './minichart.js?v=20260717b';
-import { renderKlineChart, sliceSegmentBars } from './klinechart.js?v=20260722c';
-import { loadStaticData } from './sync.js?v=20260719j';
+import { renderKlineChart, sliceSegmentBars } from './klinechart.js?v=20260722e';
+import { loadStaticData } from './sync.js?v=20260719k';
 import { openEditor } from './editor.js?v=20260715z';
 import { makeZhongshu } from './model.js?v=20260719i';
 
@@ -118,6 +118,9 @@ const state = {
   alerts: [],
   _alertTimer: null,
   _alertNotified: new Set(),
+  // 画线方案支持
+  _presets: {}, // code -> [{ id, name }]
+  _currentPresetIdx: {}, // code -> index in _presets[code]
 };
 
 // 加载状态：用于区分「正在加载」与「真的没有数据」，避免首屏误报「暂无画线数据」
@@ -243,8 +246,9 @@ function mergeDrawings(staticData, code) {
     const sdTime = sd.exportedAt || 0;
     const ldTime = local.savedAt || 0;
     // 本地编辑优先，但 bars（来自导出）只存在于静态数据，需保留以计算 MACD 力度
+    // 同时保留方案信息（presets）来自静态数据
     result[p] = ldTime >= sdTime
-      ? { ...ld, bars: ld.bars || (sd ? sd.bars : null) }
+      ? { ...ld, bars: ld.bars || (sd ? sd.bars : null), presets: sd.presets || null, activePreset: sd.activePreset || null, presetName: sd.presetName || null }
       : sd;
   }
   return result;
@@ -281,6 +285,13 @@ async function loadAllDrawings() {
     const securities = list.map((s) => ({
       code: s.code, name: s.name || null, periods: s.periods, drawings: {},
     }));
+    // 存储方案信息
+    list.forEach((s) => {
+      if (s.presets && Array.isArray(s.presets) && s.presets.length > 0) {
+        state._presets[s.code] = s.presets;
+        state._currentPresetIdx[s.code] = 0;
+      }
+    });
     const byCode = Object.fromEntries(securities.map((s) => [s.code, s]));
     const tasks = [];
     for (const s of list) {
@@ -297,6 +308,9 @@ async function loadAllDrawings() {
           zhongshus: data.zhongshus || [],
           exportedAt: data.exportedAt || 0,
           bars: data.bars || null,
+          presets: data.presets || null,
+          activePreset: data.activePreset || null,
+          presetName: data.presetName || null,
         };
       } else {
         errors.push(`${code}_${p}.json`);
@@ -310,6 +324,25 @@ async function loadAllDrawings() {
     for (const sec of securities) {
       for (const p of Object.keys(sec.drawings)) {
         segTotal += (sec.drawings[p].segments || []).length;
+      }
+    }
+    // 如果 manifest 中没有方案信息，尝试从数据文件中提取
+    for (const sec of securities) {
+      if (!state._presets[sec.code]) {
+        const periods = Object.keys(sec.drawings);
+        for (const p of periods) {
+          const d = sec.drawings[p];
+          if (d.presets && Array.isArray(d.presets) && d.presets.length > 0) {
+            state._presets[sec.code] = d.presets.map((pr) => ({ id: pr.id, name: pr.name }));
+            state._currentPresetIdx[sec.code] = 0;
+            break;
+          }
+        }
+        // 兜底：即使没有方案数据，也显示"方案1"作为默认方案名
+        if (!state._presets[sec.code] && Object.keys(sec.drawings).length > 0) {
+          state._presets[sec.code] = [{ id: 'default', name: '方案1' }];
+          state._currentPresetIdx[sec.code] = 0;
+        }
       }
     }
     state.securities = securities;
@@ -389,6 +422,15 @@ window.goBack = goBack;
 
 // 系统/浏览器返回键：popstate 渲染对应视图；与应用内手势去重
 window.addEventListener('popstate', (e) => {
+  // 有弹窗打开时，系统返回手势应先关闭弹窗而非导航回退
+  if (window.__hasActivePopup && window.__hasActivePopup()) {
+    window.__closeActivePopup();
+    // 推回当前视图状态，防止导航回退。
+    // 使用 pushState 而非 go(1) 避免触发新的 popstate 导致页面重渲染。
+    const curState = { chanmView: state.view, code: state.selectedCode, period: state.selectedPeriod };
+    history.pushState(curState, '');
+    return;
+  }
   if (Date.now() - lastBackAt < 350) { lastBackAt = Date.now(); return; }
   lastBackAt = Date.now();
   const s = e.state || {};
@@ -484,7 +526,6 @@ function renderSecurityList(filterQuery = '') {
     const name = sec.name || rt?.name || sec.code;
     const change = fmtIndexChange(rt?.price, rt?.prevClose);
     const priceText = rt?.price ? formatPrice(sec.code, rt.price) : '';
-    const periodTags = sec.periods.map((p) => periodLabel(p)).join('/');
     const displayCode = sec.code.toUpperCase();
     const hasAlert = state.alerts.some((a) => a.code === sec.code && a.enabled && !a.triggered);
     return `
@@ -492,7 +533,7 @@ function renderSecurityList(filterQuery = '') {
       <div class="sec-head">
         <div class="sec-info">
           <div class="sec-name" data-name="${sec.code}">${name}${hasAlert ? '<span class="sec-alert-dot"></span>' : ''}</div>
-          <div class="sec-meta">${displayCode} · ${periodTags}</div>
+          <div class="sec-meta">${displayCode}</div>
         </div>
         <div class="sec-right">
           <div class="sec-quote" data-rt="${sec.code}">
@@ -571,7 +612,11 @@ function renderPeriodList(code) {
   const displayCode = sec.code.toUpperCase();
   const change = fmtIndexChange(rt?.price, rt?.prevClose);
   const priceText = rt?.price ? formatPrice(code, rt.price) : '';
-  const periodTags = sec.periods.map((p) => periodLabel(p)).join('/');
+  // 获取当前方案名称
+  const presets = state._presets[code] || [];
+  const presetIdx = state._currentPresetIdx[code] || 0;
+  const currentPreset = presets[presetIdx] || null;
+  const presetName = currentPreset ? currentPreset.name : null;
   const rows = sec.periods.map((p) => {
     const { segCount, zsCount } = countVisible(sec, p);
     return `
@@ -584,11 +629,11 @@ function renderPeriodList(code) {
     </div>`;
   }).join('');
   box.innerHTML = `
-    <div class="sec-card">
+    <div class="sec-card" data-code="${code}">
       <div class="sec-head">
         <div class="sec-info">
           <div class="sec-name" data-name="${code}">${name}</div>
-          <div class="sec-meta">${displayCode} · ${periodTags}</div>
+          <div class="sec-meta">${displayCode}${presetName ? '<span class="preset-dot">·</span>' + presetName : ''}</div>
         </div>
         <div class="sec-right">
           <div class="sec-quote" data-rt="${code}">
@@ -609,6 +654,103 @@ function renderPeriodList(code) {
     attachPeriodRowLongPress(row, code, p);
   });
   staggerEnter(box, '.sec-card, .period-row');
+  // 在周期列表页绑定右滑切换方案手势
+  attachPresetSwipe(box, code);
+}
+
+// 周期列表页左/右滑切换方案：在内容区（非边缘）向左/右滑动切换方案
+function attachPresetSwipe(container, code) {
+  const presets = state._presets[code] || [];
+  if (presets.length < 2) return; // 只有一个方案时不需要切换
+
+  // 移除旧监听器，避免重复绑定
+  if (window._presetSwipeFn) {
+    window.removeEventListener('pointerdown', window._presetSwipeFn);
+  }
+
+  let startX = 0, startY = 0, active = false, pointerId = null;
+  const THRESHOLD = 60;
+  const EDGE = 28; // 边缘区域交给 gesture.js 处理返回
+
+  const onDown = (e) => {
+    // 只处理当前页面内的触摸
+    if (state.view !== 'periods') return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    // 边缘区域交给 gesture.js 处理返回
+    if (e.clientX <= EDGE || e.clientX >= window.innerWidth - EDGE) return;
+    startX = e.clientX;
+    startY = e.clientY;
+    active = true;
+    pointerId = e.pointerId;
+    container.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+  };
+
+  const onMove = (e) => {
+    if (!active || e.pointerId !== pointerId) return;
+    const dx = e.clientX - startX;
+    const dy = e.clientY - startY;
+    if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+    // 纵向滑动忽略
+    if (Math.abs(dy) > Math.abs(dx)) { cleanup(); return; }
+    e.preventDefault();
+    if (Math.abs(dx) >= THRESHOLD) {
+      cleanup();
+      if (dx < 0) {
+        // 左滑 → 下一个方案
+        switchPreset(code, 1);
+      } else {
+        // 右滑 → 上一个方案
+        switchPreset(code, -1);
+      }
+    }
+  };
+
+  const onUp = () => { cleanup(); };
+
+  const cleanup = () => {
+    active = false;
+    container.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+    window.removeEventListener('pointercancel', onUp);
+  };
+
+  window._presetSwipeFn = onDown;
+  window.addEventListener('pointerdown', onDown);
+}
+
+// 切换到指定方向的方案（dir=1 下一个，dir=-1 上一个）
+function switchPreset(code, dir) {
+  const presets = state._presets[code] || [];
+  if (presets.length < 2) return;
+  const curIdx = state._currentPresetIdx[code] || 0;
+  const nextIdx = ((curIdx + dir) % presets.length + presets.length) % presets.length;
+  if (nextIdx === curIdx) return;
+  state._currentPresetIdx[code] = nextIdx;
+
+  // 切换后重新加载该证券所有周期的画线数据
+  const sec = state.securities.find((s) => s.code === code);
+  if (!sec) { renderPeriodList(code); return; }
+
+  const newPreset = presets[nextIdx];
+  // 查找匹配的 preset id，重新设置各周期的 segments/zhongshus
+  const periods = Object.keys(sec.drawings);
+  for (const p of periods) {
+    const d = sec.drawings[p];
+    if (d.presets && Array.isArray(d.presets)) {
+      const match = d.presets.find((pr) => pr.id === newPreset.id);
+      if (match) {
+        d.segments = match.segments || [];
+        d.zhongshus = match.zhongshus || [];
+        d.activePreset = newPreset.id;
+        d.presetName = newPreset.name;
+      }
+    }
+  }
+
+  try { navigator.vibrate?.(10); } catch {}
+  renderPeriodList(code);
 }
 
 // ========== 长按周期行 → 宽简图（底部抽屉） ==========
@@ -722,12 +864,17 @@ async function renderPeriodDetail(code, period) {
   const displayCode = sec.code.toUpperCase();
   const change = fmtIndexChange(rt?.price, rt?.prevClose);
   const priceText = rt?.price ? formatPrice(code, rt.price) : '';
+  // 获取当前方案名称
+  const presets = state._presets[code] || [];
+  const presetIdx = state._currentPresetIdx[code] || 0;
+  const currentPreset = presets[presetIdx] || null;
+  const presetName = currentPreset ? currentPreset.name : null;
   box.innerHTML = `
     <div class="sec-card sec-card--detail">
       <div class="sec-head">
         <div class="sec-info">
           <div class="sec-name" data-name="${code}">${name}</div>
-          <div class="sec-meta">${displayCode} · ${periodLabel(period)}</div>
+          <div class="sec-meta">${displayCode}${presetName ? '<span class="preset-dot">·</span>' + presetName : ''} · ${periodLabel(period)}</div>
         </div>
         <div class="sec-right">
           <div class="sec-quote" data-rt="${code}">
@@ -897,8 +1044,8 @@ function ensureKlineSheet() {
 function closeKlineSheet() {
   const backdrop = document.getElementById('kline-sheet-backdrop');
   const sheet = document.getElementById('kline-sheet');
-  if (backdrop) backdrop.classList.remove('show');
-  if (sheet) sheet.classList.remove('show');
+  if (backdrop) { backdrop.classList.remove('show'); backdrop.style.opacity = ''; backdrop.style.transition = ''; }
+  if (sheet) { sheet.classList.remove('show'); sheet.style.transform = ''; sheet.style.transition = ''; }
   document.body.style.overflow = '';
   _klineView = null;
 }
@@ -940,8 +1087,9 @@ function paintKline() {
 }
 
 // K 线弹窗内左右滑切换上/下段（左滑→下一段，右滑→上一段）
+let _klineSwitching = false;
 export function switchKlineSegment(dir) {
-  if (!_klineView || !dir) return;
+  if (!_klineView || !dir || _klineSwitching) return;
   const { code, period, segId } = _klineView;
   const sec = state.securities.find((s) => s.code === code);
   const segs = [...(sec?.drawings?.[period]?.segments || [])].sort((a, b) => a.start.time - b.start.time);
@@ -950,8 +1098,36 @@ export function switchKlineSegment(dir) {
   if (idx < 0) return;
   const ni = idx + (dir === 'next' ? 1 : -1);
   if (ni < 0 || ni >= segs.length) return; // 已到边界，不切换
-  _klineView.segId = segs[ni].id;
-  paintKline();
+
+  _klineSwitching = true;
+  const main = document.getElementById('kline-main');
+  const sub = document.getElementById('kline-sub');
+  const dur = '.18s';
+  const setBoth = (op, tx, withTransition) => {
+    [main, sub].forEach((el) => {
+      if (!el) return;
+      el.style.transition = withTransition ? `opacity ${dur} ease, transform ${dur} ease` : 'none';
+      el.style.opacity = String(op);
+      el.style.transform = `translateX(${tx}px)`;
+    });
+  };
+  // 旧内容朝切换方向淡出
+  setBoth(0, dir === 'next' ? -36 : 36, true);
+  setTimeout(() => {
+    // 切数据前先归位，避免 canvas 尺寸/坐标受 transform 影响
+    setBoth(0, 0, false);
+    _klineView.segId = segs[ni].id;
+    paintKline();
+    // 新内容从反方向进入
+    setBoth(0, dir === 'next' ? 36 : -36, false);
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      setBoth(1, 0, true);
+      setTimeout(() => {
+        [main, sub].forEach((el) => { if (el) { el.style.transition = ''; el.style.transform = ''; el.style.opacity = ''; } });
+        _klineSwitching = false;
+      }, 230);
+    }));
+  }, 170);
 }
 window.switchKlineSegment = switchKlineSegment;
 
@@ -1629,11 +1805,8 @@ async function handleSegmentAction(act, segId, code, period) {
     }
     saveLocalEdits(code, sec.drawings);
     refreshPeriodDetailWithoutFetch(code, period);
-    // 接受后生成的新盯盘段应正常渲染，并直接打开其 K 线图继续盯盘；
-    // 不要再调用 showCardOverlay，否则新段会异常处于「长按显示按钮」状态。
-    if (newWatchId) {
-      openKlineSheet(code, period, newWatchId);
-    }
+    // 接受后生成的新盯盘段正常渲染即可（不再调用 showCardOverlay，避免进入
+    // 「长按显示按钮」态；也不再自动弹出 K 线图，由用户自行操作）。
   } else if (act === 'del') {
     if (!targetSeg) return;
     if (!confirm('确定删除此段？')) return;
@@ -2683,7 +2856,7 @@ function init() {
 
   if ('serviceWorker' in navigator && !window.__CHANM_NOCACHE__) {
     navigator.serviceWorker.addEventListener('controllerchange', () => location.reload());
-    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js?v=20260722a').catch(() => {}));
+    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js?v=20260722b').catch(() => {}));
   }
 
   window.__CHANM_LOADED__ = true;

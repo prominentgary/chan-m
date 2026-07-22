@@ -1,7 +1,7 @@
 {
   "code": "sh588080",
   "period": "30m",
-  "exportedAt": 1784650331524,
+  "exportedAt": 1784738733498,
   "segments": [
     {
       "id": "s_h7x4seo8",
@@ -84,5 +84,96 @@
         }
       ]
     }
-  ]
+  ],
+  "presets": [
+    {
+      "id": "default",
+      "name": "默认方案",
+      "segments": [
+        {
+          "id": "s_h7x4seo8",
+          "kind": "segment",
+          "period": "30m",
+          "direction": "down",
+          "start": {
+            "time": 1782873000,
+            "price": 2.321
+          },
+          "end": {
+            "time": 1783306800,
+            "price": 1.97
+          }
+        },
+        {
+          "id": "s_p1mhxk21",
+          "kind": "segment",
+          "period": "30m",
+          "direction": "up",
+          "start": {
+            "time": 1783306800,
+            "price": 1.97
+          },
+          "end": {
+            "time": 1783648800,
+            "price": 2.314
+          }
+        },
+        {
+          "id": "s_w3ezhm2l",
+          "kind": "segment",
+          "period": "30m",
+          "direction": "down",
+          "start": {
+            "time": 1783648800,
+            "price": 2.314
+          },
+          "end": {
+            "time": 1783999800,
+            "price": 1.937
+          }
+        },
+        {
+          "id": "s_ngpv4wqt",
+          "kind": "segment",
+          "period": "30m",
+          "direction": "up",
+          "start": {
+            "time": 1783999800,
+            "price": 1.937
+          },
+          "end": {
+            "time": 1784169000,
+            "price": 1.99
+          }
+        }
+      ],
+      "zhongshus": [
+        {
+          "id": "s_8zzghkql",
+          "kind": "zhongshu",
+          "segmentIds": [
+            "s_p1mhxk21",
+            "s_w3ezhm2l",
+            "s_ngpv4wqt"
+          ],
+          "startTime": 1783306800,
+          "endTime": 1784169000,
+          "low": 1.97,
+          "high": 1.99,
+          "points": [
+            {
+              "time": 1783306800,
+              "price": 1.99
+            },
+            {
+              "time": 1784169000,
+              "price": 1.97
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "activePreset": "default",
+  "presetName": "默认方案"
 }

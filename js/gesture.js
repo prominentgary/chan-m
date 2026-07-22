@@ -34,7 +34,7 @@
       return { el: miniEl(), backdrop: miniBackdrop(), closeFn: () => window.closeMiniSheet && window.closeMiniSheet() };
     }
     const alertSheet = document.getElementById('alert-sheet');
-    if (alertSheet) {
+    if (alertSheet && alertSheet.classList.contains('show')) {
       const sheet = alertSheet.querySelector('.action-sheet') || alertSheet;
       return { el: sheet, backdrop: alertSheet, closeFn: () => window.closeAlertSheet && window.closeAlertSheet() };
     }
@@ -111,7 +111,7 @@
       if (commit) {
         if (el) { el.style.transition = 'transform .22s ease'; el.style.transform = 'translateX(' + (edge === 'left' ? '100%' : '-100%') + ')'; }
         if (bd) { bd.style.transition = 'opacity .22s ease'; bd.style.opacity = '0'; }
-        cleanup(true);
+        cleanup();
         setTimeout(() => { if (popup.closeFn) popup.closeFn(); }, 220);
         return;
       }
@@ -170,4 +170,14 @@
   }
 
   window.addEventListener('pointerdown', onDown, { passive: true });
+
+  // 暴露弹窗检测函数，供 app.js 在 popstate / 系统返回键等场景中调用
+  window.__hasActivePopup = function () {
+    return activePopup() !== null;
+  };
+  window.__closeActivePopup = function () {
+    const p = activePopup();
+    if (p && p.closeFn) { p.closeFn(); return true; }
+    return false;
+  };
 })();

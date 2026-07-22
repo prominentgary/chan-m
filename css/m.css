@@ -561,6 +561,7 @@ body {
 .sec-info { display: flex; flex-direction: column; gap: 2px; }
 .sec-name { font-size: 17px; font-weight: 600; color: var(--wx-txt); }
 .sec-meta { font-size: 14px; color: var(--wx-muted); }
+.preset-dot { margin: 0 4px; color: var(--wx-muted); }
 .sec-right { display: flex; align-items: center; gap: 10px; }
 .sec-quote { text-align: right; line-height: 1.35; }
 .sec-price { font-size: 17px; font-weight: 600; color: var(--wx-txt); }
@@ -678,6 +679,7 @@ body {
   background: rgba(0, 0, 0, .45);
   opacity: 0; visibility: hidden;
   transition: opacity .25s ease, visibility .25s ease;
+  touch-action: none;
 }
 .mini-sheet-backdrop.show { opacity: 1; visibility: visible; }
 .mini-sheet {
@@ -690,6 +692,7 @@ body {
   max-height: 80vh;
   display: flex; flex-direction: column;
   padding-bottom: env(safe-area-inset-bottom);
+  touch-action: pan-y;
 }
 .mini-sheet.show { transform: translateY(0); }
 .mini-sheet-head {
@@ -810,6 +813,7 @@ body {
   opacity: 0; visibility: hidden;
   transition: opacity .25s ease, visibility .25s ease;
   display: flex; align-items: flex-end;
+  touch-action: none;
 }
 .action-sheet-mask.show { opacity: 1; visibility: visible; }
 
@@ -823,6 +827,7 @@ body {
   max-height: 80vh;
   display: flex; flex-direction: column;
   padding-bottom: env(safe-area-inset-bottom);
+  touch-action: pan-y;
 }
 .action-sheet-mask.show .action-sheet { transform: translateY(0); }
 
@@ -980,6 +985,7 @@ body {
   background: rgba(0, 0, 0, .45);
   opacity: 0; visibility: hidden;
   transition: opacity .25s ease, visibility .25s ease;
+  touch-action: none;
 }
 .kline-sheet-backdrop.show { opacity: 1; visibility: visible; }
 .kline-sheet {
@@ -992,6 +998,7 @@ body {
   max-height: 86vh;
   display: flex; flex-direction: column;
   padding-bottom: env(safe-area-inset-bottom);
+  touch-action: pan-y;
 }
 .kline-sheet.show { transform: translateY(0); }
 .kline-sheet-head {
@@ -1014,6 +1021,10 @@ body {
 .kline-canvas {
   display: block; width: 100%;
   touch-action: none;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 
