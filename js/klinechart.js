@@ -120,6 +120,7 @@ export function renderKlineChart(main, sub, bars, opts = {}) {
     colors,
     digits: opts.digits || 2,
     subH: opts.subH || 96,
+    crossActive: false, // 触摸长按后进入的十字态
   };
   repaintMain();
   repaintSub();
@@ -299,18 +300,33 @@ function drawSubCanvas(canvas, bars, subType, colors, period, subH) {
   return { n };
 }
 
-// 主图点按十字光标 + OHLC 读数
+// 主图十字光标 + OHLC 读数
+// 交互：鼠标悬停实时跟随；触摸长按图形区域(>350ms)显示十字并实时展示坐标，
+// 触摸横向滑动(非边缘)切换上/下段，边缘滑动交给全局手势退出弹窗。
 function bindCrosshair() {
   const main = _view.main;
   if (main._klBound) return;
   main._klBound = true;
-  main.addEventListener('pointermove', (e) => {
-    if (!_view || !_view.mainMeta) return;
+
+  const EDGE = 28;        // 与全局边缘手势一致：边缘滑动用于退出弹窗
+  const LONG_MS = 350;    // 长按阈值
+  const SWIPE_PX = 46;    // 切换段所需的最小水平位移
+  let sx = 0, sy = 0;     // pointerdown 起点
+  let lpTimer = null;     // 长按定时器
+  let lpFired = false;    // 是否已进入十字态
+  let swiping = false;    // 是否已判定为滑动(未达长按)
+
+  const crossPos = (e) => {
     const rect = main.getBoundingClientRect();
     let x = e.clientX - rect.left;
     let y = e.clientY - rect.top;
     x = Math.max(0, Math.min(rect.width, x));
     y = Math.max(0, Math.min(rect.height, y));
+    return { x, y };
+  };
+  const showAt = (e) => {
+    if (!_view || !_view.mainMeta) return;
+    const { x, y } = crossPos(e);
     const meta = _view.mainMeta;
     if (!meta || !meta.n) return;
     let idx = Math.round((x - meta.padL) / (meta.plotW / meta.n) - 0.5);
@@ -318,8 +334,56 @@ function bindCrosshair() {
     const b = _view.bars[idx];
     if (!b) return;
     repaintMain({ x, y, idx, bar: b });
+  };
+  const clearLp = () => { if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; } };
+  const hideCross = () => { if (_view && _view.crossActive) { _view.crossActive = false; repaintMain(); } };
+
+  main.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse') return; // 鼠标走悬停
+    const EDGE = 28; // 与全局边缘手势一致：边缘区域留给「退出弹窗」手势
+    if (e.clientX <= EDGE || e.clientX >= window.innerWidth - EDGE) return;
+    sx = e.clientX; sy = e.clientY;
+    lpFired = false; swiping = false;
+    clearLp();
+    lpTimer = setTimeout(() => {
+      lpFired = true;
+      _view.crossActive = true;
+      showAt(e);
+    }, LONG_MS);
   });
-  main.addEventListener('pointerleave', () => repaintMain());
+
+  main.addEventListener('pointermove', (e) => {
+    if (e.pointerType === 'mouse') { showAt(e); return; } // 鼠标悬停实时跟随
+    if (_view.crossActive) { // 已进入十字态：跟随手指并阻止页面滚动
+      if (e.cancelable) e.preventDefault();
+      showAt(e);
+      return;
+    }
+    // 长按未触发前出现明显位移 → 视为滑动，取消长按，交由 pointerup 判定切换
+    if (!swiping && (Math.abs(e.clientX - sx) > 10 || Math.abs(e.clientY - sy) > 10)) {
+      swiping = true;
+      clearLp();
+    }
+  });
+
+  main.addEventListener('pointerup', (e) => {
+    if (e.pointerType === 'mouse') return;
+    clearLp();
+    if (_view.crossActive) { hideCross(); return; } // 长按态结束
+    if (swiping) {
+      const dx = e.clientX - sx;
+      const dy = e.clientY - sy;
+      // 仅处理横向滑动；边缘发起的滑动交给全局手势退出弹窗
+      if (Math.abs(dx) >= SWIPE_PX && Math.abs(dx) > Math.abs(dy)) {
+        const atEdge = sx <= EDGE || sx >= window.innerWidth - EDGE;
+        if (!atEdge && window.switchKlineSegment) {
+          window.switchKlineSegment(dx < 0 ? 'next' : 'prev');
+        }
+      }
+    }
+  });
+  main.addEventListener('pointercancel', () => { clearLp(); hideCross(); });
+  main.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse') repaintMain(); });
 }
 
 function drawMainCross(meta, cross) {

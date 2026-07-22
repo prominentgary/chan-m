@@ -27,15 +27,33 @@
     return !!b.querySelector('.nav-back-bottom');
   }
 
+  // 当前打开、可被边缘滑动退出的弹窗（优先级：简图 → 提醒 → K线）
+  // 任一弹窗打开时，边缘左/右滑优先触发退出该弹窗
+  function activePopup() {
+    if (isMiniSheetOpen()) {
+      return { el: miniEl(), backdrop: miniBackdrop(), closeFn: () => window.closeMiniSheet && window.closeMiniSheet() };
+    }
+    const alertSheet = document.getElementById('alert-sheet');
+    if (alertSheet) {
+      const sheet = alertSheet.querySelector('.action-sheet') || alertSheet;
+      return { el: sheet, backdrop: alertSheet, closeFn: () => window.closeAlertSheet && window.closeAlertSheet() };
+    }
+    const klineBd = document.getElementById('kline-sheet-backdrop');
+    if (klineBd && klineBd.classList.contains('show')) {
+      return { el: document.getElementById('kline-sheet'), backdrop: klineBd, closeFn: () => window.closeKlineSheet && window.closeKlineSheet() };
+    }
+    return null;
+  }
+
   function onDown(e) {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
-    const miniOpen = isMiniSheetOpen();
-    if (!miniOpen && !canBack()) return;
+    const popup = activePopup();
+    const back = !popup && canBack();
+    if (!popup && !back) return; // 弹窗打开时，边缘左/右滑优先退出弹窗
     const w = window.innerWidth;
     if (e.clientX <= EDGE) edge = 'left';
     else if (e.clientX >= w - EDGE) edge = 'right';
     else return;
-    // 简图开启时：左边缘右滑与右边缘左滑均可退出（inward 方向由 onMove 统一判断）
     startX = e.clientX; startY = e.clientY;
     curX = startX; lastX = startX; lastT = e.timeStamp; vx = 0;
     active = true; decided = false; pointerId = e.pointerId;
@@ -63,11 +81,11 @@
     vx = (curX - lastX) / dt;
     lastX = curX; lastT = e.timeStamp;
 
-    // 简图开启：横向拖拽简图本身，并同步淡化遮罩，作为跟手反馈
-    if (isMiniSheetOpen()) {
-      const m = miniEl();
-      const bd = miniBackdrop();
-      if (m) { m.style.transition = 'none'; m.style.transform = 'translateX(' + dx + 'px)'; }
+    // 弹窗开启：横向拖拽弹窗本身并淡化遮罩，作为跟手反馈（简图/提醒/K线 统一处理）
+    const popup = activePopup();
+    if (popup) {
+      const el = popup.el, bd = popup.backdrop;
+      if (el) { el.style.transition = 'none'; el.style.transform = 'translateX(' + dx + 'px)'; }
       if (bd) { bd.style.transition = 'none'; bd.style.opacity = String(Math.max(0, 1 - Math.abs(dx) / 400)); }
       return;
     }
@@ -84,26 +102,25 @@
   function onUp() {
     if (!active) { cleanup(); return; }
     const dx = curX - startX;
-    const miniOpen = isMiniSheetOpen();
+    const popup = activePopup();
     const commit = Math.abs(dx) > THRESHOLD || (Math.abs(vx) > VELOCITY && Math.abs(dx) > 24);
 
-    // 简图开启：左边缘右滑达标则退出简图，否则回弹归位
-    if (miniOpen) {
-      const m = miniEl();
-      const bd = miniBackdrop();
+    // 弹窗开启：边缘左/右滑达标则退出弹窗，否则回弹归位（简图/提醒/K线 统一处理）
+    if (popup) {
+      const el = popup.el, bd = popup.backdrop;
       if (commit) {
-        if (m) { m.style.transition = 'transform .22s ease'; m.style.transform = 'translateX(' + (edge === 'left' ? '100%' : '-100%') + ')'; }
+        if (el) { el.style.transition = 'transform .22s ease'; el.style.transform = 'translateX(' + (edge === 'left' ? '100%' : '-100%') + ')'; }
         if (bd) { bd.style.transition = 'opacity .22s ease'; bd.style.opacity = '0'; }
         cleanup(true);
-        setTimeout(() => { if (window.closeMiniSheet) window.closeMiniSheet(); }, 220);
+        setTimeout(() => { if (popup.closeFn) popup.closeFn(); }, 220);
         return;
       }
-      if (m) { m.style.transition = 'transform .22s ease'; m.style.transform = 'translateX(0)'; }
+      if (el) { el.style.transition = 'transform .22s ease'; el.style.transform = 'translateX(0)'; }
       if (bd) { bd.style.transition = 'opacity .22s ease'; bd.style.opacity = ''; }
       setTimeout(() => {
-        const mm = miniEl(), bb = miniBackdrop();
-        if (mm) { mm.style.transition = ''; mm.style.transform = ''; }
-        if (bb) { bb.style.transition = ''; bb.style.opacity = ''; }
+        const e2 = popup.el, b2 = popup.backdrop;
+        if (e2) { e2.style.transition = ''; e2.style.transform = ''; }
+        if (b2) { b2.style.transition = ''; b2.style.opacity = ''; }
       }, 230);
       cleanup();
       return;

@@ -5,11 +5,10 @@ import { computeMACD } from './macd.js?v=20260714y';
 import { segmentStrength, detectStrengthIndicators, detectOneBuySell, detectTwoAndThreeBuySell, computeZhongshuStrength, detectZhongshu } from './algo.js?v=20260719i';
 import { renderSegments } from './table.js?v=20260719i';
 import { renderMiniChart } from './minichart.js?v=20260717b';
-import { renderKlineChart, sliceSegmentBars } from './klinechart.js?v=20260722b';
+import { renderKlineChart, sliceSegmentBars } from './klinechart.js?v=20260722c';
 import { loadStaticData } from './sync.js?v=20260719j';
 import { openEditor } from './editor.js?v=20260715z';
 import { makeZhongshu } from './model.js?v=20260719i';
-import { buildFromStruct, formatChanSnapshot, alignPeriods } from '../shared/ai_snapshot.js?v=20260719a';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => document.querySelectorAll(s);
@@ -125,6 +124,10 @@ const state = {
 const loadState = { loading: false, error: null };
 
 function fmt(sec, period) { return formatTime(sec, period !== 'day'); }
+function fmtNoYear(sec, period) {
+  // 顶部区间显示去掉年份，避免文本过长（如 2024-01-15 → 01-15）
+  return formatTime(sec, period !== 'day').replace(/^\d{4}[-\/]/, '').replace(/\/\d{4}$/, '');
+}
 function setStatus(t) { /* 顶部状态栏已移除，保留函数避免其它调用报错 */ }
 
 // ========== 本地持久化 ==========
@@ -146,7 +149,10 @@ function saveLocalEdits(code, drawings) {
 function loadAlerts() {
   try {
     const raw = localStorage.getItem(ALERT_STORE_KEY);
-    return raw ? JSON.parse(raw) : [];
+    const arr = raw ? JSON.parse(raw) : [];
+    // 旧提醒可能缺少 createdAt（未来时态基准），补成载入时刻，避免基于历史数据立即误触发
+    const now = Date.now();
+    return arr.map((a) => { if (a.createdAt == null) a.createdAt = now; return a; });
   } catch { return []; }
 }
 
@@ -591,7 +597,6 @@ function renderPeriodList(code) {
           </div>
         </div>
       </div>
-      <button class="ai-snapshot-btn" data-ai-snapshot="${code}">盘面快照 for AI</button>
     </div>
     <div class="period-list">${rows}</div>
   `;
@@ -603,69 +608,8 @@ function renderPeriodList(code) {
     });
     attachPeriodRowLongPress(row, code, p);
   });
-  const aiBtn = box.querySelector('.ai-snapshot-btn');
-  if (aiBtn) {
-    aiBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      copyChanSnapshot(code);
-    });
-  }
   staggerEnter(box, '.sec-card, .period-row');
 }
-
-  // ========== 复制盘面快照（供 AI 解读） ==========
-  function _toast(msg, ms) {
-    let el = document.getElementById('__chanm_toast');
-    if (!el) {
-      el = document.createElement('div');
-      el.id = '__chanm_toast';
-      el.style.cssText = 'position:fixed;left:50%;top:42%;transform:translate(-50%,-50%);'
-        + 'background:rgba(0,0,0,.82);color:#fff;padding:10px 16px;border-radius:8px;'
-        + 'font-size:14px;z-index:9999;max-width:78%;text-align:center;pointer-events:none;'
-        + 'opacity:0;transition:opacity .18s;';
-      document.body.appendChild(el);
-    }
-    el.textContent = msg;
-    el.style.opacity = '1';
-    clearTimeout(el.__t);
-    el.__t = setTimeout(function () { el.style.opacity = '0'; }, ms || 2200);
-  }
-
-  function copyChanSnapshot(code) {
-    const sec = state.securities.find((s) => s.code === code);
-    if (!sec) return;
-    const periods = [];
-    Object.keys(sec.drawings || {}).forEach((p) => {
-      const d = sec.drawings[p];
-      if (!d || !d.segments || d.segments.length === 0) return;
-      // d.bars 为导出时嵌入的 K 线（含 MACD 精确力度）；缺失则退化为几何代理
-      periods.push(buildFromStruct(d.segments, d.zhongshus, p, d.bars));
-    });
-    if (!periods.length) { _toast('该证券各周期暂无画线'); return; }
-    alignPeriods(periods);
-    const text = formatChanSnapshot({ code, name: sec.name, periods });
-    copyTextToClipboard(text);
-    _toast('盘面快照已复制，粘贴到任意 AI App 即可解读');
-  }
-
-  function copyTextToClipboard(text) {
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(text).catch(() => fallbackCopy(text));
-    } else {
-      fallbackCopy(text);
-    }
-  }
-
-  function fallbackCopy(text) {
-    const ta = document.createElement('textarea');
-    ta.value = text;
-    ta.style.position = 'fixed';
-    ta.style.opacity = '0';
-    document.body.appendChild(ta);
-    ta.select();
-    try { document.execCommand('copy'); } catch (e) { /* ignore */ }
-    document.body.removeChild(ta);
-  }
 
 // ========== 长按周期行 → 宽简图（底部抽屉） ==========
 function openMiniSheet(code, period) {
@@ -959,6 +903,12 @@ function closeKlineSheet() {
   _klineView = null;
 }
 window.closeKlineSheet = closeKlineSheet;
+// 提醒弹窗（action sheet）的关闭入口，供边缘手势退出调用
+window.closeAlertSheet = function () {
+  const el = document.getElementById('alert-sheet');
+  if (el) el.remove();
+};
+
 
 // 取数 + 切片 + 渲染（弹层已存在时仅重绘）
 function paintKline() {
@@ -982,12 +932,28 @@ function paintKline() {
     const segNo = (cardEl?.querySelector('.card-avatar')?.textContent || '').trim() || segId;
     title.innerHTML =
       `<span class="kline-seg-no" style="background:${avatarBg};color:${avatarTxt}">${segNo}</span> ` +
-      `<span class="kline-seg-range">${fmt(st.time, period)} ${formatPrice(code, st.price)} → ${fmt(en.time, period)} ${formatPrice(code, en.price)}</span>`;
+      `<span class="kline-seg-range">${fmtNoYear(st.time, period)} ${formatPrice(code, st.price)} → ${fmtNoYear(en.time, period)} ${formatPrice(code, en.price)}</span>`;
   }
   const main = document.getElementById('kline-main');
   const sub = document.getElementById('kline-sub');
   renderKlineChart(main, sub, sliced, { seg, sub: _klineSub, period, digits, subH: 96 });
 }
+
+// K 线弹窗内左右滑切换上/下段（左滑→下一段，右滑→上一段）
+export function switchKlineSegment(dir) {
+  if (!_klineView || !dir) return;
+  const { code, period, segId } = _klineView;
+  const sec = state.securities.find((s) => s.code === code);
+  const segs = [...(sec?.drawings?.[period]?.segments || [])].sort((a, b) => a.start.time - b.start.time);
+  if (!segs.length) return;
+  const idx = segs.findIndex((s) => s.id === segId);
+  if (idx < 0) return;
+  const ni = idx + (dir === 'next' ? 1 : -1);
+  if (ni < 0 || ni >= segs.length) return; // 已到边界，不切换
+  _klineView.segId = segs[ni].id;
+  paintKline();
+}
+window.switchKlineSegment = switchKlineSegment;
 
 async function openKlineSheet(code, period, segId) {
   const sec = state.securities.find((s) => s.code === code);
@@ -1663,9 +1629,10 @@ async function handleSegmentAction(act, segId, code, period) {
     }
     saveLocalEdits(code, sec.drawings);
     refreshPeriodDetailWithoutFetch(code, period);
+    // 接受后生成的新盯盘段应正常渲染，并直接打开其 K 线图继续盯盘；
+    // 不要再调用 showCardOverlay，否则新段会异常处于「长按显示按钮」状态。
     if (newWatchId) {
-      const cardEl = $('#period-detail')?.querySelector(`.card[data-id="${newWatchId}"]`);
-      if (cardEl) showCardOverlay(cardEl, code, period);
+      openKlineSheet(code, period, newWatchId);
     }
   } else if (act === 'del') {
     if (!targetSeg) return;
@@ -2489,10 +2456,14 @@ function detectMacdCross(macd, lastIdx, golden) {
 // mode: 'red' 仅红柱(正)峰值缩短；'green' 仅绿柱(负)峰值缩短；'both' 任意方向（兼容旧提醒）。
 function detectMacdBarShrink(macd, lastIdx, alert, mode) {
   const mag = (k) => Math.abs(macd[k].macd);
+  // 未来时态：仅检测「提醒创建之后」才走出的 K 线上的缩短，避免基于历史数据创建即误触发
+  const createdSec = (alert.createdAt || 0) / 1000;
   // 从最近处向前找最近的「峰值+缩短」事件
   for (let i = lastIdx - 2; i >= 1; i--) {
     if (macd[i].macd == null || macd[i - 1].macd == null ||
         macd[i + 1].macd == null || macd[i + 2].macd == null) continue;
+    // 仅关注创建提醒之后出现的缩短（未来时态）：峰值柱时间晚于创建时间才纳入判定
+    if (macd[i].time != null && macd[i].time <= createdSec) continue;
     if (mag(i) <= mag(i - 1)) continue;       // i 不是局部峰值
     if (mag(i) <= mag(i + 1)) continue;       // i 不是局部峰值
     if (mag(i + 1) >= mag(i)) continue;       // i+1 不比 i 短
