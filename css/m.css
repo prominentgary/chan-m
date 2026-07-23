@@ -293,6 +293,31 @@ body {
 }
 .watch-badge svg { display: block; }
 
+.card-avatar-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 6px;
+}
+.watch-ring svg {
+  display: block;
+  width: 32px;
+  height: 32px;
+  transform: rotate(-90deg);
+}
+.watch-ring-track {
+  fill: none;
+  stroke: var(--wx-line);
+  stroke-width: 3;
+}
+.watch-ring-fill {
+  fill: none;
+  stroke: var(--wx-accent);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+
 .card-avatar {
   width: 44px; height: 44px; border-radius: 8px; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
@@ -570,6 +595,32 @@ body {
 .sec-change.down { color: var(--wx-green); }
 .sec-arrow { font-size: 14px; color: var(--wx-muted); }
 .sec-detail { border-top: 1px solid var(--wx-line); padding: 8px 10px 10px; }
+.sec-intraday {
+  border-top: 1px solid transparent;
+  padding: 0 14px;
+  height: 0;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: height .28s ease, padding .28s ease, border-color .28s ease;
+}
+.sec-intraday.expanded {
+  border-top-color: var(--wx-line);
+  padding-top: 8px;
+  padding-bottom: 10px;
+  height: 96px;
+}
+.sec-intraday canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  transition: opacity .22s ease;
+}
+.sec-intraday.expanded canvas {
+  opacity: 1;
+}
 
 /* 详情页顶部证券卡片：吸顶；下滚后折叠为单行 */
 .sec-card--detail {
@@ -634,6 +685,10 @@ body {
 /* 左滑返回手势：内容随手指右移，提起时关闭过渡以跟手 */
 #sec-list { touch-action: pan-y; }
 #sec-list.swiping { transition: none !important; }
+/* 保证主内容区撑满视口，使周期列表页底部空白处也能识别方案左右滑手势 */
+#sec-list {
+  min-height: calc(100dvh - 48px - 58px - env(safe-area-inset-top));
+}
 
 /* 卡片进场动画：自上而下依次右移淡入 */
 .anim-item {
@@ -648,7 +703,8 @@ body {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding-bottom: 64px;
+  padding-bottom: 96px;
+  flex: 1;
 }
 .period-row {
   background: var(--wx-card);
@@ -707,8 +763,32 @@ body {
 }
 .mini-sheet-close:active { opacity: .6; }
 .mini-sheet-body { padding: 10px 12px 16px; overflow: auto; }
+.mini-sheet-body.period-sheet-body { overflow: hidden; padding: 0; }
 .mini-chart-svg { display: block; width: 100%; height: auto; }
 
+/* 周期行长按弹窗：K 线图 / 简图 左右分页 */
+.period-sheet-pages {
+  display: flex;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scroll-snap-type: x mandatory;
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-x pan-y;
+}
+.period-sheet-pages::-webkit-scrollbar { display: none; }
+.period-sheet-pages.cross-lock {
+  overflow-x: hidden;
+  touch-action: pan-y;
+  scroll-snap-type: none;
+}
+.period-sheet-page {
+  flex: 0 0 100%;
+  width: 100%;
+  scroll-snap-align: start;
+  padding: 10px 12px 16px;
+  box-sizing: border-box;
+}
 /* 简图内元素 */
 .mini-zs {
   fill: rgba(240, 180, 41, .10);
@@ -720,6 +800,42 @@ body {
 
 /* 周期行：长按不弹出系统菜单/选区 */
 .period-row { user-select: none; -webkit-touch-callout: none; }
+
+/* 周期列表页底部方案指示器（位于 tabbar 上方） */
+.preset-indicator {
+  position: fixed;
+  left: 0; right: 0;
+  bottom: calc(56px + env(safe-area-inset-bottom));
+  z-index: 19;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  pointer-events: none;
+  padding: 6px 0;
+}
+.preset-indicator-name {
+  font-size: 12px;
+  color: var(--wx-muted);
+  margin-bottom: 5px;
+  line-height: 1;
+}
+.preset-indicator-dots {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.preset-ind-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--wx-line);
+  transition: transform .15s ease, background .15s ease;
+}
+.preset-ind-dot.active {
+  background: var(--wx-accent);
+  transform: scale(1.25);
+}
 
 /* ========== 提醒功能 ========== */
 .sec-alert-dot {
@@ -1025,6 +1141,10 @@ body {
   -webkit-user-select: none;
   user-select: none;
   -webkit-tap-highlight-color: transparent;
+}
+/* 周期行长按弹窗内的 K 线需要跟随整页左右滑动，恢复为可由浏览器/JS 处理横向手势 */
+.period-sheet-page .kline-canvas {
+  touch-action: pan-x pan-y;
 }
 
 

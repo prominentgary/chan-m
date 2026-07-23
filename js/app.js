@@ -1,14 +1,14 @@
 // app.js —— Chan-M 入口：一键导入站点全部画线，按「证券 → 周期」展示，联网算力
 // 注意：所有 import 路径均带版本号，每次发布新版本时请同步修改 html/js/sw 中的版本号
-import { fetchBars, fetchRealtimeMulti, formatTime, formatPrice, isETF } from './fetcher.js?v=20260714y';
-import { computeMACD } from './macd.js?v=20260714y';
-import { segmentStrength, detectStrengthIndicators, detectOneBuySell, detectTwoAndThreeBuySell, computeZhongshuStrength, detectZhongshu } from './algo.js?v=20260719i';
-import { renderSegments } from './table.js?v=20260719i';
-import { renderMiniChart } from './minichart.js?v=20260717b';
-import { renderKlineChart, sliceSegmentBars } from './klinechart.js?v=20260722e';
-import { loadStaticData } from './sync.js?v=20260719k';
-import { openEditor } from './editor.js?v=20260715z';
-import { makeZhongshu } from './model.js?v=20260719i';
+import { fetchBars, fetchRealtimeMulti, formatTime, formatPrice, isETF } from './fetcher.js?v=20260724i';
+import { computeMACD } from './macd.js?v=20260724i';
+import { segmentStrength, detectStrengthIndicators, detectOneBuySell, detectTwoAndThreeBuySell, computeZhongshuStrength, detectZhongshu } from './algo.js?v=20260724i';
+import { renderSegments } from './table.js?v=20260724i';
+import { renderMiniChart } from './minichart.js?v=20260724i';
+import { renderKlineChart, sliceSegmentBars, renderIntradayChart } from './klinechart.js?v=20260724i';
+import { loadStaticData } from './sync.js?v=20260724i';
+import { openEditor } from './editor.js?v=20260724i';
+import { makeZhongshu } from './model.js?v=20260724i';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => document.querySelectorAll(s);
@@ -20,6 +20,7 @@ const PERIODS = [
 const periodLabel = (p) => (PERIODS.find((x) => x[0] === p) || [p, p])[1];
 
 let longPressFired = false; // 周期行长按触发简图后，吞掉随后冒泡的 click，避免误进段详情
+let presetSwipeFired = false; // 周期列表页左右滑切换方案后，吞掉随后冒泡的 click，避免误进段详情
 
 // 返回当前周期在证券可用周期列表中的下一个更高级别周期
 function getHigherPeriod(period, availablePeriods) {
@@ -474,6 +475,8 @@ function resetContainer() {
 
 function renderDingpanView() {
   resetContainer();
+  removePresetIndicator();
+  removePresetSwipe();
   if (state.activeTab !== 'dingpan') return;
   if (state.view === 'list') renderSecurityList(state.searchQuery);
   else if (state.view === 'periods') renderPeriodList(state.selectedCode);
@@ -603,20 +606,11 @@ function countVisible(sec, period) {
 }
 
 // ========== 周期列表渲染 ==========
-function renderPeriodList(code) {
+function renderPeriodList(code, { keepHeader = false } = {}) {
   const box = $('#sec-list');
   const sec = state.securities.find((s) => s.code === code);
   if (!sec) { navigate('list'); return; }
-  const rt = state._rtPrices?.[code];
-  const name = sec.name || rt?.name || code;
-  const displayCode = sec.code.toUpperCase();
-  const change = fmtIndexChange(rt?.price, rt?.prevClose);
-  const priceText = rt?.price ? formatPrice(code, rt.price) : '';
-  // 获取当前方案名称
-  const presets = state._presets[code] || [];
-  const presetIdx = state._currentPresetIdx[code] || 0;
-  const currentPreset = presets[presetIdx] || null;
-  const presetName = currentPreset ? currentPreset.name : null;
+
   const rows = sec.periods.map((p) => {
     const { segCount, zsCount } = countVisible(sec, p);
     return `
@@ -628,45 +622,123 @@ function renderPeriodList(code) {
       <span class="sec-arrow">▸</span>
     </div>`;
   }).join('');
-  box.innerHTML = `
-    <div class="sec-card" data-code="${code}">
-      <div class="sec-head">
-        <div class="sec-info">
-          <div class="sec-name" data-name="${code}">${name}</div>
-          <div class="sec-meta">${displayCode}${presetName ? '<span class="preset-dot">·</span>' + presetName : ''}</div>
-        </div>
-        <div class="sec-right">
-          <div class="sec-quote" data-rt="${code}">
-            <div class="sec-price">${priceText}</div>
-            <div class="sec-change ${change.cls}">${change.text}</div>
+
+  if (!keepHeader) {
+    const rt = state._rtPrices?.[code];
+    const name = sec.name || rt?.name || code;
+    const displayCode = sec.code.toUpperCase();
+    const change = fmtIndexChange(rt?.price, rt?.prevClose);
+    const priceText = rt?.price ? formatPrice(code, rt.price) : '';
+    box.innerHTML = `
+      <div class="sec-card" data-code="${code}">
+        <div class="sec-head">
+          <div class="sec-info">
+            <div class="sec-name" data-name="${code}">${name}</div>
+            <div class="sec-meta">${displayCode}</div>
+          </div>
+          <div class="sec-right">
+            <div class="sec-quote" data-rt="${code}">
+              <div class="sec-price">${priceText}</div>
+              <div class="sec-change ${change.cls}">${change.text}</div>
+            </div>
           </div>
         </div>
+        <div class="sec-intraday">
+          <canvas id="sec-intraday-chart"></canvas>
+        </div>
       </div>
-    </div>
-    <div class="period-list">${rows}</div>
-  `;
+      <div class="period-list">${rows}</div>
+    `;
+    const card = box.querySelector('.sec-card');
+    attachSecIntradayLongPress(card, code);
+    staggerEnter(box, '.sec-card, .period-row');
+  } else {
+    const listEl = box.querySelector('.period-list');
+    if (listEl) listEl.innerHTML = rows;
+  }
+
   box.querySelectorAll('.period-row').forEach((row) => {
     const p = row.dataset.period;
     row.addEventListener('click', () => {
       if (longPressFired) { longPressFired = false; return; } // 长按已触发简图，吞掉随后的 click
+      if (presetSwipeFired) { presetSwipeFired = false; return; } // 左右滑切换方案后，吞掉随后的 click
       pushView('detail', code, p);
     });
     attachPeriodRowLongPress(row, code, p);
   });
-  staggerEnter(box, '.sec-card, .period-row');
-  // 在周期列表页绑定右滑切换方案手势
+  // 在周期列表页绑定左/右滑切换方案手势
   attachPresetSwipe(box, code);
+  renderPresetIndicator(code);
+}
+
+// 异步加载并绘制证券卡片中的当日/前一日分时图
+async function loadAndRenderIntraday(code, canvasOrId = 'sec-intraday-chart') {
+  const canvas = typeof canvasOrId === 'string' ? document.getElementById(canvasOrId) : canvasOrId;
+  if (!canvas) return;
+  const rt = state._rtPrices?.[code];
+  const prevClose = rt?.prevClose;
+  let bars = [];
+  try {
+    const res = await fetchBars(code, '1m', 300);
+    const raw = res.bars || [];
+    const now = new Date();
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() / 1000;
+    const todayEnd = todayStart + 24 * 3600;
+    bars = raw.filter((b) => b.time >= todayStart && b.time < todayEnd);
+    // 当天未开盘（节假日/盘前）则回退到前一天
+    if (!bars.length) {
+      const prevStart = todayStart - 24 * 3600;
+      bars = raw.filter((b) => b.time >= prevStart && b.time < todayStart);
+    }
+  } catch {}
+  requestAnimationFrame(() => renderIntradayChart(canvas, bars, prevClose));
+}
+
+// 长按证券卡片展开/收起分时图（默认收起）
+function attachSecIntradayLongPress(card, code) {
+  let timer = null;
+  let sx = 0, sy = 0;
+  const LONG_MS = 480;
+  const start = (x, y) => {
+    sx = x; sy = y;
+    timer = setTimeout(() => {
+      timer = null;
+      toggleSecIntraday(card, code);
+    }, LONG_MS);
+  };
+  const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  card.addEventListener('pointerdown', (e) => { start(e.clientX, e.clientY); });
+  card.addEventListener('pointermove', (e) => {
+    if (Math.abs(e.clientX - sx) > 10 || Math.abs(e.clientY - sy) > 10) cancel();
+  });
+  card.addEventListener('pointerup', cancel);
+  card.addEventListener('pointercancel', cancel);
+  card.addEventListener('contextmenu', (e) => e.preventDefault());
+}
+
+function toggleSecIntraday(card, code) {
+  const wrap = card.querySelector('.sec-intraday');
+  if (!wrap) return;
+  const expanded = wrap.classList.toggle('expanded');
+  if (expanded) {
+    const canvas = wrap.querySelector('canvas');
+    if (canvas && !canvas.dataset.loaded) {
+      canvas.dataset.loaded = '1';
+      loadAndRenderIntraday(code, canvas);
+    }
+    try { navigator.vibrate?.(10); } catch {}
+  }
 }
 
 // 周期列表页左/右滑切换方案：在内容区（非边缘）向左/右滑动切换方案
 function attachPresetSwipe(container, code) {
   const presets = state._presets[code] || [];
-  if (presets.length < 2) return; // 只有一个方案时不需要切换
-
-  // 移除旧监听器，避免重复绑定
-  if (window._presetSwipeFn) {
-    window.removeEventListener('pointerdown', window._presetSwipeFn);
+  if (presets.length < 2) {
+    removePresetSwipe();
+    return;
   }
+
+  removePresetSwipe();
 
   let startX = 0, startY = 0, active = false, pointerId = null;
   const THRESHOLD = 60;
@@ -678,11 +750,12 @@ function attachPresetSwipe(container, code) {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     // 边缘区域交给 gesture.js 处理返回
     if (e.clientX <= EDGE || e.clientX >= window.innerWidth - EDGE) return;
+    presetSwipeFired = false; // 每次新触摸重置方案滑动标志
     startX = e.clientX;
     startY = e.clientY;
     active = true;
     pointerId = e.pointerId;
-    container.addEventListener('pointermove', onMove);
+    window.addEventListener('pointermove', onMove, { passive: false });
     window.addEventListener('pointerup', onUp);
     window.addEventListener('pointercancel', onUp);
   };
@@ -694,8 +767,9 @@ function attachPresetSwipe(container, code) {
     if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
     // 纵向滑动忽略
     if (Math.abs(dy) > Math.abs(dx)) { cleanup(); return; }
-    e.preventDefault();
+    if (e.cancelable) e.preventDefault();
     if (Math.abs(dx) >= THRESHOLD) {
+      presetSwipeFired = true; // 标记已触发方案滑动，用于吞掉后续 click
       cleanup();
       if (dx < 0) {
         // 左滑 → 下一个方案
@@ -711,13 +785,44 @@ function attachPresetSwipe(container, code) {
 
   const cleanup = () => {
     active = false;
-    container.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointermove', onMove, { passive: false });
     window.removeEventListener('pointerup', onUp);
     window.removeEventListener('pointercancel', onUp);
   };
 
-  window._presetSwipeFn = onDown;
+  window._presetSwipeHandlers = { down: onDown, cleanup };
   window.addEventListener('pointerdown', onDown);
+}
+
+function removePresetSwipe() {
+  if (window._presetSwipeHandlers) {
+    window.removeEventListener('pointerdown', window._presetSwipeHandlers.down);
+    window._presetSwipeHandlers.cleanup();
+    window._presetSwipeHandlers = null;
+  }
+}
+
+function renderPresetIndicator(code) {
+  const presets = state._presets[code] || [];
+  const idx = state._currentPresetIdx[code] || 0;
+  if (presets.length < 2) { removePresetIndicator(); return; }
+  let el = document.getElementById('preset-indicator');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'preset-indicator';
+    el.className = 'preset-indicator';
+    document.body.appendChild(el);
+  }
+  el.innerHTML = `
+    <div class="preset-indicator-name">${presets[idx]?.name || `方案${idx + 1}`}</div>
+    <div class="preset-indicator-dots">
+      ${presets.map((p, i) => `<span class="preset-ind-dot${i === idx ? ' active' : ''}"></span>`).join('')}
+    </div>`;
+}
+
+function removePresetIndicator() {
+  const el = document.getElementById('preset-indicator');
+  if (el) el.remove();
 }
 
 // 切换到指定方向的方案（dir=1 下一个，dir=-1 上一个）
@@ -725,8 +830,9 @@ function switchPreset(code, dir) {
   const presets = state._presets[code] || [];
   if (presets.length < 2) return;
   const curIdx = state._currentPresetIdx[code] || 0;
-  const nextIdx = ((curIdx + dir) % presets.length + presets.length) % presets.length;
-  if (nextIdx === curIdx) return;
+  const nextIdx = curIdx + dir;
+  // 到第一个/最后一个方案后不再循环
+  if (nextIdx < 0 || nextIdx >= presets.length) return;
   state._currentPresetIdx[code] = nextIdx;
 
   // 切换后重新加载该证券所有周期的画线数据
@@ -750,18 +856,18 @@ function switchPreset(code, dir) {
   }
 
   try { navigator.vibrate?.(10); } catch {}
-  renderPeriodList(code);
+  renderPeriodList(code, { keepHeader: true });
 }
 
-// ========== 长按周期行 → 宽简图（底部抽屉） ==========
-function openMiniSheet(code, period) {
+// ========== 长按周期行 → K 线图/简图 底部抽屉 ==========
+async function openMiniSheet(code, period) {
   const sec = state.securities.find((s) => s.code === code);
   if (!sec) return;
   const rt = state._rtPrices?.[code];
   const name = sec.name || rt?.name || code;
   const d = sec.drawings[period] || { segments: [], zhongshus: [] };
 
-  // 复用与详情页一致的 hideBefore 过滤，保证简图段集合与段卡片一致
+  // 复用与详情页一致的 hideBefore 过滤，保证段集合与段卡片一致
   const higherPeriod = getHigherPeriod(period, sec.periods || []);
   const higherSegments = (higherPeriod && sec.drawings[higherPeriod]?.segments) || [];
   const hideBefore = computeHideBefore(higherSegments, higherPeriod, d.segments);
@@ -794,10 +900,75 @@ function openMiniSheet(code, period) {
   document.getElementById('mini-sheet-title').textContent =
     `${name} · ${periodLabel(period)} · ${segs.length} 段 · ${zss.length} 中枢`;
   const body = document.getElementById('mini-sheet-body');
-  renderMiniChart(body, segs, zss, { height: 210 });
+  body.className = 'mini-sheet-body period-sheet-body';
+  body.innerHTML = `
+    <div class="period-sheet-pages" id="period-sheet-pages">
+      <div class="period-sheet-page">
+        <canvas id="period-sheet-main" class="kline-canvas"></canvas>
+        <canvas id="period-sheet-sub" class="kline-canvas"></canvas>
+      </div>
+      <div class="period-sheet-page">
+        <div id="period-sheet-mini"></div>
+      </div>
+    </div>`;
+
+  // 获取 K 线数据
+  let bars = [];
+  const cb = state._currentBars;
+  if (cb && cb.code === code && cb.period === period && cb.bars && cb.bars.length) {
+    bars = cb.bars;
+  } else {
+    try {
+      const res = await fetchBars(code, period, 800);
+      bars = res.bars || [];
+      computeMACD(bars);
+    } catch {
+      bars = [];
+    }
+  }
+
+  // 第一页：K 线图，默认展示最近最多 3 段
+  const main = document.getElementById('period-sheet-main');
+  const sub = document.getElementById('period-sheet-sub');
+  const miniContainer = document.getElementById('period-sheet-mini');
+  const visibleSegs = getVisibleSegsForPeriod(code, period);
+  const digits = isETF(code) ? 3 : 2;
+
+  const toggleCrossLock = (active) => {
+    const pages = document.getElementById('period-sheet-pages');
+    if (pages) pages.classList.toggle('cross-lock', active);
+  };
+
+  const drawCharts = () => {
+    renderMiniChart(miniContainer, segs, zss, { height: 220 });
+    const zhongshuRects = buildZhongshuRects(zss, segs);
+    if (bars.length && visibleSegs.length) {
+      // K 线图展示该周期所有未隐藏段，并延伸到最新 K 线（包含剩余未标记段部分）
+      const viewSegItems = visibleSegs.map((s) => ({ seg: s, no: '' })); // 弹窗 K 线图不显示段号
+      const startTime = visibleSegs[0].start.time;
+      const endTime = bars[bars.length - 1].time;
+      const sliced = bars.filter((b) => b.time >= startTime && b.time <= endTime);
+      renderKlineChart(main, sub, sliced, {
+        segs: viewSegItems, zhongshus: zhongshuRects, sub: 'macd', period, digits, subH: 96,
+        noSwipe: true, subToggle: true, themeLines: true, solidMacd: true, crosshairOnly: true,
+        onCrossChange: toggleCrossLock,
+      });
+    } else {
+      renderKlineChart(main, sub, [], {
+        segs: [], zhongshus: zhongshuRects, sub: 'macd', period, digits, subH: 96,
+        noSwipe: true, subToggle: true, themeLines: true, solidMacd: true, crosshairOnly: true,
+        onCrossChange: toggleCrossLock,
+      });
+    }
+  };
+
+  const sheet = document.getElementById('mini-sheet');
   backdrop.classList.add('show');
-  document.getElementById('mini-sheet').classList.add('show');
+  sheet.classList.add('show');
   document.body.style.overflow = 'hidden';
+  requestAnimationFrame(() => {
+    drawCharts();
+  });
 }
 
 function closeMiniSheet() {
@@ -864,17 +1035,12 @@ async function renderPeriodDetail(code, period) {
   const displayCode = sec.code.toUpperCase();
   const change = fmtIndexChange(rt?.price, rt?.prevClose);
   const priceText = rt?.price ? formatPrice(code, rt.price) : '';
-  // 获取当前方案名称
-  const presets = state._presets[code] || [];
-  const presetIdx = state._currentPresetIdx[code] || 0;
-  const currentPreset = presets[presetIdx] || null;
-  const presetName = currentPreset ? currentPreset.name : null;
   box.innerHTML = `
     <div class="sec-card sec-card--detail">
       <div class="sec-head">
         <div class="sec-info">
           <div class="sec-name" data-name="${code}">${name}</div>
-          <div class="sec-meta">${displayCode}${presetName ? '<span class="preset-dot">·</span>' + presetName : ''} · ${periodLabel(period)}</div>
+          <div class="sec-meta">${displayCode} · ${periodLabel(period)}</div>
         </div>
         <div class="sec-right">
           <div class="sec-quote" data-rt="${code}">
@@ -883,12 +1049,16 @@ async function renderPeriodDetail(code, period) {
           </div>
         </div>
       </div>
+      <div class="sec-intraday">
+        <canvas id="detail-intraday-chart"></canvas>
+      </div>
     </div>
     <div id="period-detail"><div class="empty">加载中…</div></div>
   `;
+  const card = box.querySelector('.sec-card--detail');
+  attachSecIntradayLongPress(card, code);
   await loadAndRenderPeriodDetail(code, period);
   staggerEnter(box, '.sec-card');
-  onDetailScroll(); // 同步初始折叠态（进入时若已下滚则立即折叠）
 }
 
 async function loadAndRenderPeriodDetail(code, period) {
@@ -1057,6 +1227,54 @@ window.closeAlertSheet = function () {
 };
 
 
+// 取某周期下可见段（应用 hideBefore 过滤），按时间正序排列，与 table.js 一致
+function getVisibleSegsForPeriod(code, period) {
+  const sec = state.securities.find((s) => s.code === code);
+  const d = sec?.drawings?.[period];
+  const segments = d?.segments || [];
+  const higherPeriod = getHigherPeriod(period, sec?.periods || []);
+  const higherSegments = (higherPeriod && sec?.drawings?.[higherPeriod]?.segments) || [];
+  const hideBefore = computeHideBefore(higherSegments, higherPeriod, segments);
+  let visible = [...segments];
+  if (hideBefore != null) {
+    visible = visible.filter((s) => (s.start?.time ?? s.end?.time ?? 0) >= hideBefore);
+  }
+  return visible.sort(
+    (a, b) => (a.end?.time ?? a.start?.time) - (b.end?.time ?? b.start?.time)
+  );
+}
+
+// 根据中枢及其包含段，计算点线矩形坐标（与 model.js 的 toDrawings 逻辑一致）
+function buildZhongshuRects(zss, segs) {
+  const segById = {};
+  segs.forEach((s) => (segById[s.id] = s));
+  return (zss || [])
+    .map((z) => {
+      const zsSegs = (z.segmentIds || [])
+        .map((id) => segById[id])
+        .filter(Boolean);
+      if (zsSegs.length < 3) return null;
+      const sorted = [...zsSegs].sort((a, b) => a.start.time - b.start.time);
+      const baseIds = (z.baseSegmentIds || []).filter((id) => segById[id]);
+      const base3 = baseIds.length === 3
+        ? baseIds.map((id) => segById[id])
+        : sorted.slice(0, 3);
+      const lows = base3.map((s) => Math.min(s.start.price, s.end.price));
+      const highs = base3.map((s) => Math.max(s.start.price, s.end.price));
+      const overlapLow = Math.max(...lows);
+      const overlapHigh = Math.min(...highs);
+      const first = sorted[0];
+      const last = sorted[sorted.length - 1];
+      return {
+        startTime: first.start.time,
+        endTime: last.end.time,
+        high: overlapHigh,
+        low: overlapLow,
+      };
+    })
+    .filter(Boolean);
+}
+
 // 取数 + 切片 + 渲染（弹层已存在时仅重绘）
 function paintKline() {
   if (!_klineView) return;
@@ -1067,7 +1285,25 @@ function paintKline() {
   if (!seg) return;
   const cb = state._currentBars;
   const bars = (cb && cb.code === code && cb.period === period && cb.bars) ? cb.bars : [];
-  const sliced = sliceSegmentBars(bars, seg);
+  // 构建包含当前段的连续 3 段视图窗口（用于 K 线范围），段号与卡片一致
+  const visibleSegs = getVisibleSegsForPeriod(code, period);
+  const realIdx = {};
+  visibleSegs.forEach((s, k) => (realIdx[s.id] = k + 1));
+
+  const idx = visibleSegs.findIndex((s) => s.id === segId);
+  let viewSeg = seg;
+  let viewSegItems = [{ seg, no: realIdx[segId] || '' }];
+  if (visibleSegs.length > 1 && idx >= 0) {
+    const startIdx = Math.max(0, Math.min(idx - 1, visibleSegs.length - 3));
+    const endIdx = Math.min(startIdx + 2, visibleSegs.length - 1);
+    viewSeg = {
+      start: visibleSegs[startIdx].start,
+      end: visibleSegs[endIdx].end,
+      _isWatch: visibleSegs[endIdx]._isWatch,
+    };
+    viewSegItems = visibleSegs.slice(startIdx, endIdx + 1).map((s) => ({ seg: s, no: realIdx[s.id] }));
+  }
+  const sliced = sliceSegmentBars(bars, viewSeg);
   const digits = isETF(code) ? 3 : 2;
   const title = document.getElementById('kline-sheet-title');
   if (title) {
@@ -1083,21 +1319,26 @@ function paintKline() {
   }
   const main = document.getElementById('kline-main');
   const sub = document.getElementById('kline-sub');
-  renderKlineChart(main, sub, sliced, { seg, sub: _klineSub, period, digits, subH: 96 });
+  renderKlineChart(main, sub, sliced, { segs: viewSegItems, sub: _klineSub, period, digits, subH: 96 });
 }
 
-// K 线弹窗内左右滑切换上/下段（左滑→下一段，右滑→上一段）
+// K 线弹窗内左右滑切换窗口（左滑→下一个 3 段窗口，右滑→上一个 3 段窗口）
 let _klineSwitching = false;
 export function switchKlineSegment(dir) {
   if (!_klineView || !dir || _klineSwitching) return;
   const { code, period, segId } = _klineView;
-  const sec = state.securities.find((s) => s.code === code);
-  const segs = [...(sec?.drawings?.[period]?.segments || [])].sort((a, b) => a.start.time - b.start.time);
-  if (!segs.length) return;
-  const idx = segs.findIndex((s) => s.id === segId);
+  const visibleSegs = getVisibleSegsForPeriod(code, period);
+  if (!visibleSegs.length) return;
+  const idx = visibleSegs.findIndex((s) => s.id === segId);
   if (idx < 0) return;
-  const ni = idx + (dir === 'next' ? 1 : -1);
-  if (ni < 0 || ni >= segs.length) return; // 已到边界，不切换
+  const startIdx = Math.max(0, Math.min(idx - 1, visibleSegs.length - 3));
+  // 边界：已在最前/最后窗口时，保持当前段不切换，给用户「滑不动」的反馈
+  if (dir === 'prev' && startIdx === 0) return;
+  if (dir === 'next' && startIdx >= visibleSegs.length - 3) return;
+  const rel = idx - startIdx;
+  const newStartIdx = startIdx + (dir === 'next' ? 1 : -1);
+  const newSegIdx = Math.max(0, Math.min(visibleSegs.length - 1, newStartIdx + rel));
+  const newSegId = visibleSegs[newSegIdx].id;
 
   _klineSwitching = true;
   const main = document.getElementById('kline-main');
@@ -1116,7 +1357,7 @@ export function switchKlineSegment(dir) {
   setTimeout(() => {
     // 切数据前先归位，避免 canvas 尺寸/坐标受 transform 影响
     setBoth(0, 0, false);
-    _klineView.segId = segs[ni].id;
+    _klineView.segId = newSegId;
     paintKline();
     // 新内容从反方向进入
     setBoth(0, dir === 'next' ? 36 : -36, false);
@@ -2188,6 +2429,8 @@ function initTabbarViewportFix() {
 // ========== Tab 切换 ==========
 function switchTab(name) {
   state.activeTab = name;
+  removePresetIndicator();
+  removePresetSwipe();
   $$('.wx-tab').forEach((t) => t.classList.remove('active'));
   const tabEl = document.querySelector(`.wx-tab[data-tab="${name}"]`);
   if (tabEl) tabEl.classList.add('active');
@@ -2820,8 +3063,8 @@ function init() {
   const headerBack = document.getElementById('btn-header-back');
   if (headerBack) headerBack.addEventListener('click', () => goBack());
 
-  // 详情页证券卡片：下滚超过阈值时折叠为单行（吸顶由 CSS 处理）
-  window.addEventListener('scroll', onDetailScroll, { passive: true });
+  // 详情页证券卡片：长按展开/收起分时图，不再随滚动折叠变矮
+  // window.addEventListener('scroll', onDetailScroll, { passive: true });
 
   $$('.wx-tab').forEach((tab) => {
     const name = tab.dataset.tab || '';
@@ -2856,7 +3099,7 @@ function init() {
 
   if ('serviceWorker' in navigator && !window.__CHANM_NOCACHE__) {
     navigator.serviceWorker.addEventListener('controllerchange', () => location.reload());
-    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js?v=20260722b').catch(() => {}));
+    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js?v=20260724i').catch(() => {}));
   }
 
   window.__CHANM_LOADED__ = true;

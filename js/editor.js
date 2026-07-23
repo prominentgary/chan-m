@@ -1,5 +1,5 @@
 // editor.js —— 用日期时间编辑段端点（非图上点）
-import { secToInputValue, inputValueToSec, formatTime } from './fetcher.js?v=20260714s';
+import { secToInputValue, inputValueToSec, formatTime } from './fetcher.js?v=20260724i';
 
 let modal, startEl, endEl, saveCb, editSeg, startLockedFlag;
 
