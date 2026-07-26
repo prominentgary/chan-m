@@ -2,28 +2,32 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,interactive-widget=resizes-content">
   <meta name="theme-color" content="#ededed">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icon.svg?v=2" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icon.svg?v=2">
   <title>Chan-M</title>
-  <link rel="stylesheet" href="css/m.css?v=20260724i">
+  <link rel="stylesheet" href="css/m.css?v=20260725p">
 
 
 </head>
 <body>
   <header class="wx-header">
     <button id="btn-header-back" class="header-back" type="button" aria-label="返回" hidden>&lt;</button>
-    <h1>Chan-M</h1>
+    <h1 id="header-title" class="header-title">Chan-M</h1>
+    <!-- 长按需盘/行情时出现的标题栏内搜索框，同步弹起键盘 -->
+    <input type="search" id="search-input" class="header-search" placeholder="搜索当前证券" autocomplete="off" inputmode="search" hidden>
+    <button id="btn-search-close" class="header-search-close" type="button" aria-label="关闭搜索" hidden>✕</button>
     <button id="btn-theme-toggle" class="header-toggle" type="button" aria-label="切换配色">
       <span id="theme-clr" class="theme-clr">CLR.</span>
     </button>
   </header>
 
-  <section class="wx-searchbar">
-    <input type="text" id="search-input" placeholder="输入代码或证券名称搜索" autocomplete="off">
-  </section>
+  <!-- 搜索态左右边缘守卫：touch-action:none 屏蔽系统「边缘返回/前进」手势（与弹窗 backdrop 防护一致），
+       避免边缘滑动误触发系统返回而退出程序。仅覆盖左右各 32px，不影响中间内容。 -->
+  <div class="search-edge-guard left" aria-hidden="true"></div>
+  <div class="search-edge-guard right" aria-hidden="true"></div>
 
   <main id="sec-list" class="wx-list"></main>
   <main id="hangqing-view" class="wx-list" style="display:none"></main>
@@ -55,11 +59,11 @@
   </nav>
 
   <input id="import-file" type="file" accept="application/json" hidden>
-  <script type="module" src="js/app.js?v=20260724i"></script>
+  <script type="module" src="js/app.js?v=20260725q"></script>
 
 
 
-  <script type="module" src="js/gesture.js?v=20260724i"></script>
+  <script type="module" src="js/gesture.js?v=20260725f"></script>
 
   <script>
     // 开发模式：URL 带 ?nocache=1 时不注册 Service Worker

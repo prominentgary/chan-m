@@ -32,7 +32,7 @@
       "presets": [
         {
           "id": "default",
-          "name": "方案1"
+          "name": ""
         }
       ]
     },
@@ -40,12 +40,14 @@
       "code": "sh588110",
       "name": "科创成长",
       "periods": [
-        "1m"
+        "1m",
+        "5m",
+        "30m"
       ],
       "presets": [
         {
           "id": "default",
-          "name": "方案1"
+          "name": ""
         }
       ]
     },
@@ -55,12 +57,31 @@
       "periods": [
         "1m",
         "5m",
+        "30m",
+        "day"
+      ],
+      "presets": [
+        {
+          "id": "default",
+          "name": ""
+        }
+      ]
+    },
+    {
+      "code": "sh000001",
+      "name": "上证指数",
+      "periods": [
+        "5m",
         "30m"
       ],
       "presets": [
         {
           "id": "default",
-          "name": "默认方案"
+          "name": ""
+        },
+        {
+          "id": "preset_u9eijhfd",
+          "name": ""
         }
       ]
     }

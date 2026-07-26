@@ -1,4 +1,4 @@
-import { formatPrice } from './fetcher.js?v=20260724i';
+import { formatPrice } from './fetcher.js?v=20260725i';
 
 // table.js —— 段/中枢 的微信会话列表风格渲染（无图表）
 
@@ -124,9 +124,32 @@ function segCard(seg, idx, ctx, readonly, extraClass = '', reversed = false) {
   </div>`;
 }
 
-function zhongshuHeader(zs, zi, num, ctx) {
+function zhongshuHeader(zs, zi, num, ctx, segById) {
   const ids = zs.segmentIds || [];
-  return `<div class="zs-title" data-zs-id="${zs.id}">中枢 ${num} · ${ids.length} 段</div>`;
+  // 计算中枢关键点位
+  let priceInfo = '';
+  if (ids.length >= 3) {
+    // 基础三段：优先用 baseSegmentIds，否则取前三段
+    const baseIds = (zs.baseSegmentIds && zs.baseSegmentIds.length === 3)
+      ? zs.baseSegmentIds.filter((id) => segById[id])
+      : ids.slice(0, 3);
+    const base3 = baseIds.map((id) => segById[id]).filter(Boolean);
+    if (base3.length === 3) {
+      const lows = base3.map((s) => Math.min(s.start.price, s.end.price));
+      const highs = base3.map((s) => Math.max(s.start.price, s.end.price));
+      const overlapLow = Math.max(...lows);
+      const overlapHigh = Math.min(...highs);
+      // 围绕中枢震荡（含延伸）的最高/最低价格
+      const allSegs = ids.map((id) => segById[id]).filter(Boolean);
+      const allLows = allSegs.map((s) => Math.min(s.start.price, s.end.price));
+      const allHighs = allSegs.map((s) => Math.max(s.start.price, s.end.price));
+      const oscHigh = Math.max(...allHighs);
+      const oscLow = Math.min(...allLows);
+      const p = (v) => formatPrice(ctx.code, v);
+      priceInfo = ` <span class="zs-price-info">${p(oscLow)}-[${p(overlapLow)}-${p(overlapHigh)}]-${p(oscHigh)}</span>`;
+    }
+  }
+  return `<div class="zs-title" data-zs-id="${zs.id}">中枢 ${num} · ${ids.length} 段${priceInfo}</div>`;
 }
 
 export function renderSegments(container, segments, zhongshus, fmt, code = '', readonly = false, hideBefore = null, period = '', bars = []) {
@@ -198,7 +221,7 @@ export function renderSegments(container, segments, zhongshus, fmt, code = '', r
       const zsId = zsArr[cat].id;
       html += `<div class="zs-block" data-zs-id="${zsId}">
         <div class="zs-edge zs-edge-top" data-edge="top" aria-label="上边缘"></div>
-        ${zhongshuHeader(zsArr[cat], cat, zsNumber[cat], ctx)}`;
+        ${zhongshuHeader(zsArr[cat], cat, zsNumber[cat], ctx, segMap)}`;
       run.forEach((seg) => (html += segCard(seg, realIdx[seg.id], ctx, readonly, '', reversed)));
       html += `<div class="zs-edge zs-edge-bottom" data-edge="bottom" aria-label="下边缘"></div></div>`;
     } else {

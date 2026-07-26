@@ -1,5 +1,5 @@
 // sync.js —— 与桌面端互导画线 JSON
-import { fromDrawings, toDrawings } from './model.js?v=20260724i';
+import { fromDrawings, toDrawings } from './model.js?v=20260725f';
 
 export function exportJSON(segments, zhongshus) {
   const data = toDrawings(segments, zhongshus);
@@ -39,10 +39,12 @@ export function importJSON(file, cb) {
   reader.readAsText(file);
 }
 
-// 由 sh/sz 代码取反向前缀（解决沪/深同号歧义）
+// 由代码取反向前缀（解决沪/深同号歧义），兼容专业后缀格式（159611.SZ）
 function altMarketCode(code) {
   if (code.startsWith('sh')) return 'sz' + code.slice(2);
   if (code.startsWith('sz')) return 'sh' + code.slice(2);
+  const m = code.match(/^(\d{6})\.(SZ|SH)$/i);
+  if (m) return `${m[1]}.${m[2].toUpperCase() === 'SZ' ? 'SH' : 'SZ'}`;
   return null;
 }
 

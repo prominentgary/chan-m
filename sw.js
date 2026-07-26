@@ -1,11 +1,11 @@
 // sw.js —— 离线缓存（PWA）
-const CACHE = 'chan-m-v91';
+const CACHE = 'chan-m-v121';
 const ASSETS = [
   './', './index.html', './manifest.webmanifest', './icon.svg',
-  './css/m.css?v=20260724i',
-  './js/app.js?v=20260724i', './js/gesture.js?v=20260724i', './js/fetcher.js?v=20260724i', './js/macd.js?v=20260724i', './js/model.js?v=20260724i',
-  './js/algo.js?v=20260724i', './js/store.js?v=20260724i', './js/table.js?v=20260724i', './js/editor.js?v=20260724i', './js/sync.js?v=20260724i', './js/minichart.js?v=20260724i',
-  './js/klinechart.js?v=20260724i',
+  './css/m.css?v=20260725p',
+  './js/app.js?v=20260725q', './js/gesture.js?v=20260725f', './js/fetcher.js?v=20260725i', './js/adjust.js?v=20260725b', './js/macd.js?v=20260725f', './js/model.js?v=20260725f',
+  './js/algo.js?v=20260725f', './js/store.js?v=20260725f', './js/table.js?v=20260725t', './js/editor.js?v=20260725f', './js/sync.js?v=20260725g',
+  './js/klinechart.js?v=20260725g',
   './data/manifest.json',
 ];
 

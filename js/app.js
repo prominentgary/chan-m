@@ -1,14 +1,13 @@
 // app.js —— Chan-M 入口：一键导入站点全部画线，按「证券 → 周期」展示，联网算力
 // 注意：所有 import 路径均带版本号，每次发布新版本时请同步修改 html/js/sw 中的版本号
-import { fetchBars, fetchRealtimeMulti, formatTime, formatPrice, isETF } from './fetcher.js?v=20260724i';
-import { computeMACD } from './macd.js?v=20260724i';
-import { segmentStrength, detectStrengthIndicators, detectOneBuySell, detectTwoAndThreeBuySell, computeZhongshuStrength, detectZhongshu } from './algo.js?v=20260724i';
-import { renderSegments } from './table.js?v=20260724i';
-import { renderMiniChart } from './minichart.js?v=20260724i';
-import { renderKlineChart, sliceSegmentBars, renderIntradayChart } from './klinechart.js?v=20260724i';
-import { loadStaticData } from './sync.js?v=20260724i';
-import { openEditor } from './editor.js?v=20260724i';
-import { makeZhongshu } from './model.js?v=20260724i';
+import { fetchBars, fetchRealtimeMulti, formatTime, formatPrice, isETF, resolveCode } from './fetcher.js?v=20260725i';
+import { computeMACD } from './macd.js?v=20260725f';
+import { segmentStrength, detectStrengthIndicators, detectOneBuySell, detectTwoAndThreeBuySell, computeZhongshuStrength, detectZhongshu } from './algo.js?v=20260725f';
+import { renderSegments } from './table.js?v=20260725t';
+import { renderKlineChart, sliceSegmentBars, renderIntradayChart } from './klinechart.js?v=20260725i';
+import { loadStaticData } from './sync.js?v=20260725g';
+import { openEditor } from './editor.js?v=20260725f';
+import { makeZhongshu } from './model.js?v=20260725f';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => document.querySelectorAll(s);
@@ -99,10 +98,10 @@ const ALERT_STORE_KEY = 'chan-m-alerts-v1';
 
 // 行情页固定展示的大盘指数
 const INDEX_CODES = [
-  { code: 'sh000001', label: '上证指数' },
-  { code: 'sz399001', label: '深证成指' },
-  { code: 'sz399006', label: '创业板指' },
-  { code: 'sh000688', label: '科创50' },
+  { code: '000001.SH', label: '上证指数' },
+  { code: '399001.SZ', label: '深证成指' },
+  { code: '399006.SZ', label: '创业板指' },
+  { code: '000688.SH', label: '科创50' },
 ];
 
 const state = {
@@ -113,16 +112,24 @@ const state = {
   rtTimers: {},
   activeTab: 'dingpan',
   indexQuotes: {},
+  indexIntraday: {},
   _rtPrices: {},
   _currentBars: null,
   searchQuery: '',
+  searchMode: null, // null | 'dingpan' | 'hangqing'：标题栏内搜索是否激活
+  _baseInnerHeight: null, // 无键盘时的基准 window.innerHeight，用于键盘高度检测
   alerts: [],
   _alertTimer: null,
   _alertNotified: new Set(),
   // 画线方案支持
   _presets: {}, // code -> [{ id, name }]
   _currentPresetIdx: {}, // code -> index in _presets[code]
+  // 行情页用户自定义证券
+  _hangqingExtras: [], // [{ code, name }] —— 在行情页搜索添加的证券卡片
+  _extrasIntraday: {}, // { code: { bars, prevClose, dayStart, dayEnd, date } }
 };
+
+const HANGQING_EXTRAS_KEY = 'chanm_hangqing_extras';
 
 // 加载状态：用于区分「正在加载」与「真的没有数据」，避免首屏误报「暂无画线数据」
 const loadState = { loading: false, error: null };
@@ -144,8 +151,22 @@ function loadLocalEdits(code) {
   } catch { return null; }
 }
 
+// 保存前把当前展示方案的线段同步回 presets 对应方案，
+// 这样刷新后即使先展示默认方案，各方案的本地编辑也不会丢失。
+function syncPresetsToStorage(drawings) {
+  if (!drawings) return;
+  for (const p of Object.keys(drawings)) {
+    const d = drawings[p];
+    if (d && Array.isArray(d.presets) && d.presets.length && d.activePreset) {
+      const pr = d.presets.find((x) => x.id === d.activePreset);
+      if (pr) { pr.segments = d.segments || []; pr.zhongshus = d.zhongshus || []; }
+    }
+  }
+}
+
 function saveLocalEdits(code, drawings) {
   try {
+    syncPresetsToStorage(drawings);
     localStorage.setItem(secStoreKey(code), JSON.stringify({ drawings, savedAt: Date.now() }));
   } catch {}
 }
@@ -249,7 +270,13 @@ function mergeDrawings(staticData, code) {
     // 本地编辑优先，但 bars（来自导出）只存在于静态数据，需保留以计算 MACD 力度
     // 同时保留方案信息（presets）来自静态数据
     result[p] = ldTime >= sdTime
-      ? { ...ld, bars: ld.bars || (sd ? sd.bars : null), presets: sd.presets || null, activePreset: sd.activePreset || null, presetName: sd.presetName || null }
+      ? {
+          ...ld,
+          bars: ld.bars || (sd ? sd.bars : null),
+          presets: (ld.presets && ld.presets.length) ? ld.presets : (sd.presets || null),
+          activePreset: (ld.presets && ld.presets.length) ? (ld.activePreset || 'default') : (sd.activePreset || null),
+          presetName: (ld.presets && ld.presets.length) ? ld.presetName : (sd.presetName || null),
+        }
       : sd;
   }
   return result;
@@ -346,7 +373,18 @@ async function loadAllDrawings() {
         }
       }
     }
+    // 合并本地「手动添加」的证券（来自行情页搜索添加）
+    for (const ex of loadWatchlistExtras()) {
+      if (!byCode[ex.code]) {
+        const sec = { code: ex.code, name: ex.name, periods: ['day', '30m', '5m'], drawings: {}, _extra: true };
+        securities.push(sec);
+        byCode[ex.code] = sec;
+      }
+    }
+
     state.securities = securities;
+    // 重新刷新后，各证券的画线先展示默认方案（presets[0]），方案索引归零
+    applyDefaultPresetOnLoad();
     renderDingpanView();
     startAllRealtime();
   } catch (e) {
@@ -354,6 +392,30 @@ async function loadAllDrawings() {
   } finally {
     loadState.loading = false;
     renderDingpanView(); // 收尾渲染：加载中 → 列表 / 错误提示
+  }
+}
+
+// 重新刷新后，各证券一律先展示默认方案（presets[0]）：
+// 无论 PC 端导出时选中的是哪个方案，或上次浏览切换到了哪个方案，
+// 刷新后都从默认方案开始，方案索引归零；各方案本地编辑已同步在 presets 中，可随时切回查看。
+function applyDefaultPresetOnLoad() {
+  for (const sec of state.securities) {
+    const presets = state._presets[sec.code] || [];
+    state._currentPresetIdx[sec.code] = 0;
+    if (presets.length === 0) continue;
+    const defaultId = presets[0].id;
+    const defaultName = presets[0].name;
+    for (const p of Object.keys(sec.drawings)) {
+      const d = sec.drawings[p];
+      if (!d || !Array.isArray(d.presets) || d.presets.length === 0) continue;
+      const match = d.presets.find((pr) => pr.id === defaultId);
+      if (match) {
+        d.segments = match.segments || [];
+        d.zhongshus = match.zhongshus || [];
+        d.activePreset = defaultId;
+        d.presetName = defaultName;
+      }
+    }
   }
 }
 
@@ -420,6 +482,8 @@ function goBack() {
   }
 }
 window.goBack = goBack;
+// 供 gesture.js 在边缘滑动时关闭标题栏搜索框（与弹窗关闭逻辑一致）
+window.closeHeaderSearch = closeHeaderSearch;
 
 // 系统/浏览器返回键：popstate 渲染对应视图；与应用内手势去重
 window.addEventListener('popstate', (e) => {
@@ -474,6 +538,7 @@ function resetContainer() {
 }
 
 function renderDingpanView() {
+  updateHeaderSearchVisibility();
   resetContainer();
   removePresetIndicator();
   removePresetSwipe();
@@ -654,7 +719,10 @@ function renderPeriodList(code, { keepHeader = false } = {}) {
     staggerEnter(box, '.sec-card, .period-row');
   } else {
     const listEl = box.querySelector('.period-list');
-    if (listEl) listEl.innerHTML = rows;
+    if (listEl) {
+      listEl.innerHTML = rows;
+      staggerEnter(listEl, '.period-row');
+    }
   }
 
   box.querySelectorAll('.period-row').forEach((row) => {
@@ -671,27 +739,84 @@ function renderPeriodList(code, { keepHeader = false } = {}) {
   renderPresetIndicator(code);
 }
 
-// 异步加载并绘制证券卡片中的当日/前一日分时图
+// A 股交易日 9:30/15:00 的时间戳（本地时间）
+function marketDayBounds(date) {
+  const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const start = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 9, 30, 0).getTime() / 1000;
+  const end = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 15, 0, 0).getTime() / 1000;
+  return { start, end };
+}
+function isWeekday(date) { const day = date.getDay(); return day >= 1 && day <= 5; }
+function getPrevTradingDay(date) {
+  const d = new Date(date);
+  d.setDate(d.getDate() - 1);
+  while (!isWeekday(d)) d.setDate(d.getDate() - 1);
+  return d;
+}
+
+// 异步加载并绘制证券卡片中的分时图
+// 规则：交易日 9 点前 / 周末显示上一交易日；9:00-9:30 仅显示 0 轴；开盘后显示当日（无数据则回退上一交易日）
 async function loadAndRenderIntraday(code, canvasOrId = 'sec-intraday-chart') {
   const canvas = typeof canvasOrId === 'string' ? document.getElementById(canvasOrId) : canvasOrId;
   if (!canvas) return;
   const rt = state._rtPrices?.[code];
   const prevClose = rt?.prevClose;
   let bars = [];
+  let dayStart = 0, dayEnd = 0;
+
   try {
     const res = await fetchBars(code, '1m', 300);
     const raw = res.bars || [];
     const now = new Date();
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime() / 1000;
-    const todayEnd = todayStart + 24 * 3600;
-    bars = raw.filter((b) => b.time >= todayStart && b.time < todayEnd);
-    // 当天未开盘（节假日/盘前）则回退到前一天
-    if (!bars.length) {
-      const prevStart = todayStart - 24 * 3600;
-      bars = raw.filter((b) => b.time >= prevStart && b.time < todayStart);
+    const { start: todayStart, end: todayEnd } = marketDayBounds(now);
+    const hm = now.getHours() * 60 + now.getMinutes();
+
+    if (hm < 9 * 60 || !isWeekday(now)) {
+      // 9 点前或周末：显示上一交易日
+      const prevDay = getPrevTradingDay(now);
+      const { start: ps, end: pe } = marketDayBounds(prevDay);
+      bars = raw.filter((b) => b.time >= ps && b.time < pe);
+      dayStart = ps; dayEnd = pe;
+    } else if (hm < 9 * 60 + 30) {
+      // 9:00-9:30：仅 0 轴
+      dayStart = todayStart; dayEnd = todayEnd;
+    } else {
+      // 9:30 后：显示当天（若当天有数据）否则上一交易日
+      const todayBars = raw.filter((b) => b.time >= todayStart && b.time < todayEnd);
+      if (todayBars.length) {
+        bars = todayBars;
+        dayStart = todayStart; dayEnd = todayEnd;
+      } else {
+        const prevDay = getPrevTradingDay(now);
+        const { start: ps, end: pe } = marketDayBounds(prevDay);
+        bars = raw.filter((b) => b.time >= ps && b.time < pe);
+        dayStart = ps; dayEnd = pe;
+      }
     }
   } catch {}
-  requestAnimationFrame(() => renderIntradayChart(canvas, bars, prevClose));
+  canvas._intradayBars = bars;
+  canvas._intradayPrevClose = prevClose;
+  canvas._intradayCode = code;
+  canvas._intradayDayStart = dayStart;
+  canvas._intradayDayEnd = dayEnd;
+  requestAnimationFrame(() => renderIntradayChart(canvas, bars, prevClose, { dayStart, dayEnd }));
+}
+
+// 主题切换后重绘所有已加载的分时图
+function repaintIntradayCharts() {
+  // 注意：行情页指数卡片的 canvas 自身带 .index-intraday 类（非容器类），
+  // 需用 canvas.index-intraday 匹配，否则主题切换后不会立即重绘（只能等 5s 轮询重画，表现为变色延迟）。
+  document.querySelectorAll('.sec-intraday canvas, canvas.index-intraday').forEach((canvas) => {
+    const bars = canvas._intradayBars || [];
+    if (bars.length || canvas._intradayDayStart) {
+      const opts = canvas._intradayOpts || {};
+      renderIntradayChart(canvas, bars, canvas._intradayPrevClose, {
+        dayStart: canvas._intradayDayStart,
+        dayEnd: canvas._intradayDayEnd,
+        ...opts,
+      });
+    }
+  });
 }
 
 // 长按证券卡片展开/收起分时图（默认收起）
@@ -720,6 +845,7 @@ function toggleSecIntraday(card, code) {
   const wrap = card.querySelector('.sec-intraday');
   if (!wrap) return;
   const expanded = wrap.classList.toggle('expanded');
+  card.classList.toggle('intraday-expanded', expanded);
   if (expanded) {
     const canvas = wrap.querySelector('canvas');
     if (canvas && !canvas.dataset.loaded) {
@@ -750,6 +876,9 @@ function attachPresetSwipe(container, code) {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     // 边缘区域交给 gesture.js 处理返回
     if (e.clientX <= EDGE || e.clientX >= window.innerWidth - EDGE) return;
+    // 弹窗打开时不处理，避免滑动穿透
+    if (document.getElementById('mini-sheet')?.classList.contains('show')) return;
+    if (document.getElementById('kline-sheet')?.classList.contains('show')) return;
     presetSwipeFired = false; // 每次新触摸重置方案滑动标志
     startX = e.clientX;
     startY = e.clientY;
@@ -859,22 +988,14 @@ function switchPreset(code, dir) {
   renderPeriodList(code, { keepHeader: true });
 }
 
-// ========== 长按周期行 → K 线图/简图 底部抽屉 ==========
+// ========== 长按周期行 → K 线图 底部抽屉（左右滑切换周期） ==========
 async function openMiniSheet(code, period) {
   const sec = state.securities.find((s) => s.code === code);
   if (!sec) return;
   const rt = state._rtPrices?.[code];
   const name = sec.name || rt?.name || code;
-  const d = sec.drawings[period] || { segments: [], zhongshus: [] };
-
-  // 复用与详情页一致的 hideBefore 过滤，保证段集合与段卡片一致
-  const higherPeriod = getHigherPeriod(period, sec.periods || []);
-  const higherSegments = (higherPeriod && sec.drawings[higherPeriod]?.segments) || [];
-  const hideBefore = computeHideBefore(higherSegments, higherPeriod, d.segments);
-  let segs = [...(d.segments || [])];
-  if (hideBefore != null) segs = segs.filter((s) => (s.start?.time ?? s.end?.time ?? 0) >= hideBefore);
-  const visibleIds = new Set(segs.map((s) => s.id));
-  const zss = (d.zhongshus || []).filter((z) => (z.segmentIds || []).some((id) => visibleIds.has(id)));
+  const periods = sec.periods || [];
+  const currentIdx = Math.max(0, periods.indexOf(period));
 
   let backdrop = document.getElementById('mini-sheet-backdrop');
   if (!backdrop) {
@@ -897,77 +1018,186 @@ async function openMiniSheet(code, period) {
     document.getElementById('mini-sheet-close').addEventListener('click', closeMiniSheet);
   }
 
-  document.getElementById('mini-sheet-title').textContent =
-    `${name} · ${periodLabel(period)} · ${segs.length} 段 · ${zss.length} 中枢`;
   const body = document.getElementById('mini-sheet-body');
   body.className = 'mini-sheet-body period-sheet-body';
   body.innerHTML = `
     <div class="period-sheet-pages" id="period-sheet-pages">
-      <div class="period-sheet-page">
-        <canvas id="period-sheet-main" class="kline-canvas"></canvas>
-        <canvas id="period-sheet-sub" class="kline-canvas"></canvas>
-      </div>
-      <div class="period-sheet-page">
-        <div id="period-sheet-mini"></div>
-      </div>
+      ${periods.map((p, idx) => `
+        <div class="period-sheet-page" data-period="${p}" data-idx="${idx}">
+          <canvas id="period-sheet-main-${idx}" class="kline-canvas"></canvas>
+          <canvas id="period-sheet-sub-${idx}" class="kline-canvas"></canvas>
+        </div>
+      `).join('')}
     </div>`;
 
-  // 获取 K 线数据
-  let bars = [];
-  const cb = state._currentBars;
-  if (cb && cb.code === code && cb.period === period && cb.bars && cb.bars.length) {
-    bars = cb.bars;
-  } else {
-    try {
-      const res = await fetchBars(code, period, 800);
-      bars = res.bars || [];
-      computeMACD(bars);
-    } catch {
-      bars = [];
-    }
-  }
-
-  // 第一页：K 线图，默认展示最近最多 3 段
-  const main = document.getElementById('period-sheet-main');
-  const sub = document.getElementById('period-sheet-sub');
-  const miniContainer = document.getElementById('period-sheet-mini');
-  const visibleSegs = getVisibleSegsForPeriod(code, period);
+  const titleEl = document.getElementById('mini-sheet-title');
+  const pages = document.getElementById('period-sheet-pages');
   const digits = isETF(code) ? 3 : 2;
 
-  const toggleCrossLock = (active) => {
-    const pages = document.getElementById('period-sheet-pages');
-    if (pages) pages.classList.toggle('cross-lock', active);
-  };
+  // 计算某周期的可见段/中枢统计，用于标题
+  function periodStats(p) {
+    const d = sec.drawings[p] || { segments: [], zhongshus: [] };
+    const higherPeriod = getHigherPeriod(p, sec.periods || []);
+    const higherSegments = (higherPeriod && sec.drawings[higherPeriod]?.segments) || [];
+    const hideBefore = computeHideBefore(higherSegments, higherPeriod, d.segments);
+    let segs = [...(d.segments || [])];
+    if (hideBefore != null) segs = segs.filter((s) => (s.start?.time ?? s.end?.time ?? 0) >= hideBefore);
+    const visibleIds = new Set(segs.map((s) => s.id));
+    const zss = (d.zhongshus || []).filter((z) => (z.segmentIds || []).some((id) => visibleIds.has(id)));
+    return { segs, zss };
+  }
 
-  const drawCharts = () => {
-    renderMiniChart(miniContainer, segs, zss, { height: 220 });
+  function updateTitle(idx) {
+    const p = periods[idx];
+    if (!p) return;
+    const { segs, zss } = periodStats(p);
+    titleEl.textContent = `${name} · ${periodLabel(p)} · ${segs.length} 段 · ${zss.length} 中枢`;
+  }
+
+  // 渲染指定周期的 K 线图（懒加载）
+  async function renderPage(idx) {
+    const p = periods[idx];
+    const page = pages.querySelector(`.period-sheet-page[data-period="${p}"]`);
+    if (!p || !page || page.dataset.rendered) return;
+    page.dataset.rendered = '1';
+
+    let bars = [];
+    const cb = state._currentBars;
+    if (cb && cb.code === code && cb.period === p && cb.bars && cb.bars.length) {
+      bars = cb.bars;
+    } else {
+      try {
+        const res = await fetchBars(code, p, 800);
+        bars = res.bars || [];
+        computeMACD(bars);
+        state._currentBars = { code, period: p, bars };
+      } catch {
+        bars = [];
+      }
+    }
+
+    const { segs, zss } = periodStats(p);
     const zhongshuRects = buildZhongshuRects(zss, segs);
+    const visibleSegs = getVisibleSegsForPeriod(code, p);
+    const main = document.getElementById(`period-sheet-main-${idx}`);
+    const sub = document.getElementById(`period-sheet-sub-${idx}`);
+
+    const toggleCrossLock = (active) => {
+      if (pages) pages.classList.toggle('cross-lock', active);
+    };
+    const switchPeriodPage = (dir) => {
+      const pageWidth = pages.clientWidth || 1;
+      const curIdx = Math.max(0, Math.min(periods.length - 1, Math.round(pages.scrollLeft / pageWidth)));
+      const targetIdx = dir === 'next'
+        ? Math.min(periods.length - 1, curIdx + 1)
+        : Math.max(0, curIdx - 1);
+      if (targetIdx === curIdx) return;
+      pages.style.scrollBehavior = 'smooth';
+      pages.scrollLeft = targetIdx * pageWidth;
+      const restore = () => { pages.style.scrollBehavior = ''; };
+      pages.addEventListener('scrollend', restore, { once: true });
+      setTimeout(restore, 400);
+    };
+
     if (bars.length && visibleSegs.length) {
-      // K 线图展示该周期所有未隐藏段，并延伸到最新 K 线（包含剩余未标记段部分）
-      const viewSegItems = visibleSegs.map((s) => ({ seg: s, no: '' })); // 弹窗 K 线图不显示段号
+      const viewSegItems = visibleSegs.map((s) => ({ seg: s, no: '' }));
       const startTime = visibleSegs[0].start.time;
       const endTime = bars[bars.length - 1].time;
       const sliced = bars.filter((b) => b.time >= startTime && b.time <= endTime);
       renderKlineChart(main, sub, sliced, {
-        segs: viewSegItems, zhongshus: zhongshuRects, sub: 'macd', period, digits, subH: 96,
+        segs: viewSegItems, zhongshus: zhongshuRects, sub: 'macd', period: p, digits, subH: 96,
         noSwipe: true, subToggle: true, themeLines: true, solidMacd: true, crosshairOnly: true,
         onCrossChange: toggleCrossLock,
+        onSwipe: switchPeriodPage,
       });
     } else {
       renderKlineChart(main, sub, [], {
-        segs: [], zhongshus: zhongshuRects, sub: 'macd', period, digits, subH: 96,
+        segs: [], zhongshus: zhongshuRects, sub: 'macd', period: p, digits, subH: 96,
         noSwipe: true, subToggle: true, themeLines: true, solidMacd: true, crosshairOnly: true,
         onCrossChange: toggleCrossLock,
+        onSwipe: switchPeriodPage,
       });
     }
-  };
+  }
+
+  // 根据滚动位置更新标题，并预渲染相邻页
+  let scrollRaf = 0;
+  function onPagesScroll() {
+    if (scrollRaf) return;
+    scrollRaf = requestAnimationFrame(() => {
+      scrollRaf = 0;
+      if (!pages) return;
+      const pageWidth = pages.clientWidth || 1;
+      const idx = Math.max(0, Math.min(periods.length - 1, Math.round(pages.scrollLeft / pageWidth)));
+      updateTitle(idx);
+      renderPage(idx);
+      if (idx > 0) renderPage(idx - 1);
+      if (idx < periods.length - 1) renderPage(idx + 1);
+    });
+  }
+  pages.addEventListener('scroll', onPagesScroll, { passive: true });
+
+  // 自定义滑动切换：与段卡片弹窗一致的阈值（46px），一次只切一页
+  let psSx = 0, psSy = 0, psSwiping = false, psMoved = false, psHandled = false;
+  const PS_EDGE = 28;
+  const PS_SWIPE_PX = 46;
+  pages.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse') return;
+    if (pages.classList.contains('cross-lock')) return;
+    psSx = e.clientX; psSy = e.clientY;
+    psSwiping = false; psMoved = false; psHandled = false;
+  });
+  pages.addEventListener('pointermove', (e) => {
+    if (pages.classList.contains('cross-lock') || psMoved) return;
+    const dx = e.clientX - psSx, dy = e.clientY - psSy;
+    if (Math.abs(dx) > 12 || Math.abs(dy) > 12) {
+      psMoved = true;
+      if (Math.abs(dx) > Math.abs(dy)) {
+        psSwiping = true;
+        if (e.cancelable) e.preventDefault();
+      }
+    }
+  });
+  pages.addEventListener('pointerup', (e) => {
+    if (pages.classList.contains('cross-lock') || !psSwiping || psHandled) return;
+    const dx = e.clientX - psSx;
+    const dy = e.clientY - psSy;
+    const atEdge = psSx <= PS_EDGE || psSx >= window.innerWidth - PS_EDGE;
+    if (atEdge || Math.abs(dx) < PS_SWIPE_PX || Math.abs(dx) <= Math.abs(dy)) return;
+    psHandled = true;
+    const pageWidth = pages.clientWidth || 1;
+    const curIdx = Math.max(0, Math.min(periods.length - 1, Math.round(pages.scrollLeft / pageWidth)));
+    const targetIdx = dx < 0
+      ? Math.min(periods.length - 1, curIdx + 1)
+      : Math.max(0, curIdx - 1);
+    if (targetIdx === curIdx) return;
+    // 用 JS 直接定位到目标页，替代原生 scroll-snap 的惯性吸附，避免一次滑过多个周期
+    pages.style.scrollBehavior = 'smooth';
+    pages.scrollLeft = targetIdx * pageWidth;
+    const restore = () => { pages.style.scrollBehavior = ''; };
+    pages.addEventListener('scrollend', restore, { once: true });
+    setTimeout(restore, 400);
+  });
+  pages.addEventListener('pointercancel', () => { psSwiping = false; psMoved = false; psHandled = false; });
 
   const sheet = document.getElementById('mini-sheet');
   backdrop.classList.add('show');
   sheet.classList.add('show');
   document.body.style.overflow = 'hidden';
+
+  // 显示后直接定位到当前周期（禁用平滑滚动，避免从最低级别滑过来晃眼睛）
   requestAnimationFrame(() => {
-    drawCharts();
+    const pageWidth = pages.clientWidth || 1;
+    pages.style.scrollBehavior = 'auto';
+    pages.scrollLeft = currentIdx * pageWidth;
+    // 下一帧恢复平滑滚动，后续用户手势切换仍有顺滑效果
+    requestAnimationFrame(() => { pages.style.scrollBehavior = ''; });
+    updateTitle(currentIdx);
+    renderPage(currentIdx).then(() => {
+      // 当前页渲染完成后再预加载相邻周期，避免并行请求拖慢首屏
+      if (currentIdx > 0) renderPage(currentIdx - 1);
+      if (currentIdx < periods.length - 1) renderPage(currentIdx + 1);
+    });
   });
 }
 
@@ -2146,6 +2376,10 @@ function fmtIndexChange(price, prevClose) {
 async function refreshIndexQuotes() {
   try {
     const codes = INDEX_CODES.map((i) => i.code);
+    // 行情页自定义证券也纳入价格轮询
+    if (state._hangqingExtras && state._hangqingExtras.length) {
+      codes.push(...state._hangqingExtras.map((s) => s.code));
+    }
     const results = await fetchRealtimeMulti(codes);
     state.indexQuotes = results || {};
     renderHangqingView();
@@ -2363,6 +2597,9 @@ function adjustTabbarOffset(immediate = false) {
   const tabbar = document.querySelector('.wx-tabbar');
   if (!tabbar) return;
 
+  // 软键盘打开期间交给 syncWithKeyboard 直接定位，避免与 transform 互相覆盖
+  if (document.body.classList.contains('keyboard-open')) return;
+
   const vv = window.visualViewport;
   let bottomOffset = 0;
   if (vv) {
@@ -2412,23 +2649,91 @@ function initTabbarViewportFix() {
   if (vv) {
     vv.addEventListener('resize', () => adjustTabbarOffset(false));
     vv.addEventListener('scroll', () => adjustTabbarOffset(false));
+    // 软键盘弹起/收起的关键事件源
+    vv.addEventListener('resize', () => syncWithKeyboard());
   }
   window.addEventListener('resize', () => adjustTabbarOffset(false));
-  window.addEventListener('orientationchange', () => adjustTabbarOffset(true));
+  window.addEventListener('resize', () => syncWithKeyboard());
+  window.addEventListener('orientationchange', () => { adjustTabbarOffset(true); syncWithKeyboard(); });
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden) {
       // 从后台切回时，视口可能已变化，立即校准
       adjustTabbarOffset(true);
+      syncWithKeyboard();
     }
+  });
+  // 输入获得焦点：键盘弹起。输入失去焦点：键盘收起。
+  document.addEventListener('focusin', (e) => {
+    if (!e.target || (e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA')) return;
+    // 多个时机同步，捕获键盘动画的中间帧
+    [120, 280, 500, 800, 1200].forEach((ms) => setTimeout(syncWithKeyboard, ms));
+  });
+  document.addEventListener('focusout', (e) => {
+    if (!e.target || (e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA')) return;
+    [120, 320, 600].forEach((ms) => setTimeout(syncWithKeyboard, ms));
   });
   // 初始加载后多次校准，覆盖 MIUI 等延迟报告安全区/工具栏的场景
   // 时间间隔递增，给浏览器稳定时间，避免频繁调整
   [80, 200, 500, 1000].forEach((ms) => setTimeout(() => adjustTabbarOffset(false), ms));
+  // 首屏兜底同步一次 + 记录基准内高（用于键盘检测兜底）
+  state._baseInnerHeight = window.innerHeight;
+  setTimeout(syncWithKeyboard, 200);
+  window.addEventListener('resize', () => {
+    // 非键盘状态下更新基准 high，键盘状态由 syncWithKeyboard 管控
+    if (!document.body.classList.contains('keyboard-open')) {
+      state._baseInnerHeight = window.innerHeight;
+    }
+  });
+}
+
+// 软键盘适配：把底部菜单贴住键盘顶部，同时去掉 body 底部占位避免空白
+// 键盘高度：优先 visualViewport（iOS），兜底 screen.availHeight – innerHeight（Android）
+function getKeyboardHeight() {
+  const innerH = window.innerHeight;
+  const vv = window.visualViewport;
+  if (vv && vv.height > 0 && vv.offsetTop !== undefined) {
+    const vvBottom = (vv.offsetTop || 0) + vv.height;
+    return Math.max(0, innerH - vvBottom);
+  }
+  // Android 端更可靠：键盘弹起时 innerHeight 会缩小
+  let h = Math.max(0, (screen.availHeight || 0) - innerH);
+  if (h < 30 && state._baseInnerHeight) {
+    h = Math.max(0, state._baseInnerHeight - innerH);
+  }
+  // 太小则当作没键盘，反向更新基准值
+  if (h < 30) state._baseInnerHeight = innerH;
+  return h;
+}
+
+function syncWithKeyboard() {
+  const tabbar = document.querySelector('.wx-tabbar');
+  if (!tabbar) return;
+  const keyboardH = getKeyboardHeight();
+  const opened = keyboardH > 80;
+  document.body.classList.toggle('keyboard-open', opened);
+  if (opened) {
+    tabbar.style.bottom = keyboardH + 'px';
+    tabbar.style.transform = '';
+    tabbar.style.top = 'auto';
+  } else {
+    tabbar.style.bottom = '';
+    tabbar.style.top = '';
+    tabbar.style.transform = '';
+    // 让 adjustTabbarOffset 接管，处理浏览器工具栏/手势条偏移
+    adjustTabbarOffset(true);
+  }
 }
 
 // ========== Tab 切换 ==========
 function switchTab(name) {
   state.activeTab = name;
+  // 切换到非 dingpan tab 时，不再处于周期/详情子视图，隐藏返回按钮
+  if (name !== 'dingpan') {
+    state.view = 'list';
+    state.selectedCode = null;
+    state.selectedPeriod = null;
+    updateHeaderBack();
+  }
   removePresetIndicator();
   removePresetSwipe();
   $$('.wx-tab').forEach((t) => t.classList.remove('active'));
@@ -2452,6 +2757,12 @@ function switchTab(name) {
   if (name === 'alert') renderAlertView();
   if (name === 'workbench') renderWorkbenchView();
   if (name === 'wo') renderWoView();
+  if (name !== 'hangqing') {
+    state._marketResults = null;
+    const r = document.getElementById('hg-search-results');
+    if (r) { r.hidden = true; r.innerHTML = ''; }
+  }
+  updateHeaderSearchVisibility();
 
   // 页面内容切换后，底部工具栏/安全区可能变化，重新校准 tabbar
   requestAnimationFrame(() => adjustTabbarOffset());
@@ -2467,19 +2778,225 @@ function renderHangqingView() {
     const price = rt?.price ? rt.price.toFixed(2) : '—';
     const change = fmtIndexChange(rt?.price, rt?.prevClose);
     return `
-      <div class='index-card'>
-        <div class='index-main'>
+      <div class='index-card' data-code='${idx.code}'>
+        <div class='index-card-head'>
           <div class='index-name'>${idx.label}</div>
-          <div class='index-code'>${idx.code}</div>
+          <div class='index-code-row'>
+            <span class='index-code'>${idx.code.toUpperCase()}</span>
+            <span class='index-change ${change.cls}'>${change.text}</span>
+          </div>
         </div>
-        <div class='index-data'>
+        <div class='index-card-price'>
           <div class='index-price'>${price}</div>
-          <div class='index-change ${change.cls}'>${change.text}</div>
+        </div>
+        <div class='index-card-chart'>
+          <canvas class='index-intraday' data-code='${idx.code}'></canvas>
         </div>
       </div>`;
   }).join('');
 
-  el.innerHTML = `<div class='index-grid'>${cards}</div>`;
+  // 行情页用户自定义证券卡片
+  const extras = state._hangqingExtras || [];
+  const extraCards = extras.map((s) => {
+    const rt = state.indexQuotes[s.code];
+    const price = rt?.price ? rt.price.toFixed(2) : '—';
+    const change = fmtIndexChange(rt?.price, rt?.prevClose);
+    return `
+      <div class='index-card custom' data-code='${s.code}'>
+        <button class='index-delete-btn' type='button' aria-label='删除' data-code='${s.code}' hidden>&times;</button>
+        <div class='index-card-head'>
+          <div class='index-name'>${escapeHtml(s.name)}</div>
+          <div class='index-code-row'>
+            <span class='index-code'>${s.code.toUpperCase()}</span>
+            <span class='index-change ${change.cls}'>${change.text}</span>
+          </div>
+        </div>
+        <div class='index-card-price'>
+          <div class='index-price'>${price}</div>
+        </div>
+        <div class='index-card-chart'>
+          <canvas class='index-intraday custom-intraday' data-code='${s.code}'></canvas>
+        </div>
+      </div>`;
+  }).join('');
+
+  el.innerHTML = `<div class='index-grid' id='hg-cards'>${cards}${extraCards}</div><div id='hg-search-results' class='hg-search-results' hidden></div>`;
+
+  attachMarketSearchResults();
+  // 绑定自定义卡片的长按删除
+  attachHangqingLongPress();
+
+  // 若正处于行情搜索态，保留搜索结果（避免 5s 指数刷新覆盖）
+  const hq = (state.searchQuery || '').trim();
+  const inHangqingSearch = hq && state.activeTab === 'hangqing' && state.searchMode === 'hangqing';
+  if (inHangqingSearch) {
+    if (state._marketResults && state._marketResults !== 'loading') renderMarketResults(state._marketResults);
+    else runMarketSearch(hq);
+  } else {
+    state._marketResults = null;
+    const rr = document.getElementById('hg-search-results');
+    if (rr) { rr.hidden = true; rr.innerHTML = ''; }
+  }
+
+  // 搜索态下 cards 被 display:none，canvas.clientWidth=0 会导致 setupCanvas 的 w
+  // fallback 到 320，canvas 物理宽 320*dpr 与 css 宽 100% 不匹配。关闭搜索后 cards
+  // 重新显示，图像被异常拉伸成"绿色长条"。修复：搜索态跳过分时图绘制，关闭
+  // 搜索时再统一重绘（见 closeHeaderSearch）。
+  if (!inHangqingSearch) {
+    // 默认指数分时图
+    for (const code of Object.keys(state.indexIntraday)) {
+      const c = state.indexIntraday[code];
+      const canvas = document.querySelector(`.index-intraday[data-code="${code}"]`);
+      if (canvas) renderIndexIntraday(canvas, c);
+    }
+    // 自定义证券分时图
+    for (const s of extras) {
+      const c = state._extrasIntraday[s.code];
+      if (!c) continue;
+      const canvas = document.querySelector(`.custom-intraday[data-code="${s.code}"]`);
+      if (canvas) renderIndexIntraday(canvas, c);
+    }
+  }
+  loadIndexIntraday();
+  // 异步拉取自定证券分时数据（有缓存则同步绘制）
+  extras.forEach((s) => loadExtrasIntraday(s.code));
+}
+
+// 为自定义证券拉取分时数据
+async function loadExtrasIntraday(code) {
+  const canvas = document.querySelector(`.custom-intraday[data-code="${code}"]`);
+  if (!canvas) return;
+  try {
+    const cached = state._extrasIntraday[code];
+    if (cached && cached.date === tradingDateStr()) {
+      renderIndexIntraday(canvas, cached);
+      return;
+    }
+    const { bars, qt } = await fetchBars(code, '1m', 241);
+    const prevClose = qt?.[4] ? +qt[4] : (bars.length ? bars[0].close : 0);
+    let dayStart, dayEnd;
+    if (bars && bars.length) {
+      const dt = new Date(bars[0].time * 1000);
+      const y = dt.getFullYear(), m = dt.getMonth(), d = dt.getDate();
+      dayStart = Math.floor(new Date(y, m, d, 9, 30).getTime() / 1000);
+      dayEnd = Math.floor(new Date(y, m, d, 15, 0).getTime() / 1000);
+    }
+    const c = { bars, prevClose, dayStart, dayEnd, date: tradingDateStr() };
+    state._extrasIntraday[code] = c;
+    renderIndexIntraday(canvas, c);
+  } catch (e) {
+    console.warn('loadExtrasIntraday failed', code, e);
+  }
+}
+
+// 自定义卡片长按出现删除按钮
+function attachHangqingLongPress() {
+  const cards = document.querySelectorAll('#hangqing-view .index-card.custom');
+  cards.forEach((card) => {
+    if (card._longPressBound) return;
+    card._longPressBound = true;
+    let timer = null, sx = 0, sy = 0;
+    const LONG_MS = 450;
+    card.addEventListener('pointerdown', (e) => {
+      sx = e.clientX; sy = e.clientY;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        const editing = document.querySelector('#hangqing-view .index-card.custom.editing');
+        if (editing && editing !== card) {
+          editing.classList.remove('editing');
+          editing.querySelector('.index-delete-btn')?.setAttribute('hidden', '');
+        }
+        card.classList.add('editing');
+        card.querySelector('.index-delete-btn')?.removeAttribute('hidden');
+        if (navigator.vibrate) { try { navigator.vibrate(15); } catch (e) {} }
+      }, LONG_MS);
+    });
+    card.addEventListener('pointermove', (e) => {
+      if (Math.abs(e.clientX - sx) > 12 || Math.abs(e.clientY - sy) > 12) {
+        if (timer) { clearTimeout(timer); timer = null; }
+      }
+    });
+    card.addEventListener('pointerup', () => { if (timer) { clearTimeout(timer); timer = null; } });
+    card.addEventListener('pointercancel', () => { if (timer) { clearTimeout(timer); timer = null; } });
+    card.addEventListener('contextmenu', (e) => e.preventDefault());
+  });
+}
+
+function tradingDateStr() {
+  const dt = new Date();
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+}
+
+function renderIndexIntraday(canvas, c) {
+  // 防止 hidden 状态下被绘制：cards 被 display:none 时，canvas.clientWidth=0，
+  // setupCanvas 的 w 会 fallback 到 320，导致关闭搜索后 canvas 物理宽 320*dpr
+  // 与 css 宽 100% 不匹配，图像被异常拉伸。不可见时跳过，repaintHangqingIntraday
+  // 在 cards 重新显示后会补绘。
+  if (canvas.clientWidth === 0 || canvas.offsetParent === null) {
+    canvas._pendingIntraday = c;
+    return;
+  }
+  canvas._intradayBars = c.bars;
+  canvas._intradayPrevClose = c.prevClose;
+  canvas._intradayDayStart = c.dayStart;
+  canvas._intradayDayEnd = c.dayEnd;
+  canvas._intradayOpts = { height: 56 };
+  renderIntradayChart(canvas, c.bars, c.prevClose, { dayStart: c.dayStart, dayEnd: c.dayEnd, height: 56 });
+}
+
+// 重绘所有 hangqing 视图内已缓存的分时图（用于搜索态切换回正常态后补绘）
+function repaintHangqingIntraday() {
+  for (const code of Object.keys(state.indexIntraday)) {
+    const canvas = document.querySelector(`#hangqing-view .index-intraday[data-code="${code}"]`);
+    if (!canvas) continue;
+    const c = state.indexIntraday[code];
+    if (c) {
+      canvas._pendingIntraday = null;
+      renderIndexIntraday(canvas, c);
+    }
+  }
+  // 自定义证券分时图补绘
+  for (const code of Object.keys(state._extrasIntraday)) {
+    const canvas = document.querySelector(`#hangqing-view .custom-intraday[data-code="${code}"]`);
+    if (!canvas) continue;
+    const c = state._extrasIntraday[code];
+    if (c) {
+      canvas._pendingIntraday = null;
+      renderIndexIntraday(canvas, c);
+    }
+  }
+}
+
+async function loadIndexIntraday() {
+  for (const idx of INDEX_CODES) {
+    const code = idx.code;
+    const canvas = document.querySelector(`.index-intraday[data-code="${code}"]`);
+    if (!canvas) continue;
+    try {
+      const cached = state.indexIntraday[code];
+      if (cached && cached.date === tradingDateStr()) {
+        renderIndexIntraday(canvas, cached);
+        continue;
+      }
+      const { bars, qt } = await fetchBars(code, '1m', 241);
+      const prevClose = qt?.[4] ? +qt[4] : (bars.length ? bars[0].close : 0);
+      let dayStart, dayEnd;
+      if (bars && bars.length) {
+        const dt = new Date(bars[0].time * 1000);
+        const y = dt.getFullYear();
+        const m = dt.getMonth();
+        const d = dt.getDate();
+        dayStart = Math.floor(new Date(y, m, d, 9, 30).getTime() / 1000);
+        dayEnd = Math.floor(new Date(y, m, d, 15, 0).getTime() / 1000);
+      }
+      const c = { bars, prevClose, dayStart, dayEnd, date: tradingDateStr() };
+      state.indexIntraday[code] = c;
+      renderIndexIntraday(canvas, c);
+    } catch (e) {
+      // 静默失败：不影响行情页其它内容
+      console.warn('loadIndexIntraday failed', code, e);
+    }
+  }
 }
 
 function renderAlertView() {
@@ -3036,8 +3553,336 @@ function renderWoView() {
 // ========== 搜索 ==========
 function onSearchInput(e) {
   state.searchQuery = e.target.value;
+  // 行情页：搜索 A 股市场并添加证券；盯盘页：筛选当前证券
+  if (state.activeTab === 'hangqing') {
+    runMarketSearch(state.searchQuery);
+    return;
+  }
+  if (state.activeTab !== 'dingpan') switchTab('dingpan');
   if (state.view !== 'list') navigate('list');
   renderSecurityList(state.searchQuery);
+}
+
+// 仅在标题栏搜索激活时给 header 加 search-active 类，显示内置搜索框
+function updateHeaderSearchVisibility() {
+  const header = document.querySelector('.wx-header');
+  if (!header) return;
+  const active = !!state.searchMode;
+  header.classList.toggle('search-active', active);
+  // 同步 body class：fixed 导航栏顶上腾空高度
+  document.body.classList.toggle('search-header-fixed', active);
+  // 若搜索态所属 tab 与当前激活 tab 不一致（用户已切走），自动关闭搜索
+  if (state.searchMode && state.searchMode !== state.activeTab) closeHeaderSearch();
+}
+
+// ----- A 股行情搜索（行情页搜索框）-----
+const WATCHLIST_EXTRA_KEY = 'chanm_watchlist_extras';
+let marketSearchToken = 0;
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function toast(msg) {
+  let el = document.getElementById('chanm-toast');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'chanm-toast';
+    el.className = 'chanm-toast';
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(el._t);
+  el._t = setTimeout(() => el.classList.remove('show'), 1800);
+}
+
+function loadWatchlistExtras() {
+  try { return JSON.parse(localStorage.getItem(WATCHLIST_EXTRA_KEY)) || []; }
+  catch (e) { return []; }
+}
+
+function saveWatchlistExtras() {
+  try {
+    const extras = state.securities.filter((s) => s._extra).map((s) => ({ code: s.code, name: s.name }));
+    localStorage.setItem(WATCHLIST_EXTRA_KEY, JSON.stringify(extras));
+  } catch (e) { /* ignore */ }
+}
+
+// 行情页用户自定义证券：load / save / add / remove
+function loadHangqingExtras() {
+  try { return JSON.parse(localStorage.getItem(HANGQING_EXTRAS_KEY)) || []; }
+  catch (e) { return []; }
+}
+function saveHangqingExtras() {
+  try {
+    const extras = (state._hangqingExtras || []).map((s) => ({ code: s.code, name: s.name }));
+    localStorage.setItem(HANGQING_EXTRAS_KEY, JSON.stringify(extras));
+  } catch (e) { /* ignore */ }
+}
+function addSecurityToHangqing(code, name) {
+  if ((state._hangqingExtras || []).some((s) => s.code === code)) {
+    toast(`「${name}」已在行情页`);
+    return false;
+  }
+  if (!state._hangqingExtras) state._hangqingExtras = [];
+  state._hangqingExtras.push({ code, name });
+  saveHangqingExtras();
+  toast(`已添加「${name}」到行情页`);
+  // renderHangqingView 会自动拉取分时数据和价格
+  if (state.activeTab === 'hangqing') renderHangqingView();
+  return true;
+}
+function removeSecurityFromHangqing(code) {
+  if (!state._hangqingExtras) return;
+  const s = state._hangqingExtras.find((x) => x.code === code);
+  state._hangqingExtras = state._hangqingExtras.filter((x) => x.code !== code);
+  saveHangqingExtras();
+  if (s) toast(`已移除「${s.name}」`);
+  if (state.activeTab === 'hangqing') renderHangqingView();
+}
+
+async function searchAshare(kw) {
+  kw = (kw || '').trim();
+  if (!kw) return [];
+  // 1) 优先：调用本地后端 /api/securities/search（局域网 / GitHub Pages 部署时不存在）
+  try {
+    const items = await searchByBackend(kw);
+    if (items && items.length) return items;
+  } catch (e) { /* 后端不可达，走下一条 */ }
+
+  // 2) Fallback：东方财富 suggest（公开 CORS 接口，按代码/中文/拼音匹配）
+  try {
+    const items = await searchByEastMoney(kw);
+    if (items && items.length) return items;
+  } catch (e) { /* ignore */ }
+
+  // 3) 兜底：把输入当作 6 位代码，用腾讯实时接口解析（之前是唯一路径）
+  if (/^\d{6}$/.test(kw)) {
+    try {
+      const r = await resolveCode(kw);
+      if (r && r.code) return [{ code: r.code, name: r.name || kw, market: r.market }];
+    } catch (e) { /* ignore */ }
+  }
+  return [];
+}
+
+// 推断后端根地址：file:// 协议下默认 localhost；http(s) 部署时复用当前主机名+8765
+function guessBackendBase() {
+  if (location.protocol === 'file:') return 'http://localhost:8765';
+  return `${location.protocol}//${location.hostname}:8765`;
+}
+
+// 命中后端：返回 [{code: '000001.SZ', name: '平安银行', market: 'sz'}]，code 用专业展示格式
+async function searchByBackend(kw) {
+  const url = `${guessBackendBase()}/api/securities/search?q=${encodeURIComponent(kw)}&limit=20`;
+  const ctrl = new AbortController();
+  const tid = setTimeout(() => ctrl.abort(), 4000);
+  let resp;
+  try {
+    resp = await fetch(url, { signal: ctrl.signal });
+  } catch (e) {
+    clearTimeout(tid);
+    return [];
+  }
+  clearTimeout(tid);
+  if (!resp.ok) return [];
+  let data;
+  try { data = await resp.json(); } catch (e) { return []; }
+  const items = (data && data.items) || [];
+  const out = [];
+  for (const it of items) {
+    const code = String(it.code || '').padStart(6, '0');
+    if (!/^\d{6}$/.test(code)) continue;
+    const market = (it.market || '').toLowerCase();
+    if (!/^(sh|sz|bj)$/.test(market)) continue;
+    out.push({ code: `${code}.${market.toUpperCase()}`, name: it.name || code, market });
+  }
+  return out;
+}
+
+// 命中东方财富 suggest：返回 [{code: '000001.SZ', name: '平安银行', market: 'sz'}]
+async function searchByEastMoney(kw) {
+  const url = `https://searchapi.eastmoney.com/api/suggest/get?input=${encodeURIComponent(kw)}&type=14&count=20`;
+  const ctrl = new AbortController();
+  const tid = setTimeout(() => ctrl.abort(), 6000);
+  let resp;
+  try {
+    resp = await fetch(url, { signal: ctrl.signal });
+  } catch (e) {
+    clearTimeout(tid);
+    return [];
+  }
+  clearTimeout(tid);
+  if (!resp.ok) return [];
+  let data;
+  try { data = await resp.json(); } catch (e) { return []; }
+  const list = (data && data.QuotationCodeTable && data.QuotationCodeTable.Data) || [];
+  const out = [];
+  for (const row of list) {
+    // 只保留 A 股/ETF/基金/指数，过滤掉港股/美股/债券/新三板
+    const classify = row && row.Classify;
+    if (!['AStock', 'Fund', 'Index'].includes(classify)) continue;
+    const jys = String((row && row.JYS) || '');
+    let market = null;
+    if (jys === '2') market = 'sh';
+    else if (jys === '6') market = 'sz';
+    if (!market) continue;
+    const code = String((row && row.Code) || '').padStart(6, '0');
+    if (!/^\d{6}$/.test(code)) continue;
+    out.push({ code: `${code}.${market.toUpperCase()}`, name: row.Name || code, market });
+  }
+  return out;
+}
+
+// 仅渲染结果（不重新请求），供 5s 指数刷新复用缓存
+function renderMarketResults(items) {
+  const results = document.getElementById('hg-search-results');
+  const cards = document.getElementById('hg-cards');
+  if (!results) return;
+  state._marketResults = items;
+  if (items === 'loading') {
+    results.hidden = false;
+    if (cards) cards.style.display = 'none';
+    results.innerHTML = '<div class="hg-tip">搜索中…</div>';
+    return;
+  }
+  if (!items) {
+    results.hidden = true;
+    results.innerHTML = '';
+    if (cards) cards.style.display = '';
+    return;
+  }
+  results.hidden = false;
+  if (cards) cards.style.display = 'none';
+  if (!items.length) {
+    results.innerHTML = '<div class="hg-tip">未找到匹配的 A 股证券，可尝试输入 6 位代码</div>';
+    return;
+  }
+  results.innerHTML = items.map((it) => {
+    const added = (state._hangqingExtras || []).some((s) => s.code === it.code);
+    return `
+    <div class="hg-result" data-code="${it.code}">
+      <div class="hg-result-info">
+        <span class="hg-result-name">${escapeHtml(it.name)}</span>
+        <span class="hg-result-code">${it.code.toUpperCase()}</span>
+      </div>
+      <button class="hg-add-btn" type="button" data-code="${it.code}" data-name="${escapeHtml(it.name)}" ${added ? 'disabled' : ''}>${added ? '已添加' : '添加'}</button>
+    </div>`;
+  }).join('');
+}
+
+async function runMarketSearch(q) {
+  q = (q || '').trim();
+  if (!q) {
+    renderMarketResults(null);
+    return;
+  }
+  const token = ++marketSearchToken;
+  renderMarketResults('loading');
+  let items = [];
+  try { items = await searchAshare(q); } catch (e) { /* ignore */ }
+  if (token !== marketSearchToken) return; // 过期请求
+  renderMarketResults(items);
+}
+
+function attachMarketSearchResults() {
+  const results = document.getElementById('hg-search-results');
+  if (!results || results._bound) return;
+  results._bound = true;
+  results.addEventListener('click', (e) => {
+    const btn = e.target.closest('.hg-add-btn');
+    if (!btn) return;
+    const code = btn.dataset.code;
+    const name = btn.dataset.name;
+    if (addSecurityToHangqing(code, name)) {
+      btn.textContent = '已添加';
+      btn.disabled = true;
+    }
+  });
+}
+
+// ----- 主菜单长按：聚焦对应搜索框（不进入文字选中）-----
+let tabLongPressFired = false;
+function attachTabLongPress(tab) {
+  const name = tab.dataset.tab || '';
+  if (!name) return;
+  let timer = null, sx = 0, sy = 0;
+  const LONG_MS = 450;
+  const start = (x, y) => {
+    tabLongPressFired = false;
+    sx = x; sy = y;
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => { tabLongPressFired = true; onTabLongPress(name); }, LONG_MS);
+  };
+  const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  tab.addEventListener('pointerdown', (e) => start(e.clientX, e.clientY));
+  tab.addEventListener('pointermove', (e) => { if (Math.abs(e.clientX - sx) > 12 || Math.abs(e.clientY - sy) > 12) cancel(); });
+  tab.addEventListener('pointerup', cancel);
+  tab.addEventListener('pointercancel', cancel);
+  tab.addEventListener('contextmenu', (e) => e.preventDefault());
+}
+
+function openHeaderSearch(tab) {
+  // 长按盯盘/行情：搜索框出现在「Chan-M」标题栏那一行，并同步弹起键盘
+  state.searchMode = tab;
+  const header = document.querySelector('.wx-header');
+  if (header) header.classList.add('search-active');
+  if (tab === 'dingpan' && state.view !== 'list') navigate('list');
+  if (state.activeTab !== tab) switchTab(tab);
+  else updateHeaderSearchVisibility();
+  const input = document.getElementById('search-input');
+  const closeBtn = document.getElementById('btn-search-close');
+  if (input) input.removeAttribute('hidden');
+  if (closeBtn) closeBtn.removeAttribute('hidden');
+  if (input) {
+    input.value = '';
+    input.placeholder = tab === 'hangqing' ? '搜索 A 股代码/名称，添加证券' : '搜索当前证券';
+    if (tab === 'hangqing') {
+      state._marketResults = null;
+      renderMarketResults(null);
+    } else {
+      state.searchQuery = '';
+      renderSecurityList('');
+    }
+    // 弹起键盘（移动端需先获得焦点），并主动校准 tabbar 贴住键盘顶部
+    setTimeout(() => { try { input.focus({ preventScroll: true }); } catch (e) { input.focus(); } }, 60);
+    [120, 280, 500, 800].forEach((ms) => setTimeout(syncWithKeyboard, ms));
+  }
+  if (navigator.vibrate) { try { navigator.vibrate(15); } catch (e) { /* ignore */ } }
+}
+
+function closeHeaderSearch() {
+  if (!state.searchMode) return;
+  const tab = state.searchMode;
+  state.searchMode = null;
+  const header = document.querySelector('.wx-header');
+  if (header) header.classList.remove('search-active');
+  document.body.classList.remove('search-header-fixed');
+  const input = document.getElementById('search-input');
+  const closeBtn = document.getElementById('btn-search-close');
+  if (input) { try { input.blur(); } catch (e) {} input.setAttribute('hidden', ''); input.value = ''; }
+  if (closeBtn) closeBtn.setAttribute('hidden', '');
+  state.searchQuery = '';
+  if (tab === 'hangqing') {
+    state._marketResults = null;
+    const r = document.getElementById('hg-search-results');
+    if (r) { r.hidden = true; r.innerHTML = ''; }
+    const c = document.getElementById('hg-cards');
+    if (c) c.style.display = '';
+    // 修复：搜索期间 renderHangqingView 因 cards 隐藏跳过了分时图绘制，
+    // 关闭搜索后 cards 重新显示，需用缓存重绘所有分时图。
+    requestAnimationFrame(() => repaintHangqingIntraday());
+  } else {
+    renderSecurityList('');
+  }
+  // 输入失焦后键盘会收起，校准 tabbar 回到正常位置
+  [120, 320, 600].forEach((ms) => setTimeout(syncWithKeyboard, ms));
+}
+
+// 长按主菜单：盯盘/行情触发标题栏搜索；其余 tab 仅防文字选中
+function onTabLongPress(name) {
+  if (name === 'dingpan' || name === 'hangqing') openHeaderSearch(name);
 }
 
 // ========== 初始化 ==========
@@ -3051,6 +3896,9 @@ function init() {
     // CLR. 文本：黑白态→黑字（代表黑白设置），彩色态→红字（代表彩色设置）
     if (themeClr) themeClr.style.color = mono ? '#111111' : '#fa5151';
     if (themeBtn) themeBtn.setAttribute('aria-label', mono ? '点击切换为彩色' : '点击切换为黑白');
+    // 主题变化后重绘已展开的分时图，使红/绿线跟随主题色更新。
+    // requestAnimationFrame 确保浏览器先完成 CSS 变量计算，避免读到旧颜色。
+    requestAnimationFrame(() => repaintIntradayCharts());
   };
   const saved = localStorage.getItem(THEME_KEY);
   applyTheme(saved ? saved === 'mono' : true); // 无记录时默认黑白
@@ -3060,15 +3908,33 @@ function init() {
     localStorage.setItem(THEME_KEY, mono ? 'mono' : 'color');
   });
 
+  // 行情页自定义卡片：全局点击取消编辑态 / 处理删除按钮
+  document.addEventListener('click', (e) => {
+    const delBtn = e.target.closest('.index-delete-btn');
+    if (delBtn) {
+      removeSecurityFromHangqing(delBtn.dataset.code);
+      return;
+    }
+    const editing = document.querySelector('#hangqing-view .index-card.custom.editing');
+    if (editing && !editing.contains(e.target)) {
+      editing.classList.remove('editing');
+      editing.querySelector('.index-delete-btn')?.setAttribute('hidden', '');
+    }
+  }, true);
+
   const headerBack = document.getElementById('btn-header-back');
   if (headerBack) headerBack.addEventListener('click', () => goBack());
 
-  // 详情页证券卡片：长按展开/收起分时图，不再随滚动折叠变矮
-  // window.addEventListener('scroll', onDetailScroll, { passive: true });
+  // 详情页证券卡片：下滑时从 2 行折叠为 1 行并保持吸顶
+  window.addEventListener('scroll', onDetailScroll, { passive: true });
 
   $$('.wx-tab').forEach((tab) => {
     const name = tab.dataset.tab || '';
-    tab.addEventListener('click', () => switchTab(name));
+    tab.addEventListener('click', () => {
+      if (tabLongPressFired) { tabLongPressFired = false; return; }
+      switchTab(name);
+    });
+    attachTabLongPress(tab);
   });
 
   const searchInput = $('#search-input');
@@ -3079,8 +3945,23 @@ function init() {
     searchInput.addEventListener('input', () => { if (!isComposing) onSearchInput({ target: searchInput }); });
   }
 
+  const searchClose = document.getElementById('btn-search-close');
+  if (searchClose) searchClose.addEventListener('click', () => closeHeaderSearch());
+
+  // 长按弹出的搜索框定位为「临时搜索框」：点击标题栏（搜索框/关闭键）以外任意区域即自动收起，
+  // 与「即用即走」的轻量定位一致，消除「如何退出搜索框」的心理负担。
+  // 注意：边缘滑动返回由 gesture.js + search-edge-guard 处理（屏蔽系统返回手势，避免退出程序）。
+  document.addEventListener('click', (e) => {
+    if (!state.searchMode) return;
+    if (e.target.closest('.wx-header')) return; // 标题栏内不关闭
+    closeHeaderSearch();
+  }, true);
+
   // file:// 模式下无法 fetch 站点数据，不进入加载态（保持「暂无画线数据」提示并引导用 start_chanm.bat）
   if (location.protocol !== 'file:') loadState.loading = true;
+
+  // 行情页用户自定义证券：从 localStorage 恢复
+  state._hangqingExtras = loadHangqingExtras();
 
   // 先校准 tabbar 视口位置，再渲染首屏；避免小米等机型首屏时 bottom 计算延迟
   initTabbarViewportFix();
@@ -3099,8 +3980,33 @@ function init() {
 
   if ('serviceWorker' in navigator && !window.__CHANM_NOCACHE__) {
     navigator.serviceWorker.addEventListener('controllerchange', () => location.reload());
-    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js?v=20260724i').catch(() => {}));
+    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js?v=20260725g').catch(() => {}));
   }
+
+  // 搜索模式下：屏幕内任意横向滑动（>60px）即可关闭搜索框，无需点 ✕
+  // 纵向滚动不受影响；一旦判定为横向，先 preventDefault 阻止浏览器边缘手势（返回/前进），再关闭
+  let _swipeSX = 0, _swipeSY = 0, _swipeOn = false;
+  document.addEventListener('touchstart', (e) => {
+    if (!state.searchMode) return;
+    const t = e.touches[0];
+    _swipeSX = t.clientX; _swipeSY = t.clientY;
+    _swipeOn = true;
+  }, { passive: true });
+  document.addEventListener('touchmove', (e) => {
+    if (!_swipeOn || !state.searchMode) return;
+    const t = e.touches[0];
+    const dx = t.clientX - _swipeSX;
+    const dy = t.clientY - _swipeSY;
+    if (Math.abs(dx) > 30 && Math.abs(dx) > Math.abs(dy)) {
+      // 先于浏览器边缘手势（~40px 触发），阻止后退/前进
+      e.preventDefault();
+    }
+    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy)) {
+      closeHeaderSearch();
+      _swipeOn = false;
+    }
+  }, { passive: false });
+  document.addEventListener('touchend', () => { _swipeOn = false; }, { passive: true });
 
   window.__CHANM_LOADED__ = true;
 }

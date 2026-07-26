@@ -29,8 +29,9 @@ html {
   /* 确保根元素高度覆盖整个视口，为 body min-height:100% 提供参照 */
   height: 100%;
   height: 100dvh;
-  /* 禁止水平滚动，防止 fixed 元素或 100vw 元素导致的横向滚动条闪现 */
-  overflow-x: hidden;
+  /* 禁止水平滚动，防止 fixed 元素或 100vw 元素导致的横向滚动条闪现。
+     用 clip 而非 hidden，避免创建额外格式化上下文导致子元素 position:sticky 失效。 */
+  overflow-x: clip;
 }
 
 body {
@@ -47,14 +48,21 @@ body {
   padding-right: env(safe-area-inset-right);
   padding-bottom: calc(56px + env(safe-area-inset-bottom));
   padding-left: env(safe-area-inset-left);
-  /* 禁止水平滚动，避免水平滚动条闪现导致 tabbar 跳动 */
-  overflow-x: hidden;
+  /* 禁止水平滚动，避免水平滚动条闪现导致 tabbar 跳动。
+     用 clip 而非 hidden，避免创建额外格式化上下文导致子元素 position:sticky 失效。 */
+  overflow-x: clip;
   /* 让整屏（含内容下方的空白区）把横向边缘滑动交给 JS 处理，避免被系统/浏览器吞掉 */
   touch-action: pan-y;
   /* 关键：关闭滚动锚定。详情页证券卡片折叠会改变其高度，若开启锚定，浏览器会为保持
      下方内容稳定而回调整 scrollY，越过折叠阈值后反复横跳 —— 即“强烈抖动”。关闭后折叠
      不会触发 scrollY 回调整，彻底消除抖动。 */
   overflow-anchor: none;
+}
+
+/* 软键盘弹起时取消 body 底部占位，配合 JS 把 tabbar 贴住键盘顶部，
+   否则 iOS/Safari 上会出现「底部菜单跑到屏幕中部」的卡顿 */
+body.keyboard-open {
+  padding-bottom: 0 !important;
 }
 
 /* 顶部标题栏（企业微信风格） */
@@ -102,20 +110,118 @@ body {
   padding: 3px 6px;
 }
 
-/* 搜索/工具栏 */
-.wx-searchbar {
-  display: flex; align-items: center; gap: 8px;
-  padding: 10px 12px;
-  background: var(--wx-bg);
-}
-.wx-searchbar input {
-  height: 38px; padding: 0 12px;
-  border: 1px solid var(--wx-line); border-radius: 6px;
-  background: var(--wx-card); color: var(--wx-txt);
-  font-size: 15px; outline: none;
+/* 标题栏内搜索框：长按盯盘/行情时出现在「Chan-M」那一行，并同步弹起键盘 */
+.header-search {
+  display: none;
   flex: 1;
-  width: 100%;
+  min-width: 0;
+  height: 34px;
+  margin: 0 44px 0 8px;
+  padding: 0 14px;
+  border: 1px solid var(--wx-line);
+  border-radius: 17px;
+  background: var(--wx-card);
+  color: var(--wx-txt);
+  font-size: 15px;
+  outline: none;
+  -webkit-appearance: none;
 }
+.header-search::-webkit-search-cancel-button { -webkit-appearance: none; }
+.header-search::placeholder { color: var(--wx-muted); }
+.header-search-close {
+  display: none;
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-size: 18px;
+  line-height: 1;
+  color: var(--wx-muted);
+  cursor: pointer;
+}
+.header-search-close:active { opacity: .6; }
+.wx-header.search-active .header-title { display: none; }
+.wx-header.search-active .header-toggle { display: none; }
+.wx-header.search-active .header-search { display: block; }
+.wx-header.search-active .header-search-close { display: block; }
+/* 搜索激活时：chrome 内搜索框 */
+.wx-header.search-active { justify-content: flex-start; }
+
+/* 键盘弹起时，尤其是 Android Edge，position:sticky 的输入框聚焦会导致
+   浏览器滚动和 fixed 元素错位。搜索态将 title bar 改为 fixed，不参与滚动。 */
+.wx-header.search-active {
+  position: fixed;
+  top: env(safe-area-inset-top, 0);
+  left: 0;
+  right: 0;
+  z-index: 50;
+}
+/* body 顶上腾出 title bar 的高度，避免被 fixed header 遮挡 */
+body.search-header-fixed {
+  padding-top: calc(48px + env(safe-area-inset-top));
+  /* 搜索态禁用浏览器「从左/右边缘滑出返回/前进」手势（Android Edge/Chrome）。
+     该手势在 touchstart 阶段就被系统接管，仅靠 touchmove 的 preventDefault 拦不住，
+     必须用 overscroll-behavior 关掉滚动导航，否则第二次边缘滑动会直接退出网页。 */
+  overscroll-behavior-x: none;
+}
+
+/* 搜索态左右边缘守卫：touch-action:none 在 touchstart 阶段即屏蔽系统边缘返回/前进手势
+   （与弹窗 backdrop 的防护机制一致），避免 iOS Safari 等环境下边缘滑动直接退出程序。
+   仅覆盖屏幕左右各 32px（与 gesture.js 的 EDGE 区对齐），不影响中间内容滚动与点击。 */
+.search-edge-guard {
+  position: fixed;
+  top: 0; bottom: 0;
+  width: 32px;
+  z-index: 49;            /* 低于标题栏(50)，高于内容与 tabbar(20)，确保仅拦截边缘 */
+  background: transparent;
+  touch-action: none;
+  overscroll-behavior-x: none;
+  display: none;
+}
+.search-edge-guard.left { left: 0; }
+.search-edge-guard.right { right: 0; }
+body.search-header-fixed .search-edge-guard { display: block; }
+
+/* 主菜单长按不进入文字选中模式 */
+.wx-tabbar, .wx-tabbar .wx-tab, .wx-tabbar .wx-tab * {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* 行情页：A 股搜索结果 */
+.hg-search-results { padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.hg-search-results[hidden] { display: none; }
+.hg-tip { color: var(--wx-muted); font-size: 13px; text-align: center; padding: 24px 0; }
+.hg-result {
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--wx-card); border: 1px solid var(--wx-line); border-radius: 10px;
+  padding: 12px 14px;
+}
+.hg-result-info { display: flex; flex-direction: column; gap: 2px; overflow: hidden; }
+.hg-result-name { font-size: 15px; color: var(--wx-txt); }
+.hg-result-code { font-size: 12px; color: var(--wx-muted); }
+.hg-add-btn {
+  flex: none; height: 32px; padding: 0 16px; border: none; border-radius: 16px;
+  background: var(--wx-accent); color: #fff; font-size: 13px;
+}
+.hg-add-btn:disabled { opacity: .5; }
+
+/* 轻提示 toast */
+.chanm-toast {
+  position: fixed; left: 50%; bottom: calc(76px + env(safe-area-inset-bottom));
+  transform: translateX(-50%) translateY(10px);
+  background: rgba(0,0,0,.82); color: #fff; font-size: 13px;
+  padding: 10px 16px; border-radius: 20px; z-index: 90;
+  opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s;
+  max-width: 80vw; text-align: center;
+}
+.chanm-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 
 /* 概览 */
 .wx-overview {
@@ -141,7 +247,7 @@ body {
 .wx-actions button:active { background: #f2f2f2; }
 
 /* 列表 */
-.wx-list { padding: 0 12px 12px; display: flex; flex-direction: column; gap: 10px; overflow-anchor: none; }
+.wx-list { padding: 14px 12px 12px; display: flex; flex-direction: column; gap: 10px; overflow-anchor: none; }
 
 /* 中枢分组（加强区分：橙色描边 + 琥珀色标题栏） */
 .zs-block {
@@ -156,6 +262,11 @@ body {
   padding: 10px 14px; background: #fff7e6; border-bottom: 1px solid #ffe7ba;
   display: flex; align-items: center; gap: 6px;
   user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+  flex-wrap: wrap;
+}
+.zs-price-info {
+  font-size: 11px; font-weight: 400; color: #8b6914;
+  white-space: nowrap;
 }
 .zs-title.plain { background: transparent; border: none; padding: 0 14px; }
 
@@ -549,20 +660,86 @@ body {
   background: var(--wx-card);
   border: 1px solid var(--wx-line);
   border-radius: 12px;
-  padding: 14px;
+  padding: 12px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 6px;
+  min-height: 150px;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
   box-shadow: 0 1px 2px rgba(0,0,0,.04);
 }
-.index-main { display: flex; flex-direction: column; gap: 2px; }
+.index-card-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.index-code-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
 .index-name { font-size: 15px; font-weight: 600; color: var(--wx-txt); }
-.index-code { font-size: 11px; color: var(--wx-muted); }
-.index-data { display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
-.index-price { font-size: 22px; font-weight: 700; color: var(--wx-txt); }
-.index-change { font-size: 13px; font-weight: 500; color: var(--wx-muted); }
+.index-code {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .2px;
+  color: var(--wx-muted);
+  white-space: nowrap;
+}
+.index-card-price { display: flex; align-items: flex-end; }
+.index-price { font-size: 26px; font-weight: 700; color: var(--wx-txt); line-height: 1; }
+.index-change { font-size: 12px; font-weight: 500; color: var(--wx-muted); }
 .index-change.up { color: var(--wx-red); }
 .index-change.down { color: var(--wx-green); }
+.index-card-chart {
+  flex: 1;
+  min-height: 56px;
+  width: 100%;
+  margin-top: 2px;
+}
+.index-intraday {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* 行情页自定义卡片 — 长按删除 */
+.index-card.custom {
+  position: relative;
+}
+.index-card.custom.editing {
+  border-color: var(--wx-red);
+  box-shadow: 0 0 0 1.5px rgba(250, 81, 81, .35);
+}
+.index-delete-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 5;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(250, 81, 81, .12);
+  color: var(--wx-red);
+  font-size: 16px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.index-delete-btn:active {
+  background: rgba(250, 81, 81, .25);
+}
+.index-delete-btn[hidden] {
+  display: none;
+}
 
 /* 编辑视图 */
 .bianji-content { padding: 12px; }
@@ -581,16 +758,17 @@ body {
 .sec-head {
   display: flex; align-items: center; justify-content: space-between;
   padding: 14px; cursor: pointer;
+  transition: padding .18s ease;
 }
 .sec-head:active { background: #f7f7f7; }
-.sec-info { display: flex; flex-direction: column; gap: 2px; }
-.sec-name { font-size: 17px; font-weight: 600; color: var(--wx-txt); }
-.sec-meta { font-size: 14px; color: var(--wx-muted); }
+.sec-info { display: flex; flex-direction: column; gap: 2px; transition: gap .18s ease, opacity .18s ease; }
+.sec-name { font-size: 17px; font-weight: 600; color: var(--wx-txt); transition: font-size .18s ease, opacity .18s ease; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sec-meta { font-size: 14px; color: var(--wx-muted); transition: font-size .18s ease, opacity .18s ease; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .preset-dot { margin: 0 4px; color: var(--wx-muted); }
 .sec-right { display: flex; align-items: center; gap: 10px; }
 .sec-quote { text-align: right; line-height: 1.35; }
-.sec-price { font-size: 17px; font-weight: 600; color: var(--wx-txt); }
-.sec-change { font-size: 14px; font-weight: 500; color: var(--wx-muted); }
+.sec-price { font-size: 17px; font-weight: 600; color: var(--wx-txt); transition: font-size .18s ease; }
+.sec-change { font-size: 14px; font-weight: 500; color: var(--wx-muted); transition: font-size .18s ease; }
 .sec-change.up { color: var(--wx-red); }
 .sec-change.down { color: var(--wx-green); }
 .sec-arrow { font-size: 14px; color: var(--wx-muted); }
@@ -606,11 +784,20 @@ body {
   transition: height .28s ease, padding .28s ease, border-color .28s ease;
 }
 .sec-intraday.expanded {
-  border-top-color: var(--wx-line);
+  border-top-color: transparent;
   padding-top: 8px;
   padding-bottom: 10px;
-  height: 96px;
+  height: 150px;
 }
+/* 展开分时图时压缩证券卡片信息行，把第二行信息并入第一行（带动画） */
+.sec-card.intraday-expanded .sec-head { padding: 10px 14px; }
+.sec-card.intraday-expanded .sec-info { flex-direction: row; align-items: baseline; flex-wrap: wrap; gap: 8px; }
+.sec-card.intraday-expanded .sec-name { flex: 0 0 auto; font-size: 16px; }
+.sec-card.intraday-expanded .sec-meta { flex: 0 0 auto; font-size: 13px; }
+.sec-card.intraday-expanded .sec-quote { display: flex; align-items: baseline; gap: 8px; }
+.sec-card.intraday-expanded .sec-price { font-size: 16px; }
+.sec-card.intraday-expanded .sec-change { font-size: 13px; }
+
 .sec-intraday canvas {
   display: block;
   width: 100%;
@@ -627,7 +814,7 @@ body {
   position: sticky;
   top: 48px;          /* 紧贴顶部标题栏下方 */
   z-index: 9;
-  margin-bottom: 10px;
+  margin-bottom: 0;
   box-shadow: 0 1px 4px rgba(0,0,0,.06);
   /* 折叠过渡更顺滑（高度随内边距/字号变化而平滑收起，下方内容跟随，无跳变） */
   transition: box-shadow .18s ease;
@@ -639,12 +826,12 @@ body {
 .sec-card--detail .sec-quote,
 .sec-card--detail .sec-price,
 .sec-card--detail .sec-change {
-  transition: padding .18s ease, font-size .18s ease, gap .18s ease;
+  transition: padding .18s ease, font-size .18s ease, gap .18s ease, flex-basis .18s ease;
 }
 .sec-card--detail.sec-card--collapsed .sec-head { padding: 8px 14px; }
-.sec-card--detail.sec-card--collapsed .sec-info { flex-direction: row; align-items: baseline; gap: 8px; }
-.sec-card--detail.sec-card--collapsed .sec-name { font-size: 16px; }
-.sec-card--detail.sec-card--collapsed .sec-meta { font-size: 13px; }
+.sec-card--detail.sec-card--collapsed .sec-info { flex-direction: row; align-items: baseline; flex-wrap: wrap; gap: 8px; }
+.sec-card--detail.sec-card--collapsed .sec-name { flex: 0 0 auto; font-size: 16px; }
+.sec-card--detail.sec-card--collapsed .sec-meta { flex: 0 0 auto; font-size: 13px; }
 .sec-card--detail.sec-card--collapsed .sec-quote { display: flex; align-items: baseline; gap: 8px; }
 .sec-card--detail.sec-card--collapsed .sec-price { font-size: 16px; }
 .sec-card--detail.sec-card--collapsed .sec-change { font-size: 13px; }
@@ -657,7 +844,7 @@ body {
 .period-block:last-child { margin-bottom: 0; }
 .period-title {
   font-size: 13px; font-weight: 600; color: var(--wx-blue);
-  padding: 8px 2px; background: transparent; border: none;
+  padding: 0 2px 10px; background: transparent; border: none;
 }
 
 /* 导航返回 */
@@ -726,6 +913,7 @@ body {
 #period-detail {
   display: flex;
   flex-direction: column;
+  padding-top: 0;
   padding-bottom: 64px;
 }
 
@@ -766,29 +954,34 @@ body {
 .mini-sheet-body.period-sheet-body { overflow: hidden; padding: 0; }
 .mini-chart-svg { display: block; width: 100%; height: auto; }
 
-/* 周期行长按弹窗：K 线图 / 简图 左右分页 */
+/* 周期行长按弹窗：K 线图 左右分页 */
 .period-sheet-pages {
   display: flex;
+  align-items: flex-start;
   overflow-x: auto;
   overflow-y: hidden;
-  scroll-snap-type: x mandatory;
-  scroll-behavior: smooth;
+  scroll-snap-type: none;
+  touch-action: pan-y;
   -webkit-overflow-scrolling: touch;
-  touch-action: pan-x pan-y;
 }
 .period-sheet-pages::-webkit-scrollbar { display: none; }
 .period-sheet-pages.cross-lock {
   overflow-x: hidden;
-  touch-action: pan-y;
+  touch-action: none;
   scroll-snap-type: none;
+}
+.period-sheet-pages.cross-lock .kline-canvas {
+  touch-action: none;
 }
 .period-sheet-page {
   flex: 0 0 100%;
   width: 100%;
-  scroll-snap-align: start;
   padding: 10px 12px 16px;
   box-sizing: border-box;
 }
+/* 未渲染前 canvas 没有内联高度，按默认宽高比会撑得很高；这里给出与 JS 一致的固定高度兜底 */
+.period-sheet-page .kline-canvas:nth-child(1) { height: 220px; }
+.period-sheet-page .kline-canvas:nth-child(2) { height: 96px; }
 /* 简图内元素 */
 .mini-zs {
   fill: rgba(240, 180, 41, .10);
@@ -924,10 +1117,15 @@ body {
 
 /* 添加提醒底部弹窗 */
 .action-sheet-mask {
-  position: fixed; inset: 0; z-index: 50;
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 50;
+  /* 用动态视口高度 100dvh 让遮罩在键盘弹起/收起时自动跟随可视区变化：
+     键盘弹起 → dvh 缩小 → 遮罩高度 = 键盘上方区域 → 面板贴键盘顶边；
+     键盘收起 → dvh 恢复 → 遮罩回归全屏；
+     不支持 dvh 的旧浏览器自动回退到 inset:0 行为（无 JS 降级）。 */
+  height: 100dvh;
   background: rgba(0, 0, 0, .45);
   opacity: 0; visibility: hidden;
-  transition: opacity .25s ease, visibility .25s ease;
+  transition: height 0.15s ease-out, opacity .25s ease, visibility .25s ease;
   display: flex; align-items: flex-end;
   touch-action: none;
 }
@@ -1142,9 +1340,10 @@ body {
   user-select: none;
   -webkit-tap-highlight-color: transparent;
 }
-/* 周期行长按弹窗内的 K 线需要跟随整页左右滑动，恢复为可由浏览器/JS 处理横向手势 */
+/* 周期行长按弹窗内的 K 线：手势完全由 JS 接管，避免浏览器抢占长按/滚动导致十字悬停失败；
+   横向切换周期由 bindCrosshair 通过 onSwipe 回调自行处理。 */
 .period-sheet-page .kline-canvas {
-  touch-action: pan-x pan-y;
+  touch-action: none;
 }
 
 

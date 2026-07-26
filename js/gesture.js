@@ -42,6 +42,12 @@
     if (klineBd && klineBd.classList.contains('show')) {
       return { el: document.getElementById('kline-sheet'), backdrop: klineBd, closeFn: () => window.closeKlineSheet && window.closeKlineSheet() };
     }
+    // 标题栏搜索框（长按盯盘/行情弹出）：边缘左/右滑应退出搜索框，而非触发系统返回退出程序。
+    // 等价于其它弹窗：gesture.js 拦截并关闭，配合 search-edge-guard 的 touch-action:none 屏蔽系统手势。
+    const searchInput = document.getElementById('search-input');
+    if (searchInput && !searchInput.hasAttribute('hidden')) {
+      return { el: null, backdrop: null, closeFn: () => window.closeHeaderSearch && window.closeHeaderSearch() };
+    }
     return null;
   }
 

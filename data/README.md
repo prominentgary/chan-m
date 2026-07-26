@@ -1,20 +1,20 @@
 # Chan-M 静态画线数据目录
 
-把 `backend/export_for_chanm.py` 导出的文件放到这里，文件名格式为：
+把 `backend/export_for_chanm.py` 导出的文件放到这里，文件名格式为（代码统一使用专业格式 `159611.SZ` / `588080.SH`）：
 
     <code>_<period>.json
 
 例如：
 
-    sh588080_day.json
-    sz000001_30m.json
+    588080.SH_day.json
+    000001.SZ_30m.json
 
 这些文件随 `frontend/chan-m/` 一起推送到 GitHub Pages 后，手机端打开 Chan-M 并加载对应代码+周期时，会自动读取这里的预置画线数据。
 
 ## 导出命令示例
 
 ```bash
-python backend/export_for_chanm.py backend/data/klinedev_v1_drawings_588080_1d.json sh588080
+python backend/export_for_chanm.py backend/data/klinedev_v1_drawings_588080_1d.json 588080.SH
 ```
 
 ## 数据优先级

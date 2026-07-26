@@ -393,6 +393,7 @@ function bindCrosshair(opts = {}) {
   if (main._klBound) return;
   main._klBound = true;
   const noSwitch = opts.noSwitch;
+  const swipeFn = opts.onSwipe || (!noSwitch ? window.switchKlineSegment : null);
 
   const EDGE = 28;        // 与全局边缘手势一致：边缘滑动用于退出弹窗
   const LONG_MS = 350;    // 长按阈值
@@ -446,6 +447,7 @@ function bindCrosshair(opts = {}) {
     lpFired = false; moved = false; swiping = false;
     clearLp();
     clearHide();
+    try { main.setPointerCapture(e.pointerId); } catch {}
     if (e.pointerType === 'mouse') {
       // 鼠标：按下即显示并跟随
       setCrossActive(true);
@@ -461,8 +463,9 @@ function bindCrosshair(opts = {}) {
 
   main.addEventListener('pointermove', (e) => {
     if (e.pointerType === 'mouse') { showAt(e); return; } // 鼠标悬停实时跟随
-    if (_view.crossActive) { // 已进入十字态：跟随手指并阻止页面滚动
+    if (_view.crossActive) { // 已进入十字态：跟随手指并阻止页面滚动/冒泡
       if (e.cancelable) e.preventDefault();
+      e.stopPropagation();
       showAt(e);
       return;
     }
@@ -470,12 +473,11 @@ function bindCrosshair(opts = {}) {
     if (!moved && (Math.abs(e.clientX - sx) > 12 || Math.abs(e.clientY - sy) > 12)) {
       moved = true;
       clearLp();
-      if (!noSwitch) {
-        const dx = e.clientX - sx, dy = e.clientY - sy;
-        if (Math.abs(dx) > Math.abs(dy)) {
-          swiping = true;
-          if (e.cancelable) e.preventDefault();
-        }
+      const dx = e.clientX - sx, dy = e.clientY - sy;
+      if (swipeFn && Math.abs(dx) > Math.abs(dy)) {
+        swiping = true;
+        if (e.cancelable) e.preventDefault();
+        e.stopPropagation();
       }
     }
   });
@@ -483,18 +485,19 @@ function bindCrosshair(opts = {}) {
   main.addEventListener('pointerup', (e) => {
     if (e.pointerType === 'mouse') { hideCross(); return; }
     clearLp();
-    if (!noSwitch && swiping) {
+    try { main.releasePointerCapture(e.pointerId); } catch {}
+    if (swiping && swipeFn) {
       const dx = e.clientX - sx;
       const dy = e.clientY - sy;
       const atEdge = sx <= EDGE || sx >= window.innerWidth - EDGE;
-      if (!atEdge && Math.abs(dx) >= SWIPE_PX && Math.abs(dx) > Math.abs(dy) && window.switchKlineSegment) {
-        window.switchKlineSegment(dx < 0 ? 'next' : 'prev');
+      if (!atEdge && Math.abs(dx) >= SWIPE_PX && Math.abs(dx) > Math.abs(dy)) {
+        swipeFn(dx < 0 ? 'next' : 'prev');
       }
       return;
     }
     if (_view.crossActive) scheduleHide(); // 手指松开后保持 5 秒再消失
   });
-  main.addEventListener('pointercancel', () => { clearLp(); if (!swiping) scheduleHide(); });
+  main.addEventListener('pointercancel', (e) => { try { main.releasePointerCapture(e.pointerId); } catch {} clearLp(); if (!swiping) scheduleHide(); });
   main.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse') repaintMain(); });
   main.addEventListener('contextmenu', (e) => e.preventDefault());
 }
@@ -615,12 +618,21 @@ function drawMainCross(meta, cross) {
   ctx.restore();
 }
 
-// 证券卡片当日分时图：实线价格走势 + 水平点线零轴（prevClose）
-export function renderIntradayChart(canvas, bars, prevClose) {
+// 证券卡片分时图：实线价格走势 + 水平点线零轴（prevClose）
+// opts.dayStart / opts.dayEnd 指定 x 轴交易日固定范围（如 9:30-15:00），不传则从 bars 推断
+export function renderIntradayChart(canvas, bars, prevClose, opts = {}) {
   const colors = resolveColors();
-  const { ctx, w, h } = setupCanvas(canvas, 80);
+  const parent = canvas.parentElement;
+  const expanded = parent && parent.classList.contains('expanded');
+  // 展开时直接用 CSS 最终高度 150px 绘制。若取动画过程中的 parent.clientHeight，
+  // canvas 会先按中间高度渲染，容器展开完成后再跳变到最终高度，出现“展开后又变高一点”的顿挫。
+  // 外部可传入 opts.height 指定固定高度。
+  const cssH = opts.height || (expanded ? 150 : 80);
+  const { ctx, w, h } = setupCanvas(canvas, cssH);
   ctx.clearRect(0, 0, w, h);
-  if (!bars || !bars.length) {
+
+  const pc = Number(prevClose) || (bars && bars.length ? bars[0].close : 0);
+  if (!pc) {
     ctx.fillStyle = colors.muted;
     ctx.font = '12px sans-serif';
     ctx.textAlign = 'center';
@@ -628,43 +640,80 @@ export function renderIntradayChart(canvas, bars, prevClose) {
     ctx.fillText('暂无分时数据', w / 2, h / 2);
     return;
   }
-  const pc = Number(prevClose) || bars[0].close;
+
   const padL = 8, padR = 8, padT = 6, padB = 6;
   const plotW = w - padL - padR;
   const plotH = h - padT - padB;
-  const n = bars.length;
 
-  // 以昨收为中心对称展示，零轴始终位于视觉中间
-  let maxDiff = 0;
-  for (const b of bars) {
-    maxDiff = Math.max(maxDiff, Math.abs(b.high - pc), Math.abs(b.low - pc));
+  // x 轴：优先使用传入的交易日固定范围，否则按数据首尾自适应
+  let dayStart, dayEnd;
+  if (opts.dayStart && opts.dayEnd) {
+    dayStart = opts.dayStart;
+    dayEnd = opts.dayEnd;
+  } else if (bars && bars.length) {
+    dayStart = bars[0].time;
+    dayEnd = bars[bars.length - 1].time;
+  } else {
+    dayStart = dayEnd = 0;
   }
-  if (maxDiff <= 0 || !Number.isFinite(maxDiff)) maxDiff = pc * 0.005 || 0.01;
-  const range = maxDiff * 1.05;
-  const yOf = (p) => padT + (1 - (p - (pc - range)) / (2 * range)) * plotH;
+  // x 轴映射：剔除中午休市 11:30-13:00，上午 9:30-11:30 与下午 13:00-15:00 拼接
+  const morningEnd = dayStart + 2 * 3600;         // 11:30
+  const afternoonStart = dayStart + 3.5 * 3600;   // 13:00
+  const morningMinutes = 120, afternoonMinutes = 120;
+  const totalMinutes = morningMinutes + afternoonMinutes;
+  const xOfTime = (t) => {
+    if (dayEnd === dayStart) return padL + plotW / 2;
+    if (t <= morningEnd) {
+      const ratio = Math.max(0, Math.min(1, (t - dayStart) / (morningEnd - dayStart)));
+      return padL + (ratio * morningMinutes / totalMinutes) * plotW;
+    }
+    if (t >= afternoonStart) {
+      const ratio = Math.max(0, Math.min(1, (t - afternoonStart) / (dayEnd - afternoonStart)));
+      return padL + ((morningMinutes + ratio * afternoonMinutes) / totalMinutes) * plotW;
+    }
+    // 处于休市时段（不应出现），映射到上午末尾
+    return padL + (morningMinutes / totalMinutes) * plotW;
+  };
+
+  // y 轴：覆盖实际价格范围与 prevClose，零轴根据行情自然落位
+  let minP = pc, maxP = pc;
+  if (bars && bars.length) {
+    for (const b of bars) {
+      minP = Math.min(minP, b.low);
+      maxP = Math.max(maxP, b.high);
+    }
+  }
+  const pad = (maxP - minP) * 0.08 || pc * 0.005 || 0.01;
+  const yMin = minP - pad;
+  const yMax = maxP + pad;
+  const yOf = (p) => padT + (1 - (p - yMin) / (yMax - yMin)) * plotH;
 
   // 零轴水平点线
   ctx.strokeStyle = colors.muted;
   ctx.lineWidth = 1;
   ctx.setLineDash([3, 3]);
   const y0 = yOf(pc);
-  ctx.beginPath();
-  ctx.moveTo(padL, y0);
-  ctx.lineTo(padL + plotW, y0);
-  ctx.stroke();
+  if (y0 >= padT - 1 && y0 <= padT + plotH + 1) {
+    ctx.beginPath();
+    ctx.moveTo(padL, y0);
+    ctx.lineTo(padL + plotW, y0);
+    ctx.stroke();
+  }
   ctx.setLineDash([]);
 
   // 价格实线：当天未跌（收盘 ≥ 昨收）用红色，跌用绿色
-  const lastClose = bars[n - 1].close;
-  const isUp = lastClose >= pc;
-  const xOf = (i) => padL + (i / (n - 1)) * plotW;
-  ctx.strokeStyle = isUp ? colors.red : colors.green;
-  ctx.lineWidth = 1.4;
-  ctx.beginPath();
-  bars.forEach((b, i) => {
-    const x = xOf(i), y = yOf(b.close);
-    if (i === 0) ctx.moveTo(x, y);
-    else ctx.lineTo(x, y);
-  });
-  ctx.stroke();
+  if (bars && bars.length) {
+    const lastClose = bars[bars.length - 1].close;
+    const isUp = lastClose >= pc;
+    ctx.strokeStyle = isUp ? colors.red : colors.green;
+    ctx.lineWidth = 1.4;
+    ctx.beginPath();
+    bars.forEach((b, i) => {
+      const x = xOfTime(b.time);
+      const y = yOf(b.close);
+      if (i === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+  }
 }
