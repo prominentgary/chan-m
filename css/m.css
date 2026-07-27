@@ -269,6 +269,8 @@ body.search-header-fixed .search-edge-guard { display: block; }
   white-space: nowrap;
 }
 .zs-title.plain { background: transparent; border: none; padding: 0 14px; }
+.zs-title-right { margin-left: auto; font-weight: 400; font-size: 11px; color: #8b6914; white-space: nowrap; }
+.zs-title-right.muted { color: #bfbfbf; }
 
 /* 周期详情内的中枢分组需要白底（外层 #period-detail 已无白色背景） */
 #period-detail .zs-block { background: var(--wx-card); }

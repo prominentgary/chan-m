@@ -754,6 +754,48 @@ function getPrevTradingDay(date) {
   return d;
 }
 
+// 从滚动返回的 m1 分钟线中挑出「当日交易日」的分时数据。
+// 腾讯 m1 接口返回的是最近 N 分钟滚动窗口（交易时段会跨到上一交易日下午），
+// 必须按交易日边界过滤，否则分时图会把昨天+今天拼在一起、绘制错乱。
+// 规则：9 点前/周末显示上一交易日；9:00-9:30 仅 0 轴；开盘后显示当日（无数据回退上一交易日）。
+function pickIntradayBars(raw, now = new Date()) {
+  const { start: todayStart, end: todayEnd } = marketDayBounds(now);
+  const hm = now.getHours() * 60 + now.getMinutes();
+  let bars = [], dayStart = 0, dayEnd = 0;
+  if (hm < 9 * 60 || !isWeekday(now)) {
+    const prevDay = getPrevTradingDay(now);
+    const { start: ps, end: pe } = marketDayBounds(prevDay);
+    bars = raw.filter((b) => b.time >= ps && b.time < pe);
+    dayStart = ps; dayEnd = pe;
+  } else if (hm < 9 * 60 + 30) {
+    dayStart = todayStart; dayEnd = todayEnd;
+  } else {
+    const todayBars = raw.filter((b) => b.time >= todayStart && b.time < todayEnd);
+    if (todayBars.length) {
+      bars = todayBars;
+      dayStart = todayStart; dayEnd = todayEnd;
+    } else {
+      const prevDay = getPrevTradingDay(now);
+      const { start: ps, end: pe } = marketDayBounds(prevDay);
+      bars = raw.filter((b) => b.time >= ps && b.time < pe);
+      dayStart = ps; dayEnd = pe;
+    }
+  }
+  return { bars, dayStart, dayEnd };
+}
+
+// 行情页/周期列表共用：从实时行情或 m1 响应里取昨收价，优先实时行情（与周期列表页一致）
+function resolvePrevClose(code, qt, bars) {
+  const rt = state.indexQuotes?.[code]?.prevClose || state._rtPrices?.[code]?.prevClose;
+  if (rt && rt > 0) return rt;
+  if (qt) {
+    if (Array.isArray(qt) && qt[4]) return +qt[4];
+    if (typeof qt === 'string') { const f = qt.split('~'); if (f[4]) return +f[4]; }
+  }
+  if (bars && bars.length) return bars[0].close;
+  return 0;
+}
+
 // 异步加载并绘制证券卡片中的分时图
 // 规则：交易日 9 点前 / 周末显示上一交易日；9:00-9:30 仅显示 0 轴；开盘后显示当日（无数据则回退上一交易日）
 async function loadAndRenderIntraday(code, canvasOrId = 'sec-intraday-chart') {
@@ -1671,10 +1713,11 @@ function showCardOverlay(card, code, period) {
   const idx = sorted.findIndex((s) => s.id === segId);
   const targetSeg = sorted[idx];
   const isWatch = targetSeg?._isWatch || false;
-  const hasWatchSeg = (d?.segments || []).some((s) => s._isWatch);
-  // 有盯盘卡片时任何段都不允许出现「增加段」；无盯盘卡片时仅最近段允许
   const isLatest = !isWatch && targetSeg && sorted[sorted.length - 1]?.id === segId;
-  const canAdd = !hasWatchSeg && isLatest;
+  // 段终点未衔接下一段（下一段起点时间 ≠ 本段终点时间，或本段就是最后一段）时允许「增加段」
+  const nextSeg = idx >= 0 ? sorted[idx + 1] : null;
+  const connectsNext = !!(nextSeg && targetSeg && nextSeg.start?.time === targetSeg.end?.time);
+  const canAdd = !isWatch && !!targetSeg && !connectsNext;
   const bars = state._currentBars?.bars || [];
   const detected = idx >= 0 ? detectZhongshu(sorted, idx, bars) : null;
   const otherZsIds = new Set();
@@ -1704,25 +1747,31 @@ function showCardOverlay(card, code, period) {
   const overlay = document.createElement('div');
   overlay.className = 'card-overlay';
   overlay.innerHTML = isWatch ? `
+    <button class="overlay-btn icon danger" data-act="del" aria-label="删除">
+      <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="18" y1="6" x2="6" y2="18"/>
+        <line x1="6" y1="6" x2="18" y2="18"/>
+      </svg>
+    </button>
+    <button class="overlay-btn icon" data-act="edit" aria-label="编辑">
+      <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="3" width="18" height="18" rx="4"/>
+        <path d="M15 5 L19 9"/>
+        <path d="M13 7 L17 11"/>
+      </svg>
+    </button>
     <button class="overlay-btn icon ok" data-act="commit" aria-label="转为普通段并继续">
       <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round">
         <polyline points="20 6 9 17 4 12"></polyline>
       </svg>
     </button>
-    <button class="overlay-btn icon" data-act="edit" aria-label="编辑">
-      <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round">
-        <rect x="3" y="3" width="18" height="18" rx="4"/>
-        <path d="M15 5 L19 9"/>
-        <path d="M13 7 L17 11"/>
-      </svg>
-    </button>
-    <button class="overlay-btn icon danger" data-act="del" aria-label="删除">
-      <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round">
-        <line x1="18" y1="6" x2="6" y2="18"/>
-        <line x1="6" y1="6" x2="18" y2="18"/>
-      </svg>
-    </button>
   ` : `
+    <button class="overlay-btn icon danger" data-act="del" aria-label="删除">
+      <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="18" y1="6" x2="6" y2="18"/>
+        <line x1="6" y1="6" x2="18" y2="18"/>
+      </svg>
+    </button>
     <button class="overlay-btn icon" data-act="edit" aria-label="编辑">
       <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round">
         <rect x="3" y="3" width="18" height="18" rx="4"/>
@@ -1730,13 +1779,6 @@ function showCardOverlay(card, code, period) {
         <path d="M13 7 L17 11"/>
       </svg>
     </button>
-    <button class="overlay-btn icon danger" data-act="del" aria-label="删除">
-      <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round">
-        <line x1="18" y1="6" x2="6" y2="18"/>
-        <line x1="6" y1="6" x2="18" y2="18"/>
-      </svg>
-    </button>
-    ${watchBtn}
     ${canAdd ? `
     <button class="overlay-btn icon" data-act="add" aria-label="新增">
       <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
@@ -1744,6 +1786,7 @@ function showCardOverlay(card, code, period) {
         <line x1="5" y1="12" x2="19" y2="12"/>
       </svg>
     </button>` : ''}
+    ${watchBtn}
     ${detectBtn}
   `;
   card.appendChild(overlay);
@@ -2169,7 +2212,7 @@ async function handleSegmentAction(act, segId, code, period) {
   const targetSeg = (d.segments || []).find((s) => s.id === segId);
 
   if (act === 'add') {
-    addSegment(code, period);
+    addSegment(code, period, segId);
   } else if (act === 'watch') {
     if (!targetSeg) return;
     addWatchSegment(code, period, segId);
@@ -2448,7 +2491,7 @@ function oppositeDirection(dir) {
   return dir === 'up' ? 'down' : 'up';
 }
 
-async function addSegment(code, period) {
+async function addSegment(code, period, afterSegId) {
   const sec = state.securities.find((s) => s.code === code);
   if (!sec) return;
   let bars;
@@ -2460,13 +2503,19 @@ async function addSegment(code, period) {
   }
   const d = sec.drawings[period] || { segments: [], zhongshus: [] };
   const segs = d.segments || [];
-  const prevSeg = segs.length
-    ? [...segs].sort((a, b) => (b.end?.time ?? b.start?.time) - (a.end?.time ?? a.start?.time))[0]
-    : null;
+  // 指定了源段（长按某段点「+」）则从该段终点续接；否则取终点时间最晚的段
+  const prevSeg = (afterSegId && segs.find((s) => s.id === afterSegId))
+    || (segs.length
+      ? [...segs].sort((a, b) => (b.end?.time ?? b.start?.time) - (a.end?.time ?? a.start?.time))[0]
+      : null);
+  // 若源段之后还有段（中间缺口），默认终点取下一段的起点时间，便于补齐缺口
+  const sorted = [...segs].sort((a, b) => a.start.time - b.start.time);
+  const prevIdx = prevSeg ? sorted.findIndex((s) => s.id === prevSeg.id) : -1;
+  const nextSeg = prevIdx >= 0 ? sorted[prevIdx + 1] : null;
   const now = Math.floor(Date.now() / 1000);
   const defaults = {
     startTime: prevSeg ? prevSeg.end.time : now - 3600,
-    endTime: now,
+    endTime: nextSeg ? nextSeg.start.time : now,
   };
   openEditor(null, (startTime, endTime) => {
     if (endTime <= startTime) { alert('终点必须晚于起点'); return; }
@@ -2868,20 +2917,17 @@ async function loadExtrasIntraday(code) {
   if (!canvas) return;
   try {
     const cached = state._extrasIntraday[code];
-    if (cached && cached.date === tradingDateStr()) {
+    // 交易时段内 60s 内已完成过一次抓取则不重复拉取（避免频繁请求被限频），
+    // 但保留「当日」判定以便次日自动刷新。非交易时段数据不常变，缓存更久。
+    const now = Date.now();
+    if (cached && cached.date === tradingDateStr() && now - (cached.fetchedAt || 0) < 60000) {
       renderIndexIntraday(canvas, cached);
       return;
     }
     const { bars, qt } = await fetchBars(code, '1m', 241);
-    const prevClose = qt?.[4] ? +qt[4] : (bars.length ? bars[0].close : 0);
-    let dayStart, dayEnd;
-    if (bars && bars.length) {
-      const dt = new Date(bars[0].time * 1000);
-      const y = dt.getFullYear(), m = dt.getMonth(), d = dt.getDate();
-      dayStart = Math.floor(new Date(y, m, d, 9, 30).getTime() / 1000);
-      dayEnd = Math.floor(new Date(y, m, d, 15, 0).getTime() / 1000);
-    }
-    const c = { bars, prevClose, dayStart, dayEnd, date: tradingDateStr() };
+    const { bars: dayBars, dayStart, dayEnd } = pickIntradayBars(bars, new Date());
+    const prevClose = resolvePrevClose(code, qt, dayBars);
+    const c = { bars: dayBars, prevClose, dayStart, dayEnd, date: tradingDateStr(), fetchedAt: now };
     state._extrasIntraday[code] = c;
     renderIndexIntraday(canvas, c);
   } catch (e) {
@@ -2974,22 +3020,15 @@ async function loadIndexIntraday() {
     if (!canvas) continue;
     try {
       const cached = state.indexIntraday[code];
-      if (cached && cached.date === tradingDateStr()) {
+      const now = Date.now();
+      if (cached && cached.date === tradingDateStr() && now - (cached.fetchedAt || 0) < 60000) {
         renderIndexIntraday(canvas, cached);
         continue;
       }
       const { bars, qt } = await fetchBars(code, '1m', 241);
-      const prevClose = qt?.[4] ? +qt[4] : (bars.length ? bars[0].close : 0);
-      let dayStart, dayEnd;
-      if (bars && bars.length) {
-        const dt = new Date(bars[0].time * 1000);
-        const y = dt.getFullYear();
-        const m = dt.getMonth();
-        const d = dt.getDate();
-        dayStart = Math.floor(new Date(y, m, d, 9, 30).getTime() / 1000);
-        dayEnd = Math.floor(new Date(y, m, d, 15, 0).getTime() / 1000);
-      }
-      const c = { bars, prevClose, dayStart, dayEnd, date: tradingDateStr() };
+      const { bars: dayBars, dayStart, dayEnd } = pickIntradayBars(bars, new Date());
+      const prevClose = resolvePrevClose(code, qt, dayBars);
+      const c = { bars: dayBars, prevClose, dayStart, dayEnd, date: tradingDateStr(), fetchedAt: now };
       state.indexIntraday[code] = c;
       renderIndexIntraday(canvas, c);
     } catch (e) {
@@ -3458,6 +3497,14 @@ async function checkMacdAlerts(alerts) {
   }
 }
 
+// 把导出时间戳格式化为 “MM-DD HH:mm”
+function fmtExportTime(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
 function renderWorkbenchView() {
   const el = $('#workbench-view');
   if (!el) return;
@@ -3467,17 +3514,22 @@ function renderWorkbenchView() {
   }
   let totalSegs = 0, totalZs = 0;
   let bsCount = 0;
+  let latestExport = 0;
   state.securities.forEach((sec) => {
     Object.values(sec.drawings).forEach((d) => {
       totalSegs += (d.segments || []).length;
       totalZs += (d.zhongshus || []).length;
       (d.segments || []).forEach((s) => { if (s._buySell) bsCount++; });
+      if (d.exportedAt && d.exportedAt > latestExport) latestExport = d.exportedAt;
     });
   });
+  const exportTip = latestExport
+    ? `<span class="zs-title-right">导出 ${fmtExportTime(latestExport)}</span>`
+    : '<span class="zs-title-right muted">未导出</span>';
   el.innerHTML = `
     <div class="wx-list">
       <div class="zs-block">
-        <div class="zs-title">数据概览</div>
+        <div class="zs-title">数据概览${exportTip}</div>
         <div class="card">
           <div class="card-body">
             <div class="card-desc">证券：${state.securities.length} 只</div>
