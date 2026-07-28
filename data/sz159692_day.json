@@ -1,0 +1,75 @@
+{
+  "code": "sz159692",
+  "period": "day",
+  "exportedAt": 1785253347813,
+  "segments": [
+    {
+      "id": "s_wt02rrkh",
+      "kind": "segment",
+      "period": "day",
+      "direction": "up",
+      "start": {
+        "time": 1780934400,
+        "price": 1.108
+      },
+      "end": {
+        "time": 1782835200,
+        "price": 1.345
+      }
+    },
+    {
+      "id": "s_vxydigbj",
+      "kind": "segment",
+      "period": "day",
+      "direction": "down",
+      "start": {
+        "time": 1782835200,
+        "price": 1.345
+      },
+      "end": {
+        "time": 1783958400,
+        "price": 1.217
+      }
+    }
+  ],
+  "zhongshus": [],
+  "presets": [
+    {
+      "id": "default",
+      "name": "方案1",
+      "segments": [
+        {
+          "id": "s_wt02rrkh",
+          "kind": "segment",
+          "period": "day",
+          "direction": "up",
+          "start": {
+            "time": 1780934400,
+            "price": 1.108
+          },
+          "end": {
+            "time": 1782835200,
+            "price": 1.345
+          }
+        },
+        {
+          "id": "s_vxydigbj",
+          "kind": "segment",
+          "period": "day",
+          "direction": "down",
+          "start": {
+            "time": 1782835200,
+            "price": 1.345
+          },
+          "end": {
+            "time": 1783958400,
+            "price": 1.217
+          }
+        }
+      ],
+      "zhongshus": []
+    }
+  ],
+  "activePreset": "default",
+  "presetName": "方案1"
+}

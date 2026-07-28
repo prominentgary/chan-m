@@ -1,0 +1,103 @@
+{
+  "code": "sh588110",
+  "period": "30m",
+  "exportedAt": 1785253347790,
+  "segments": [
+    {
+      "id": "s_mxz9df4k",
+      "kind": "segment",
+      "period": "30m",
+      "direction": "down",
+      "start": {
+        "time": 1782871200,
+        "price": 0.891
+      },
+      "end": {
+        "time": 1783477800,
+        "price": 0.753
+      }
+    },
+    {
+      "id": "s_gia3lo5y",
+      "kind": "segment",
+      "period": "30m",
+      "direction": "up",
+      "start": {
+        "time": 1783477800,
+        "price": 0.753
+      },
+      "end": {
+        "time": 1783648800,
+        "price": 0.827
+      }
+    },
+    {
+      "id": "s_najfthfa",
+      "kind": "segment",
+      "period": "30m",
+      "direction": "down",
+      "start": {
+        "time": 1783648800,
+        "price": 0.827
+      },
+      "end": {
+        "time": 1784601000,
+        "price": 0.539
+      }
+    }
+  ],
+  "zhongshus": [],
+  "presets": [
+    {
+      "id": "default",
+      "name": "方案1",
+      "segments": [
+        {
+          "id": "s_mxz9df4k",
+          "kind": "segment",
+          "period": "30m",
+          "direction": "down",
+          "start": {
+            "time": 1782871200,
+            "price": 0.891
+          },
+          "end": {
+            "time": 1783477800,
+            "price": 0.753
+          }
+        },
+        {
+          "id": "s_gia3lo5y",
+          "kind": "segment",
+          "period": "30m",
+          "direction": "up",
+          "start": {
+            "time": 1783477800,
+            "price": 0.753
+          },
+          "end": {
+            "time": 1783648800,
+            "price": 0.827
+          }
+        },
+        {
+          "id": "s_najfthfa",
+          "kind": "segment",
+          "period": "30m",
+          "direction": "down",
+          "start": {
+            "time": 1783648800,
+            "price": 0.827
+          },
+          "end": {
+            "time": 1784601000,
+            "price": 0.539
+          }
+        }
+      ],
+      "zhongshus": []
+    }
+  ],
+  "activePreset": "default",
+  "presetName": "方案1"
+}

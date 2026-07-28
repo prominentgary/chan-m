@@ -1,0 +1,131 @@
+{
+  "code": "sh000001",
+  "period": "30m",
+  "exportedAt": 1785253347822,
+  "segments": [
+    {
+      "id": "s_29xho30q",
+      "kind": "segment",
+      "period": "30m",
+      "direction": "down",
+      "start": {
+        "time": 1778724000,
+        "price": 4258.86
+      },
+      "end": {
+        "time": 1778828400,
+        "price": 4114.09
+      }
+    },
+    {
+      "id": "s_gb4m0xrt",
+      "kind": "segment",
+      "period": "30m",
+      "direction": "up",
+      "start": {
+        "time": 1778828400,
+        "price": 4114.09
+      },
+      "end": {
+        "time": 1779084000,
+        "price": 4138.5
+      }
+    },
+    {
+      "id": "s_xrmz1270",
+      "kind": "segment",
+      "period": "30m",
+      "direction": "down",
+      "start": {
+        "time": 1779084000,
+        "price": 4138.5
+      },
+      "end": {
+        "time": 1779157800,
+        "price": 4107.99
+      }
+    },
+    {
+      "id": "s_gns6u3df",
+      "kind": "segment",
+      "period": "30m",
+      "direction": "up",
+      "start": {
+        "time": 1779157800,
+        "price": 4107.99
+      },
+      "end": {
+        "time": 1779330600,
+        "price": 4199.53
+      }
+    }
+  ],
+  "zhongshus": [],
+  "presets": [
+    {
+      "id": "default",
+      "name": "方案1",
+      "segments": [
+        {
+          "id": "s_29xho30q",
+          "kind": "segment",
+          "period": "30m",
+          "direction": "down",
+          "start": {
+            "time": 1778724000,
+            "price": 4258.86
+          },
+          "end": {
+            "time": 1778828400,
+            "price": 4114.09
+          }
+        },
+        {
+          "id": "s_gb4m0xrt",
+          "kind": "segment",
+          "period": "30m",
+          "direction": "up",
+          "start": {
+            "time": 1778828400,
+            "price": 4114.09
+          },
+          "end": {
+            "time": 1779084000,
+            "price": 4138.5
+          }
+        },
+        {
+          "id": "s_xrmz1270",
+          "kind": "segment",
+          "period": "30m",
+          "direction": "down",
+          "start": {
+            "time": 1779084000,
+            "price": 4138.5
+          },
+          "end": {
+            "time": 1779157800,
+            "price": 4107.99
+          }
+        },
+        {
+          "id": "s_gns6u3df",
+          "kind": "segment",
+          "period": "30m",
+          "direction": "up",
+          "start": {
+            "time": 1779157800,
+            "price": 4107.99
+          },
+          "end": {
+            "time": 1779330600,
+            "price": 4199.53
+          }
+        }
+      ],
+      "zhongshus": []
+    }
+  ],
+  "activePreset": "default",
+  "presetName": "方案1"
+}

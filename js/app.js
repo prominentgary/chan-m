@@ -3694,10 +3694,71 @@ function removeSecurityFromHangqing(code) {
   if (state.activeTab === 'hangqing') renderHangqingView();
 }
 
+// ========== 本地离线证券库（移动端首选，避免依赖可达的后端 / 被 CORS 拦截的东方财富）==========
+let _A_SHARE_DB = null;        // { items: [[code, name, market, category], ...] }
+let _A_SHARE_DB_PROMISE = null;
+
+async function loadAshareDb() {
+  if (_A_SHARE_DB) return _A_SHARE_DB;
+  if (_A_SHARE_DB_PROMISE) return _A_SHARE_DB_PROMISE;
+  _A_SHARE_DB_PROMISE = (async () => {
+    try {
+      const res = await fetch('data/securities.json?v=' + Date.now());
+      if (!res.ok) throw new Error('http ' + res.status);
+      const data = await res.json();
+      _A_SHARE_DB = data && Array.isArray(data.items) ? data : null;
+    } catch (e) {
+      _A_SHARE_DB = null;
+    } finally {
+      _A_SHARE_DB_PROMISE = null;
+    }
+    return _A_SHARE_DB;
+  })();
+  return _A_SHARE_DB_PROMISE;
+}
+
+// 在本地库中按代码前缀 / 名称子串匹配（同步，毫秒级）。
+// 返回 code 统一为专业展示格式（000001.SZ），与后端结果一致，
+// 以便后续 fetchBars/toApiCode 正确拼接腾讯接口代码（sz000001）。
+function searchAshareDb(kw) {
+  if (!_A_SHARE_DB || !_A_SHARE_DB.items) return [];
+  const q = kw.toLowerCase();
+  const out = [];
+  for (const it of _A_SHARE_DB.items) {
+    const code = it[0], name = it[1], market = it[2];
+    if (code.indexOf(q) === 0 || name.toLowerCase().indexOf(q) >= 0) {
+      out.push({ code: `${code}.${market.toUpperCase()}`, name, market, category: it[3] });
+      if (out.length >= 40) break;
+    }
+  }
+  return out;
+}
+
 async function searchAshare(kw) {
   kw = (kw || '').trim();
   if (!kw) return [];
-  // 1) 优先：调用本地后端 /api/securities/search（局域网 / GitHub Pages 部署时不存在）
+
+  // 0) 首选：本地离线证券库（移动端无后端 / 东方财富被 CORS 拦截时唯一可用路径）
+  const db = await loadAshareDb();
+  if (db && db.items.length) {
+    const local = searchAshareDb(kw);
+    if (local.length) return local;
+    // 本地库已加载但未命中：6 位代码再尝试腾讯实时解析兜底
+    if (/^\d{6}$/.test(kw)) {
+      try {
+        const r = await resolveCode(kw);
+        if (r && r.code) return [{ code: r.code, name: r.name || kw, market: r.market }];
+      } catch (e) { /* ignore */ }
+    }
+    // 同源后端可用时仍尝试（局域网桌面端）
+    try {
+      const be = await searchByBackend(kw);
+      if (be && be.length) return be;
+    } catch (e) { /* ignore */ }
+    return [];
+  }
+
+  // 1) 本地库缺失：调用本地后端 /api/securities/search（局域网 / GitHub Pages 部署时不存在）
   try {
     const items = await searchByBackend(kw);
     if (items && items.length) return items;
