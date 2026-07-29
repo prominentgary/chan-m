@@ -4,6 +4,24 @@
 
 import { applyForwardAdjustAsync } from './adjust.js?v=20260725b';
 
+// 腾讯 qt.ifzq.gtimg.cn 系列接口返回 GBK 编码的文本。
+// 直接用 fetch().text() 默认按 UTF-8 解码会导致中文名乱码（锟斤拷）。
+// 因此改为读取 arrayBuffer 后按服务端声明的字符集（或 GBK）解码。
+async function fetchAsText(url) {
+  const resp = await fetch(url);
+  const buf = await resp.arrayBuffer();
+  const ct = (resp.headers.get('content-type') || '').toLowerCase();
+  // 提取 charset，如 gb2312 / gbk / gb18030 / utf-8
+  const m = ct.match(/charset=([\w-]+)/);
+  let charset = m ? m[1].toLowerCase() : '';
+  if (!charset || charset === 'gb2312' || charset === 'gb18030') charset = 'gbk';
+  try {
+    return new TextDecoder(charset).decode(buf);
+  } catch (_) {
+    return new TextDecoder('utf-8').decode(buf);
+  }
+}
+
 // 专业展示代码（159611.SZ）<-> 腾讯接口代码（sz159611）
 export function toApiCode(code) {
   const s = String(code || '').trim();
@@ -57,7 +75,7 @@ async function fetchMinute(code, period, count = 640) {
 async function fetchRealtime(code) {
   const api = toApiCode(code);
   const url = `https://qt.gtimg.cn/q=${api}`;
-  const text = await (await fetch(url)).text();
+  const text = await fetchAsText(url);
   const m = text.match(/="([^"]*)"/);
   if (!m) return null;
   const f = m[1].split('~');
@@ -78,7 +96,7 @@ async function fetchRealtime(code) {
 export async function fetchRealtimeMulti(codes) {
   const apiCodes = codes.map((c) => toApiCode(c));
   const url = `https://qt.gtimg.cn/q=${apiCodes.join(',')}`;
-  const text = await (await fetch(url)).text();
+  const text = await fetchAsText(url);
   const out = {};
   text.split(';').forEach((line) => {
     const m = line.match(/v_(\w+)="([^"]*)"/);
