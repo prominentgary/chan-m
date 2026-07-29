@@ -3,7 +3,7 @@
 import { fetchBars, fetchRealtimeMulti, formatTime, formatPrice, isETF, resolveCode } from './fetcher.js?v=20260725i';
 import { computeMACD } from './macd.js?v=20260725f';
 import { segmentStrength, detectStrengthIndicators, detectOneBuySell, detectTwoAndThreeBuySell, computeZhongshuStrength, detectZhongshu } from './algo.js?v=20260725f';
-import { renderSegments } from './table.js?v=20260725u';
+import { renderSegments } from './table.js?v=20260725v';
 import { renderKlineChart, sliceSegmentBars, renderIntradayChart } from './klinechart.js?v=20260725i';
 import { loadStaticData } from './sync.js?v=20260725g';
 import { openEditor } from './editor.js?v=20260725f';
@@ -4093,7 +4093,7 @@ function init() {
 
   if ('serviceWorker' in navigator && !window.__CHANM_NOCACHE__) {
     navigator.serviceWorker.addEventListener('controllerchange', () => location.reload());
-    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js?v=20260725h').catch(() => {}));
+    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js?v=20260725i').catch(() => {}));
   }
 
   // 搜索模式下：屏幕内任意横向滑动（>60px）即可关闭搜索框，无需点 ✕

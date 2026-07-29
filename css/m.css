@@ -429,8 +429,11 @@ body.search-header-fixed .search-edge-guard { display: block; }
   font-size: 10px;
   line-height: 1;
   font-weight: 600;
-  color: var(--wx-accent);
+  color: var(--wx-muted);
   white-space: nowrap;
+}
+.watch-ring-dur.is-full {
+  color: var(--wx-accent);
 }
 .watch-ring-track {
   fill: none;

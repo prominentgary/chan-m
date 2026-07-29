@@ -101,13 +101,14 @@ function segCard(seg, idx, ctx, readonly, extraClass = '', reversed = false) {
     const r = 12;
     const circ = 2 * Math.PI * r;
     const ratio = Math.min(1, ringTotal / ctx.maxDurationMin);
+    const isFull = ringTotal >= ctx.maxDurationMin;
     watchRing = `
       <div class="watch-ring">
         <svg viewBox="0 0 32 32">
           <circle class="watch-ring-track" cx="16" cy="16" r="${r}"/>
           <circle class="watch-ring-fill" cx="16" cy="16" r="${r}" stroke-dasharray="${(circ * ratio).toFixed(2)} ${circ.toFixed(2)}"/>
         </svg>
-        <span class="watch-ring-dur">${ringText}</span>
+        <span class="watch-ring-dur${isFull ? ' is-full' : ''}">${ringText}</span>
       </div>`;
   }
   return `
