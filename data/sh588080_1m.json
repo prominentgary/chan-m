@@ -1,7 +1,7 @@
 {
   "code": "sh588080",
   "period": "1m",
-  "exportedAt": 1785335185704,
+  "exportedAt": 1785340919861,
   "segments": [
     {
       "id": "s_x2k2qo0v",
@@ -3212,6 +3212,31 @@
         {
           "time": 1785205380,
           "price": 1.801
+        }
+      ]
+    },
+    {
+      "id": "s_dx5dew20",
+      "kind": "zhongshu",
+      "segmentIds": [
+        "s_regd94b9",
+        "s_l2k0tarm",
+        "s_g9i4b65u",
+        "s_ownmj8hk",
+        "s_afmwrs8l"
+      ],
+      "startTime": 1785290940,
+      "endTime": 1785294780,
+      "low": 1.649,
+      "high": 1.677,
+      "points": [
+        {
+          "time": 1785290940,
+          "price": 1.677
+        },
+        {
+          "time": 1785294780,
+          "price": 1.649
         }
       ]
     }
@@ -6430,6 +6455,31 @@
             {
               "time": 1785205380,
               "price": 1.801
+            }
+          ]
+        },
+        {
+          "id": "s_dx5dew20",
+          "kind": "zhongshu",
+          "segmentIds": [
+            "s_regd94b9",
+            "s_l2k0tarm",
+            "s_g9i4b65u",
+            "s_ownmj8hk",
+            "s_afmwrs8l"
+          ],
+          "startTime": 1785290940,
+          "endTime": 1785294780,
+          "low": 1.649,
+          "high": 1.677,
+          "points": [
+            {
+              "time": 1785290940,
+              "price": 1.677
+            },
+            {
+              "time": 1785294780,
+              "price": 1.649
             }
           ]
         }

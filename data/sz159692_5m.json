@@ -1,7 +1,7 @@
 {
   "code": "sz159692",
   "period": "5m",
-  "exportedAt": 1785335187919,
+  "exportedAt": 1785340921108,
   "segments": [
     {
       "id": "s_803o5wnl",
@@ -1359,6 +1359,62 @@
       "end": {
         "time": 1784784000,
         "price": 1.268
+      }
+    },
+    {
+      "id": "s_imrulcgd",
+      "kind": "segment",
+      "period": "5m",
+      "direction": "down",
+      "start": {
+        "time": 1784784000,
+        "price": 1.268
+      },
+      "end": {
+        "time": 1785117000,
+        "price": 1.22
+      }
+    },
+    {
+      "id": "s_0kcu374b",
+      "kind": "segment",
+      "period": "5m",
+      "direction": "up",
+      "start": {
+        "time": 1785117000,
+        "price": 1.22
+      },
+      "end": {
+        "time": 1785132600,
+        "price": 1.24
+      }
+    },
+    {
+      "id": "s_z6jy1fbb",
+      "kind": "segment",
+      "period": "5m",
+      "direction": "down",
+      "start": {
+        "time": 1785132600,
+        "price": 1.24
+      },
+      "end": {
+        "time": 1785219600,
+        "price": 1.214
+      }
+    },
+    {
+      "id": "s_amkbpks6",
+      "kind": "segment",
+      "period": "5m",
+      "direction": "up",
+      "start": {
+        "time": 1785219600,
+        "price": 1.214
+      },
+      "end": {
+        "time": 1785303900,
+        "price": 1.243
       }
     }
   ],
@@ -2913,6 +2969,62 @@
           "end": {
             "time": 1784784000,
             "price": 1.268
+          }
+        },
+        {
+          "id": "s_imrulcgd",
+          "kind": "segment",
+          "period": "5m",
+          "direction": "down",
+          "start": {
+            "time": 1784784000,
+            "price": 1.268
+          },
+          "end": {
+            "time": 1785117000,
+            "price": 1.22
+          }
+        },
+        {
+          "id": "s_0kcu374b",
+          "kind": "segment",
+          "period": "5m",
+          "direction": "up",
+          "start": {
+            "time": 1785117000,
+            "price": 1.22
+          },
+          "end": {
+            "time": 1785132600,
+            "price": 1.24
+          }
+        },
+        {
+          "id": "s_z6jy1fbb",
+          "kind": "segment",
+          "period": "5m",
+          "direction": "down",
+          "start": {
+            "time": 1785132600,
+            "price": 1.24
+          },
+          "end": {
+            "time": 1785219600,
+            "price": 1.214
+          }
+        },
+        {
+          "id": "s_amkbpks6",
+          "kind": "segment",
+          "period": "5m",
+          "direction": "up",
+          "start": {
+            "time": 1785219600,
+            "price": 1.214
+          },
+          "end": {
+            "time": 1785303900,
+            "price": 1.243
           }
         }
       ],

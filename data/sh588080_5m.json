@@ -1,7 +1,7 @@
 {
   "code": "sh588080",
   "period": "5m",
-  "exportedAt": 1785335185571,
+  "exportedAt": 1785340919559,
   "segments": [
     {
       "id": "s_a3zh8cqg",
@@ -645,6 +645,48 @@
       "end": {
         "time": 1785135300,
         "price": 1.849
+      }
+    },
+    {
+      "id": "s_ea1u1ccf",
+      "kind": "segment",
+      "period": "5m",
+      "direction": "down",
+      "start": {
+        "time": 1785135300,
+        "price": 1.849
+      },
+      "end": {
+        "time": 1785219600,
+        "price": 1.728
+      }
+    },
+    {
+      "id": "s_16uxivpt",
+      "kind": "segment",
+      "period": "5m",
+      "direction": "up",
+      "start": {
+        "time": 1785219600,
+        "price": 1.728
+      },
+      "end": {
+        "time": 1785289200,
+        "price": 1.752
+      }
+    },
+    {
+      "id": "s_gqe5bn6w",
+      "kind": "segment",
+      "period": "5m",
+      "direction": "down",
+      "start": {
+        "time": 1785289200,
+        "price": 1.752
+      },
+      "end": {
+        "time": 1785301500,
+        "price": 1.649
       }
     }
   ],
@@ -1464,6 +1506,48 @@
           "end": {
             "time": 1785135300,
             "price": 1.849
+          }
+        },
+        {
+          "id": "s_ea1u1ccf",
+          "kind": "segment",
+          "period": "5m",
+          "direction": "down",
+          "start": {
+            "time": 1785135300,
+            "price": 1.849
+          },
+          "end": {
+            "time": 1785219600,
+            "price": 1.728
+          }
+        },
+        {
+          "id": "s_16uxivpt",
+          "kind": "segment",
+          "period": "5m",
+          "direction": "up",
+          "start": {
+            "time": 1785219600,
+            "price": 1.728
+          },
+          "end": {
+            "time": 1785289200,
+            "price": 1.752
+          }
+        },
+        {
+          "id": "s_gqe5bn6w",
+          "kind": "segment",
+          "period": "5m",
+          "direction": "down",
+          "start": {
+            "time": 1785289200,
+            "price": 1.752
+          },
+          "end": {
+            "time": 1785301500,
+            "price": 1.649
           }
         }
       ],
