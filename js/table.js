@@ -26,14 +26,32 @@ function segDurationInfo(seg, bars, period) {
   if (count <= 0) return null;
   const intervalMin = PERIOD_MINUTES[period] ?? 1;
   const totalMin = count * intervalMin;
-  let text;
-  if (period === '1m') text = `${count}min`;
-  else if (period === 'day' || period === 'week' || period === 'month') {
-    text = `${fmtDurVal((count * intervalMin) / 1440)}d`;
-  } else {
-    text = `${fmtDurVal((count * intervalMin) / 60)}h`;
+  return { totalMin, text: durTextFromMin(totalMin, period) };
+}
+
+// 由总分钟数生成历时文字（与段历时同格式）
+function durTextFromMin(totalMin, period) {
+  if (period === '1m') return `${Math.round(totalMin)}min`;
+  if (period === 'day' || period === 'week' || period === 'month') {
+    return `${fmtDurVal(totalMin / 1440)}d`;
   }
-  return { totalMin, text };
+  return `${fmtDurVal(totalMin / 60)}h`;
+}
+
+// 盯盘段环形历时：从盯盘段起点一直延伸到最新一根 K 线（段内历时 + 段后剩余 K 线历时）
+function watchRingDurationInfo(seg, bars, period) {
+  const base = segDurationInfo(seg, bars, period);
+  if (!base || !bars || !bars.length) return base;
+  const sTime = seg.start?.time;
+  if (!sTime) return base;
+  let startIdx = -1;
+  for (let i = 0; i < bars.length; i++) {
+    if (bars[i].time >= sTime) { startIdx = i; break; }
+  }
+  if (startIdx < 0) return base;
+  const intervalMin = PERIOD_MINUTES[period] ?? 1;
+  const totalMin = (bars.length - startIdx) * intervalMin;
+  return { totalMin, text: durTextFromMin(totalMin, period) };
 }
 
 function segDurationText(seg, bars, period) {
@@ -74,18 +92,22 @@ function segCard(seg, idx, ctx, readonly, extraClass = '', reversed = false) {
   const durInfo = segDurationInfo(seg, ctx.bars, ctx.period);
   const dur = durInfo ? durInfo.text : '';
   const tw = durInfo ? Math.max(4, Math.min(100, (durInfo.totalMin / (ctx.maxDurationMin || 1)) * 100)) : 0;
-  // 盯盘段环形历时进度
+  // 盯盘段环形历时进度：段内历时 + 段后到最新 K 线的剩余历时
   let watchRing = '';
   if (seg._isWatch && durInfo && ctx.maxDurationMin > 0) {
+    const ringInfo = watchRingDurationInfo(seg, ctx.bars, ctx.period);
+    const ringTotal = ringInfo ? ringInfo.totalMin : durInfo.totalMin;
+    const ringText = ringInfo ? ringInfo.text : durInfo.text;
     const r = 12;
     const circ = 2 * Math.PI * r;
-    const ratio = Math.min(1, durInfo.totalMin / ctx.maxDurationMin);
+    const ratio = Math.min(1, ringTotal / ctx.maxDurationMin);
     watchRing = `
       <div class="watch-ring">
         <svg viewBox="0 0 32 32">
           <circle class="watch-ring-track" cx="16" cy="16" r="${r}"/>
           <circle class="watch-ring-fill" cx="16" cy="16" r="${r}" stroke-dasharray="${(circ * ratio).toFixed(2)} ${circ.toFixed(2)}"/>
         </svg>
+        <span class="watch-ring-dur">${ringText}</span>
       </div>`;
   }
   return `
