@@ -20,23 +20,6 @@
       ]
     },
     {
-      "code": "sh588080",
-      "name": "科创板50",
-      "periods": [
-        "1m",
-        "5m",
-        "30m",
-        "day",
-        "week"
-      ],
-      "presets": [
-        {
-          "id": "default",
-          "name": ""
-        }
-      ]
-    },
-    {
       "code": "sh588110",
       "name": "科创成长",
       "periods": [
@@ -51,6 +34,23 @@
         },
         {
           "id": "preset_8kais7ej",
+          "name": ""
+        }
+      ]
+    },
+    {
+      "code": "sh588080",
+      "name": "科创板50",
+      "periods": [
+        "1m",
+        "5m",
+        "30m",
+        "day",
+        "week"
+      ],
+      "presets": [
+        {
+          "id": "default",
           "name": ""
         }
       ]
