@@ -290,7 +290,19 @@ function drawMainCanvas(canvas, bars, segs, zhongshus, colors, period, digits, t
       ctx.fillRect(x - cw / 2, top, cw, bh);
     }
   }
-  // ★ 临时移除所有画线（中枢矩形 + 段连线），排查移动端十字光标问题
+  // 中枢矩形 + 段连线：使用局部参数 themeLines（不再依赖全局 _view），
+  // 避免多页周期弹窗并发渲染覆盖 _view 时，画线读取到错误的主题配置。
+  const meta = { bars, xOf, yOf, themeLines };
+  // 中枢点线矩形
+  if (zhongshus && zhongshus.length) {
+    for (const zs of zhongshus) {
+      drawZhongshuRect(ctx, meta, zs, colors);
+    }
+  }
+  // 段起点→终点 点线段连接
+  for (const { seg: s, no } of segList) {
+    if (s?.start && s?.end) drawSegConnector(ctx, meta, s, colors, no);
+  }
 
   return { ctx, w, h, n, min, max, plotW, plotH, padL, xOf, yOf, seg: segList.map((x) => x.seg), bars, colors, zhongshus };
 }
