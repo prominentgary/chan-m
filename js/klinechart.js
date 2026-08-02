@@ -172,9 +172,11 @@ export function renderKlineChart(main, sub, bars, opts = {}) {
   if (opts.subToggle) bindSubToggle(sub);
   if (!opts.noSwipe) {
     bindCrosshair(view, main, {});
-    bindSubSwipe(sub);
+    bindSubSwipe(sub, window.switchKlineSegment);
   } else if (opts.crosshairOnly) {
     bindCrosshair(view, main, { noSwitch: true, onSwipe: opts.onSwipe });
+    // 副图左右滑切换：无论是否处于十字线态都生效，方便在十字线显示时也能切页/切段
+    bindSubSwipe(sub, opts.onSwipe);
   }
 }
 
@@ -412,6 +414,7 @@ function bindCrosshair(view, main, opts = {}) {
   let moved = false;
   let swiping = false;
   let hideTimer = null;
+  let downT = 0;       // pointerdown 时间戳，用于区分「长按触发」与「十字线态下的轻点」
 
   // 使用 view 而非 _view 的局部重绘
   const repaintLocal = (cross) => {
@@ -525,6 +528,7 @@ function bindCrosshair(view, main, opts = {}) {
     // canvas 已有 touch-action:none CSS，不额外 preventDefault
     sx = e.clientX; sy = e.clientY;
     lpFired = false; moved = false; swiping = false;
+    downT = Date.now();
     clearLp();
     clearHide();
     if (e.pointerType === 'mouse') {
@@ -575,20 +579,30 @@ function bindCrosshair(view, main, opts = {}) {
       }
       return;
     }
-    if (view.crossActive) scheduleHide();
+    if (view.crossActive) {
+      // 十字线已激活时：若为一次「轻点」（非长按触发、几乎未移动、间隔很短），
+      // 视为点击空白区域，立即退出十字线；若是长按触发后松手则保留 5s 自动隐藏。
+      const isTap = !lpFired && !moved && (Date.now() - downT) < LONG_MS;
+      if (isTap) hideCross();
+      else scheduleHide();
+    }
   });
   main.addEventListener('pointercancel', (e) => { try { main.releasePointerCapture(e.pointerId); } catch {} clearLp(); if (!swiping) scheduleHide(); });
   main.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse') repaintLocal(); });
   main.addEventListener('contextmenu', (e) => e.preventDefault());
 }
 
-// 副图左右滑切换上/下段（左滑→下一段，右滑→上一段）；边缘滑动交给全局手势退出弹窗。
-function bindSubSwipe(sub) {
+// 副图左右滑切换（左滑→下一项，右滑→上一项）；边缘滑动交给全局手势退出弹窗。
+// swipeFn 由调用方传入：周期卡片弹窗传 switchPeriodPage，段卡片弹窗传 switchKlineSegment。
+// 注意：副图横滑切换不受主图十字线状态影响，任何时刻都生效，方便在十字线显示时也能切页/切段。
+function bindSubSwipe(sub, swipeFn) {
   if (sub._klBound) return;
   sub._klBound = true;
+  const fn = swipeFn || window.switchKlineSegment;
 
   const EDGE = 28;        // 与全局边缘手势一致：边缘滑动用于退出弹窗
-  const SWIPE_PX = 46;    // 切换段所需的最小水平位移
+  const SWIPE_PX = 46;    // 切换所需的最小水平位移
+  const MOVE_PX = 12;     // 判定为有效位移的阈值
   let sx = 0, sy = 0;     // pointerdown 起点
   let swiping = false;    // 是否已判定为横向滑动
   let moved = false;      // 是否发生明显位移
@@ -602,12 +616,13 @@ function bindSubSwipe(sub) {
   sub.addEventListener('pointermove', (e) => {
     if (moved) return;
     const dx = e.clientX - sx, dy = e.clientY - sy;
-    if (Math.abs(dx) > 12 || Math.abs(dy) > 12) {
+    if (Math.abs(dx) > MOVE_PX || Math.abs(dy) > MOVE_PX) {
       moved = true;
       // 判定为横向滑动后阻止页面滚动，保证切换顺滑；纵向位移不拦截
       if (Math.abs(dx) > Math.abs(dy)) {
         swiping = true;
         if (e.cancelable) e.preventDefault();
+        e.stopPropagation();
       }
     }
   });
@@ -619,9 +634,7 @@ function bindSubSwipe(sub) {
       // 仅处理横向滑动；边缘发起的滑动交给全局手势退出弹窗
       if (Math.abs(dx) >= SWIPE_PX && Math.abs(dx) > Math.abs(dy)) {
         const atEdge = sx <= EDGE || sx >= window.innerWidth - EDGE;
-        if (!atEdge && window.switchKlineSegment) {
-          window.switchKlineSegment(dx < 0 ? 'next' : 'prev');
-        }
+        if (!atEdge && fn) fn(dx < 0 ? 'next' : 'prev');
       }
     }
   });
