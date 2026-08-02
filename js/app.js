@@ -1179,48 +1179,9 @@ async function openMiniSheet(code, period) {
   }
   pages.addEventListener('scroll', onPagesScroll, { passive: true });
 
-  // 自定义滑动切换：与段卡片弹窗一致的阈值（46px），一次只切一页
-  let psSx = 0, psSy = 0, psSwiping = false, psMoved = false, psHandled = false;
-  const PS_EDGE = 28;
-  const PS_SWIPE_PX = 46;
-  pages.addEventListener('pointerdown', (e) => {
-    if (e.pointerType === 'mouse') return;
-    if (pages.classList.contains('cross-lock')) return;
-    psSx = e.clientX; psSy = e.clientY;
-    psSwiping = false; psMoved = false; psHandled = false;
-  });
-  pages.addEventListener('pointermove', (e) => {
-    if (pages.classList.contains('cross-lock') || psMoved) return;
-    const dx = e.clientX - psSx, dy = e.clientY - psSy;
-    if (Math.abs(dx) > 12 || Math.abs(dy) > 12) {
-      psMoved = true;
-      if (Math.abs(dx) > Math.abs(dy)) {
-        psSwiping = true;
-        if (e.cancelable) e.preventDefault();
-      }
-    }
-  });
-  pages.addEventListener('pointerup', (e) => {
-    if (pages.classList.contains('cross-lock') || !psSwiping || psHandled) return;
-    const dx = e.clientX - psSx;
-    const dy = e.clientY - psSy;
-    const atEdge = psSx <= PS_EDGE || psSx >= window.innerWidth - PS_EDGE;
-    if (atEdge || Math.abs(dx) < PS_SWIPE_PX || Math.abs(dx) <= Math.abs(dy)) return;
-    psHandled = true;
-    const pageWidth = pages.clientWidth || 1;
-    const curIdx = Math.max(0, Math.min(periods.length - 1, Math.round(pages.scrollLeft / pageWidth)));
-    const targetIdx = dx < 0
-      ? Math.min(periods.length - 1, curIdx + 1)
-      : Math.max(0, curIdx - 1);
-    if (targetIdx === curIdx) return;
-    // 用 JS 直接定位到目标页，替代原生 scroll-snap 的惯性吸附，避免一次滑过多个周期
-    pages.style.scrollBehavior = 'smooth';
-    pages.scrollLeft = targetIdx * pageWidth;
-    const restore = () => { pages.style.scrollBehavior = ''; };
-    pages.addEventListener('scrollend', restore, { once: true });
-    setTimeout(restore, 400);
-  });
-  pages.addEventListener('pointercancel', () => { psSwiping = false; psMoved = false; psHandled = false; });
+  // 周期页的左右滑切换不再单独绑定手势：由 renderKlineChart 的 bindCrosshair 通过
+  // onSwipe: switchPeriodPage 统一处理（与段卡片弹窗长按 K 线一致），避免两套手势冲突
+  // 导致长按出不了十字、横滑也失效。
 
   const sheet = document.getElementById('mini-sheet');
   backdrop.classList.add('show');
@@ -1591,7 +1552,12 @@ function paintKline() {
   }
   const main = document.getElementById('kline-main');
   const sub = document.getElementById('kline-sub');
-  renderKlineChart(main, sub, sliced, { segs: viewSegItems, sub: _klineSub, period, digits, subH: 96 });
+  renderKlineChart(main, sub, sliced, {
+    segs: viewSegItems, sub: _klineSub, period, digits, subH: 96,
+    // 与周期列表弹窗一致：noSwipe + crosshairOnly 让主图单独接管手势，避免 bindSubSwipe 双层
+    // 绑定导致横滑切换被吞；onSwipe 保留 K 线弹窗内左右滑切换段的能力。
+    noSwipe: true, crosshairOnly: true, onSwipe: switchKlineSegment,
+  });
 }
 
 // K 线弹窗内左右滑切换窗口（左滑→下一个 3 段窗口，右滑→上一个 3 段窗口）

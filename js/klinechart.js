@@ -148,7 +148,8 @@ export function sliceSegmentBars(bars, seg) {
 export function renderKlineChart(main, sub, bars, opts = {}) {
   const colors = resolveColors();
   const period = opts.period || '1m';
-  _view = {
+  // 先构建完整视图快照（局部变量），再赋值全局 _view，避免并发覆盖导致 bindCrosshair 拿到错误的 main
+  const view = {
     main,
     sub,
     bars: bars || [],
@@ -165,14 +166,15 @@ export function renderKlineChart(main, sub, bars, opts = {}) {
     crossActive: false, // 触摸长按后进入的十字态
     onCrossChange: opts.onCrossChange || null,
   };
+  _view = view;
   repaintMain();
   repaintSub();
   if (opts.subToggle) bindSubToggle(sub);
   if (!opts.noSwipe) {
-    bindCrosshair();
-    bindSubSwipe();
+    bindCrosshair(view, main, {});
+    bindSubSwipe(sub);
   } else if (opts.crosshairOnly) {
-    bindCrosshair({ noSwitch: true });
+    bindCrosshair(view, main, { noSwitch: true, onSwipe: opts.onSwipe });
   }
 }
 
@@ -188,9 +190,9 @@ function bindSubToggle(sub) {
 
 function repaintMain(cross) {
   if (!_view) return;
-  const { main, bars, segs, zhongshus, colors, period, digits } = _view;
-  _view.mainMeta = drawMainCanvas(main, bars, segs, zhongshus, colors, period, digits);
-  if (cross) drawMainCross(_view.mainMeta, cross);
+  const { main, bars, segs, zhongshus, colors, period, digits, themeLines } = _view;
+  _view.mainMeta = drawMainCanvas(main, bars, segs, zhongshus, colors, period, digits, themeLines);
+  if (cross) drawMainCross(_view.mainMeta, cross, colors, digits, period);
 }
 
 function repaintSub() {
@@ -199,7 +201,7 @@ function repaintSub() {
   _view.subMeta = drawSubCanvas(sub, bars, subType, colors, period, subH, solidMacd);
 }
 
-function drawMainCanvas(canvas, bars, segs, zhongshus, colors, period, digits) {
+function drawMainCanvas(canvas, bars, segs, zhongshus, colors, period, digits, themeLines) {
   const { ctx, w, h } = setupCanvas(canvas, 220);
   ctx.clearRect(0, 0, w, h);
   if (!bars.length) {
@@ -288,17 +290,7 @@ function drawMainCanvas(canvas, bars, segs, zhongshus, colors, period, digits) {
       ctx.fillRect(x - cw / 2, top, cw, bh);
     }
   }
-  const meta = { bars, xOf, yOf, themeLines: _view.themeLines };
-  // 中枢点线矩形
-  if (zhongshus && zhongshus.length) {
-    for (const zs of zhongshus) {
-      drawZhongshuRect(ctx, meta, zs, colors);
-    }
-  }
-  // 段起点→终点 点线段连接
-  for (const { seg: s, no } of segList) {
-    if (s?.start && s?.end) drawSegConnector(ctx, meta, s, colors, no);
-  }
+  // ★ 临时移除所有画线（中枢矩形 + 段连线），排查移动端十字光标问题
 
   return { ctx, w, h, n, min, max, plotW, plotH, padL, xOf, yOf, seg: segList.map((x) => x.seg), bars, colors, zhongshus };
 }
@@ -388,23 +380,101 @@ function drawSubCanvas(canvas, bars, subType, colors, period, subH, solidMacd) {
 // 主图十字光标 + OHLC 读数 + 左右滑切换段
 // 交互：鼠标悬停实时跟随；触摸长按图形区域(>350ms)显示十字并实时展示坐标；
 //       未进入十字态时主图左右滑切换上/下段。
-function bindCrosshair(opts = {}) {
-  const main = _view.main;
+// 重要：bindCrosshair 接收 view + main 参数（而非从全局 _view 读取），
+//       避免多页周期弹窗中并发 renderKlineChart 覆盖全局 _view 导致拿到错误的 canvas。
+function bindCrosshair(view, main, opts = {}) {
+  if (!view || !main) { console.warn('[十字] bindCrosshair skip: no view or main'); return; }
   if (main._klBound) return;
   main._klBound = true;
+  // 页面级视图快照：闭包持有，不受后续 renderKlineChart 覆盖全局 _view 的影响
   const noSwitch = opts.noSwitch;
-  const swipeFn = opts.onSwipe || (!noSwitch ? window.switchKlineSegment : null);
+  const swipeFn = opts.onSwipe || window.switchKlineSegment;
 
-  const EDGE = 28;        // 与全局边缘手势一致：边缘滑动用于退出弹窗
-  const LONG_MS = 350;    // 长按阈值
-  const SWIPE_PX = 46;    // 切换段所需的最小水平位移
-  let sx = 0, sy = 0;     // pointerdown 起点
-  let lpTimer = null;     // 长按定时器
-  let lpFired = false;    // 是否已进入十字态
-  let moved = false;      // 是否发生明显位移
-  let swiping = false;    // 是否判定为横向滑动切换段
-  let hideTimer = null;   // 松手后隐藏十字的延迟定时器
+  const EDGE = 28;
+  const LONG_MS = 350;
+  const SWIPE_PX = 46;
+  const MOVE_THRESHOLD = 20;  // 移动端手指抖动容差，避免轻微抖动误判为滑动
+  let sx = 0, sy = 0;
+  let lpTimer = null;
+  let lpFired = false;
+  let moved = false;
+  let swiping = false;
+  let hideTimer = null;
 
+  // 使用 view 而非 _view 的局部重绘
+  const repaintLocal = (cross) => {
+    const { bars, segs, zhongshus, colors, period, digits, themeLines } = view;
+    if (!bars || !bars.length) return;
+    if (!main.isConnected) return;
+    if (!main.clientWidth || !main.clientHeight) return;
+    const newMeta = drawMainCanvas(main, bars, segs, zhongshus, colors, period, digits, themeLines);
+    if (!newMeta || !newMeta.n) return;
+    view.mainMeta = newMeta;
+    if (cross) drawMainCrossLocal(cross);
+  };
+  const drawMainCrossLocal = (cross) => {
+    const meta = view.mainMeta;
+    if (!meta) return;
+    const colors = view.colors;
+    const { ctx, padL, plotW, plotH, min, max } = meta;
+    const b = cross.bar;
+    const cx = cross.x;
+    const cy = Math.min(plotH, Math.max(0, cross.y));
+    ctx.save();
+    ctx.strokeStyle = colors.muted;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.moveTo(cx, 0);
+    ctx.lineTo(cx, plotH);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(padL, cy);
+    ctx.lineTo(padL + plotW, cy);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    const digits = view.digits;
+    const price = max - (cy / plotH) * (max - min);
+    const priceTxt = price.toFixed(digits);
+    ctx.font = '10px sans-serif';
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'center';
+    const pw = ctx.measureText(priceTxt).width;
+    const px = padL + plotW + 24, py = cy;
+    ctx.fillStyle = colors.accent;
+    roundRect(ctx, px - pw / 2 - 4, py - 8, pw + 8, 16, 3);
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.fillText(priceTxt, px, py);
+    const timeTxt = fmtAxis(b.time, view.period);
+    ctx.textAlign = 'center';
+    const timeW = ctx.measureText(timeTxt).width;
+    const tx = Math.max(padL + 4 + timeW / 2, Math.min(padL + plotW - 4 - timeW / 2, cx));
+    const ty = plotH + 9;
+    ctx.fillStyle = colors.accent;
+    roundRect(ctx, tx - timeW / 2 - 4, ty - 7, timeW + 8, 14, 3);
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.fillText(timeTxt, tx, ty);
+    const up = b.close >= b.open;
+    const col = up ? colors.red : colors.green;
+    const txt =
+      `${fmtAxis(b.time, view.period)}  开${b.open.toFixed(digits)} 高${b.high.toFixed(digits)} ` +
+      `低${b.low.toFixed(digits)} 收${b.close.toFixed(digits)} 量${fmtVol(b.volume || 0)}`;
+    ctx.font = '10px sans-serif';
+    ctx.textBaseline = 'top';
+    ctx.textAlign = 'left';
+    const tw = ctx.measureText(txt).width;
+    const bx = padL + 2, by = 2, bw = Math.min(plotW - 4, tw + 8), bh = 14;
+    ctx.fillStyle = colors.card;
+    ctx.globalAlpha = 0.88;
+    roundRect(ctx, bx, by, bw, bh, 3);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = col;
+    ctx.fillText(txt, bx + 4, by + 2);
+    ctx.restore();
+  };
   const crossPos = (e) => {
     const rect = main.getBoundingClientRect();
     let x = e.clientX - rect.left;
@@ -414,47 +484,46 @@ function bindCrosshair(opts = {}) {
     return { x, y };
   };
   const showAt = (e) => {
-    if (!_view || !_view.mainMeta) return;
+    if (!view.mainMeta) return;
     const { x, y } = crossPos(e);
-    const meta = _view.mainMeta;
+    const meta = view.mainMeta;
     if (!meta || !meta.n) return;
     let idx = Math.round((x - meta.padL) / (meta.plotW / meta.n) - 0.5);
     idx = Math.max(0, Math.min(meta.n - 1, idx));
-    const b = _view.bars[idx];
+    const b = view.bars[idx];
     if (!b) return;
-    repaintMain({ x, y, idx, bar: b });
+    repaintLocal({ x, y, idx, bar: b });
   };
   const clearLp = () => { if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; } };
   const clearHide = () => { if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; } };
   const setCrossActive = (active) => {
-    if (!_view) return;
-    _view.crossActive = active;
-    if (_view.onCrossChange) {
-      try { _view.onCrossChange(active); } catch {}
+    view.crossActive = active;
+    if (view.onCrossChange) {
+      try { view.onCrossChange(active); } catch {}
     }
   };
-  const hideCross = () => { if (_view && _view.crossActive) { setCrossActive(false); repaintMain(); } };
+  const hideCross = () => { if (view.crossActive) { setCrossActive(false); repaintLocal(); } };
   const scheduleHide = () => {
     clearHide();
     hideTimer = setTimeout(() => { hideTimer = null; hideCross(); }, 5000);
   };
 
   main.addEventListener('pointerdown', (e) => {
-    if (e.clientX <= EDGE || e.clientX >= window.innerWidth - EDGE) return; // 边缘区交给退出弹窗手势
-    // 非弹窗模式下阻止浏览器长按选择/系统菜单等默认行为；弹窗模式需保留横向滚动切换页面
-    if (!noSwitch && e.cancelable) e.preventDefault();
+    if (e.clientX <= EDGE || e.clientX >= window.innerWidth - EDGE) return;
+    // canvas 已有 touch-action:none CSS，不额外 preventDefault
     sx = e.clientX; sy = e.clientY;
     lpFired = false; moved = false; swiping = false;
     clearLp();
     clearHide();
-    try { main.setPointerCapture(e.pointerId); } catch {}
     if (e.pointerType === 'mouse') {
-      // 鼠标：按下即显示并跟随
+      try { main.setPointerCapture(e.pointerId); } catch {}
       setCrossActive(true);
       showAt(e);
     } else {
+      // 触摸：延迟到长按确认后再 capture，避免过早 capture 干扰浏览器事件分发
       lpTimer = setTimeout(() => {
         lpFired = true;
+        try { main.setPointerCapture(e.pointerId); } catch {}
         setCrossActive(true);
         showAt(e);
       }, LONG_MS);
@@ -462,19 +531,18 @@ function bindCrosshair(opts = {}) {
   });
 
   main.addEventListener('pointermove', (e) => {
-    if (e.pointerType === 'mouse') { showAt(e); return; } // 鼠标悬停实时跟随
-    if (_view.crossActive) { // 已进入十字态：跟随手指并阻止页面滚动/冒泡
+    if (e.pointerType === 'mouse') { showAt(e); return; }
+    if (view.crossActive) {
       if (e.cancelable) e.preventDefault();
       e.stopPropagation();
       showAt(e);
       return;
     }
-    // 长按未触发前出现明显位移 → 判定滑动或取消长按
-    if (!moved && (Math.abs(e.clientX - sx) > 12 || Math.abs(e.clientY - sy) > 12)) {
+    if (!moved && (Math.abs(e.clientX - sx) > MOVE_THRESHOLD || Math.abs(e.clientY - sy) > MOVE_THRESHOLD)) {
       moved = true;
-      clearLp();
       const dx = e.clientX - sx, dy = e.clientY - sy;
       if (swipeFn && Math.abs(dx) > Math.abs(dy)) {
+        clearLp();
         swiping = true;
         if (e.cancelable) e.preventDefault();
         e.stopPropagation();
@@ -495,16 +563,15 @@ function bindCrosshair(opts = {}) {
       }
       return;
     }
-    if (_view.crossActive) scheduleHide(); // 手指松开后保持 5 秒再消失
+    if (view.crossActive) scheduleHide();
   });
   main.addEventListener('pointercancel', (e) => { try { main.releasePointerCapture(e.pointerId); } catch {} clearLp(); if (!swiping) scheduleHide(); });
-  main.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse') repaintMain(); });
+  main.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse') repaintLocal(); });
   main.addEventListener('contextmenu', (e) => e.preventDefault());
 }
 
 // 副图左右滑切换上/下段（左滑→下一段，右滑→上一段）；边缘滑动交给全局手势退出弹窗。
-function bindSubSwipe() {
-  const sub = _view.sub;
+function bindSubSwipe(sub) {
   if (sub._klBound) return;
   sub._klBound = true;
 
@@ -550,8 +617,7 @@ function bindSubSwipe() {
   sub.addEventListener('contextmenu', (e) => e.preventDefault());
 }
 
-function drawMainCross(meta, cross) {
-  const colors = _view.colors;
+function drawMainCross(meta, cross, colors, digits, period) {
   const { ctx, padL, plotW, plotH, min, max } = meta;
   const b = cross.bar;
   const cx = cross.x;
@@ -569,7 +635,6 @@ function drawMainCross(meta, cross) {
   ctx.lineTo(padL + plotW, cy);
   ctx.stroke();
   ctx.setLineDash([]);
-  const digits = _view.digits;
 
   // 右端价格标签（主题色底 + 白字）
   const price = max - (cy / plotH) * (max - min);
@@ -586,7 +651,7 @@ function drawMainCross(meta, cross) {
   ctx.fillText(priceTxt, px, py);
 
   // 底部时间标签（主题色底 + 白字）
-  const timeTxt = fmtAxis(b.time, _view.period);
+  const timeTxt = fmtAxis(b.time, period);
   ctx.textAlign = 'center';
   const timeW = ctx.measureText(timeTxt).width;
   const tx = Math.max(padL + 4 + timeW / 2, Math.min(padL + plotW - 4 - timeW / 2, cx));
@@ -601,7 +666,7 @@ function drawMainCross(meta, cross) {
   const up = b.close >= b.open;
   const col = up ? colors.red : colors.green;
   const txt =
-    `${fmtAxis(b.time, _view.period)}  开${b.open.toFixed(digits)} 高${b.high.toFixed(digits)} ` +
+    `${fmtAxis(b.time, period)}  开${b.open.toFixed(digits)} 高${b.high.toFixed(digits)} ` +
     `低${b.low.toFixed(digits)} 收${b.close.toFixed(digits)} 量${fmtVol(b.volume || 0)}`;
   ctx.font = '10px sans-serif';
   ctx.textBaseline = 'top';

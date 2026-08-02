@@ -72,11 +72,24 @@
       ]
     },
     {
+      "code": "sh512710",
+      "name": "军工龙头ETF",
+      "periods": [
+        "30m",
+        "day"
+      ],
+      "presets": [
+        {
+          "id": "default",
+          "name": ""
+        }
+      ]
+    },
+    {
       "code": "sh000001",
       "name": "上证指数",
       "periods": [
-        "5m",
-        "30m"
+        "5m"
       ],
       "presets": [
         {
@@ -85,19 +98,6 @@
         },
         {
           "id": "preset_u9eijhfd",
-          "name": ""
-        }
-      ]
-    },
-    {
-      "code": "sh512710",
-      "name": "军工龙头ETF",
-      "periods": [
-        "30m"
-      ],
-      "presets": [
-        {
-          "id": "default",
           "name": ""
         }
       ]

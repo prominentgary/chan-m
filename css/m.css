@@ -979,7 +979,8 @@ body.search-header-fixed .search-edge-guard { display: block; }
   overflow-x: auto;
   overflow-y: hidden;
   scroll-snap-type: none;
-  touch-action: pan-y;
+  /* 手势完全由 JS（bindCrosshair 的 onSwipe）接管，禁用原生滚动避免抢占长按/横滑手势 */
+  touch-action: none;
   -webkit-overflow-scrolling: touch;
 }
 .period-sheet-pages::-webkit-scrollbar { display: none; }
