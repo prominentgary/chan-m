@@ -1,7 +1,7 @@
 {
   "code": "sh588110",
   "period": "30m",
-  "exportedAt": 1785772691681,
+  "exportedAt": 1785774701988,
   "segments": [
     {
       "id": "s_vbfmfntw",
@@ -127,20 +127,6 @@
       "end": {
         "time": 1785389400,
         "price": 0.5
-      }
-    },
-    {
-      "id": "s_ux946gne",
-      "kind": "segment",
-      "period": "30m",
-      "direction": "up",
-      "start": {
-        "time": 1785389400,
-        "price": 0.5
-      },
-      "end": {
-        "time": 1785475800,
-        "price": 0.561
       }
     }
   ],
@@ -321,20 +307,6 @@
           "end": {
             "time": 1785389400,
             "price": 0.5
-          }
-        },
-        {
-          "id": "s_ux946gne",
-          "kind": "segment",
-          "period": "30m",
-          "direction": "up",
-          "start": {
-            "time": 1785389400,
-            "price": 0.5
-          },
-          "end": {
-            "time": 1785475800,
-            "price": 0.561
           }
         }
       ],
