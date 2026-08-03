@@ -1,7 +1,7 @@
 {
   "code": "sh588080",
   "period": "day",
-  "exportedAt": 1785644850008,
+  "exportedAt": 1785772692316,
   "segments": [
     {
       "id": "s_cp09tvim",
@@ -603,6 +603,34 @@
       "end": {
         "time": 1782835200,
         "price": 2.321
+      }
+    },
+    {
+      "id": "s_p9jugx8g",
+      "kind": "segment",
+      "period": "day",
+      "direction": "down",
+      "start": {
+        "time": 1783612800,
+        "price": 2.314
+      },
+      "end": {
+        "time": 1784476800,
+        "price": 1.684
+      }
+    },
+    {
+      "id": "s_wg5a8omv",
+      "kind": "segment",
+      "period": "day",
+      "direction": "up",
+      "start": {
+        "time": 1784476800,
+        "price": 1.684
+      },
+      "end": {
+        "time": 1785081600,
+        "price": 1.849
       }
     }
   ],
@@ -1266,6 +1294,34 @@
             "time": 1782835200,
             "price": 2.321
           }
+        },
+        {
+          "id": "s_p9jugx8g",
+          "kind": "segment",
+          "period": "day",
+          "direction": "down",
+          "start": {
+            "time": 1783612800,
+            "price": 2.314
+          },
+          "end": {
+            "time": 1784476800,
+            "price": 1.684
+          }
+        },
+        {
+          "id": "s_wg5a8omv",
+          "kind": "segment",
+          "period": "day",
+          "direction": "up",
+          "start": {
+            "time": 1784476800,
+            "price": 1.684
+          },
+          "end": {
+            "time": 1785081600,
+            "price": 1.849
+          }
         }
       ],
       "zhongshus": [
@@ -1327,14 +1383,6 @@
   "activePreset": "default",
   "presetName": "",
   "bars": [
-    {
-      "time": "2023-04-13",
-      "open": 1.147,
-      "high": 1.148,
-      "low": 1.121,
-      "close": 1.125,
-      "volume": 3597241.0
-    },
     {
       "time": "2023-04-14",
       "open": 1.132,
@@ -7726,6 +7774,14 @@
       "low": 1.671,
       "close": 1.676,
       "volume": 18401456.0
+    },
+    {
+      "time": "2026-08-03",
+      "open": 1.641,
+      "high": 1.658,
+      "low": 1.586,
+      "close": 1.586,
+      "volume": 16305595.0
     }
   ]
 }
