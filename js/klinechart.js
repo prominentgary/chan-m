@@ -175,8 +175,10 @@ export function renderKlineChart(main, sub, bars, opts = {}) {
     bindSubSwipe(sub, window.switchKlineSegment);
   } else if (opts.crosshairOnly) {
     bindCrosshair(view, main, { noSwitch: true, onSwipe: opts.onSwipe });
-    // 副图左右滑切换：无论是否处于十字线态都生效，方便在十字线显示时也能切页/切段
-    bindSubSwipe(sub, opts.onSwipe);
+    // 仅当显式要求副图横滑切换时才绑定（周期弹窗切页需要）。
+    // 段卡片 K 线弹层(noSwipe)本就锁定显示该段，禁止任何横滑切换，否则长按出十字后
+    // 手指在副图微动会误触发 switchKlineSegment，把 K 线换成相邻段（如 2、3、4 段）。
+    if (opts.subSwipe) bindSubSwipe(sub, opts.onSwipe);
   }
 }
 
@@ -192,6 +194,7 @@ function bindSubToggle(sub) {
 
 function repaintMain(cross) {
   if (!_view) return;
+  console.log('[repaintMain]', { period: _view.period, nBars: _view.bars?.length, nSegs: _view.segs?.length, cross: !!cross });
   const { main, bars, segs, zhongshus, colors, period, digits, themeLines } = _view;
   _view.mainMeta = drawMainCanvas(main, bars, segs, zhongshus, colors, period, digits, themeLines);
   if (cross) drawMainCross(_view.mainMeta, cross, colors, digits, period);
@@ -402,7 +405,8 @@ function bindCrosshair(view, main, opts = {}) {
   main._klBound = true;
   // 页面级视图快照：闭包持有，不受后续 renderKlineChart 覆盖全局 _view 的影响
   const noSwitch = opts.noSwitch;
-  const swipeFn = opts.onSwipe || window.switchKlineSegment;
+  // noSwitch 为真（如段卡片 K 线弹层）时禁用横滑切段/切页，否则长按出十字后手指微动会误触发切段
+  const swipeFn = noSwitch ? null : (opts.onSwipe || window.switchKlineSegment);
 
   const EDGE = 28;
   const LONG_MS = 350;
@@ -570,7 +574,7 @@ function bindCrosshair(view, main, opts = {}) {
     if (e.pointerType === 'mouse') { hideCross(); return; }
     clearLp();
     try { main.releasePointerCapture(e.pointerId); } catch {}
-    if (swiping && swipeFn) {
+    if (swiping && swipeFn && !view.crossActive) {
       const dx = e.clientX - sx;
       const dy = e.clientY - sy;
       const atEdge = sx <= EDGE || sx >= window.innerWidth - EDGE;

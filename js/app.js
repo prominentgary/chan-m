@@ -1112,7 +1112,11 @@ async function openMiniSheet(code, period) {
         const res = await fetchBars(code, p, 800);
         bars = res.bars || [];
         computeMACD(bars);
-        state._currentBars = { code, period: p, bars };
+        // 仅当全局缓存仍是本周期时才写入，避免预渲染相邻周期（如 1m）覆盖正在使用的其它周期数据，
+        // 否则会污染详情页 K 线弹层所依赖的全局 _currentBars。
+        if (!state._currentBars || state._currentBars.period === p) {
+          state._currentBars = { code, period: p, bars };
+        }
       } catch {
         bars = [];
       }
@@ -1149,6 +1153,7 @@ async function openMiniSheet(code, period) {
       renderKlineChart(main, sub, sliced, {
         segs: viewSegItems, zhongshus: zhongshuRects, sub: 'macd', period: p, digits, subH: 96,
         noSwipe: true, subToggle: true, themeLines: true, solidMacd: true, crosshairOnly: true,
+        subSwipe: true,
         onCrossChange: toggleCrossLock,
         onSwipe: switchPeriodPage,
       });
@@ -1156,6 +1161,7 @@ async function openMiniSheet(code, period) {
       renderKlineChart(main, sub, [], {
         segs: [], zhongshus: zhongshuRects, sub: 'macd', period: p, digits, subH: 96,
         noSwipe: true, subToggle: true, themeLines: true, solidMacd: true, crosshairOnly: true,
+        subSwipe: true,
         onCrossChange: toggleCrossLock,
         onSwipe: switchPeriodPage,
       });
@@ -1509,17 +1515,42 @@ function buildZhongshuRects(zss, segs) {
 }
 
 // 取数 + 切片 + 渲染（弹层已存在时仅重绘）
-function paintKline() {
+function paintKline(diag) {
   if (!_klineView) return;
   const { code, period, segId } = _klineView;
+  if (diag) console.log('[paintKline]', { code, period, segId, hasBars: !!(_klineView.bars && _klineView.bars.length), visLen: _klineView.visibleSegs?.length, diag });
   const sec = state.securities.find((s) => s.code === code);
   const d = sec?.drawings?.[period];
   const seg = (d?.segments || []).find((s) => s.id === segId);
   if (!seg) return;
-  const cb = state._currentBars;
-  const bars = (cb && cb.code === code && cb.period === period && cb.bars) ? cb.bars : [];
-  // 构建包含当前段的连续 3 段视图窗口（用于 K 线范围），段号与卡片一致
-  const visibleSegs = getVisibleSegsForPeriod(code, period);
+  // 优先用打开弹层时锚定的正确周期数据；否则回退到全局 _currentBars（需周期匹配），最后兜底重新取数。
+  // 不能无条件用 _currentBars，因为它可能被详情页实时刷新或周期弹窗预渲染其它周期覆盖。
+  let bars = _klineView.bars && _klineView.bars.length ? _klineView.bars : null;
+  if (!bars) {
+    const cb = state._currentBars;
+    if (cb && cb.code === code && cb.period === period && cb.bars && cb.bars.length) {
+      bars = cb.bars;
+      if (diag) console.log('[paintKline] 回退到全局 _currentBars', { cbPeriod: cb.period, need: period });
+    } else {
+      if (diag) console.log('[paintKline] bars为空且无匹配 _currentBars，将异步重新取数', { cbPeriod: cb?.period, need: period });
+      bars = [];
+      // 异步重新取正确周期数据并重绘，避免回退到其他周期造成跨周期污染
+      ensureBars(code, period).then((b) => {
+        if (_klineView && _klineView.code === code && _klineView.period === period) {
+          computeMACD(b);
+          _klineView.bars = b;
+          paintKline(true);
+        }
+      });
+    }
+  }
+  bars = bars || [];
+  // 构建包含当前段的连续 3 段视图窗口（用于 K 线范围），段号与卡片一致。
+  // 优先用打开弹层时锚定的 visibleSegs 快照，避免后台实时刷新重排段/改变 hideBefore 后，
+  // 窗口被强制落到前 3 段（1、2、3）而偏离当前段。
+  const visibleSegs = (_klineView.visibleSegs && _klineView.visibleSegs.length)
+    ? _klineView.visibleSegs
+    : getVisibleSegsForPeriod(code, period);
   const realIdx = {};
   visibleSegs.forEach((s, k) => (realIdx[s.id] = k + 1));
 
@@ -1565,7 +1596,9 @@ let _klineSwitching = false;
 export function switchKlineSegment(dir) {
   if (!_klineView || !dir || _klineSwitching) return;
   const { code, period, segId } = _klineView;
-  const visibleSegs = getVisibleSegsForPeriod(code, period);
+  const visibleSegs = (_klineView.visibleSegs && _klineView.visibleSegs.length)
+    ? _klineView.visibleSegs
+    : getVisibleSegsForPeriod(code, period);
   if (!visibleSegs.length) return;
   const idx = visibleSegs.findIndex((s) => s.id === segId);
   if (idx < 0) return;
@@ -1627,8 +1660,13 @@ async function openKlineSheet(code, period, segId) {
     try { bars = await ensureBars(code, period); computeMACD(bars); }
     catch { bars = []; }
   }
-  _klineView = { code, period, segId };
-  paintKline();
+  // 把该周期数据锚定在 _klineView 上，避免后续被全局 _currentBars（可能被其它周期/弹窗覆盖）污染，
+  // 否则长按 K 线出现十字时重绘可能拿到错误周期的 K 线（如变成 1 分钟周期）。
+  // 同时锚定 visibleSegs 快照：后台实时刷新可能重排段或改变 hideBefore，导致 getVisibleSegsForPeriod
+  // 返回的可见段变少（如只剩 3 段），窗口计算 Math.min(idx-1, len-3) 在 len<=3 时强制 startIdx=0，
+  // 于是长按出十字后的重绘会「固定显示前 3 段（1、2、3）」，而非停留在当前段。锚定后窗口稳定。
+  _klineView = { code, period, segId, bars, visibleSegs: getVisibleSegsForPeriod(code, period) };
+  paintKline(true);
   const backdrop = document.getElementById('kline-sheet-backdrop');
   const sheet = document.getElementById('kline-sheet');
   backdrop.classList.add('show');
@@ -1643,8 +1681,13 @@ function refreshKlineSheet() {
   if (!_klineView) return;
   const { code, period } = _klineView;
   const cb = state._currentBars;
-  if (!cb || cb.code !== code || cb.period !== period) return;
-  if (document.getElementById('kline-sheet-backdrop')?.classList.contains('show')) paintKline();
+  if (!cb || cb.code !== code || cb.period !== period) {
+    console.log('[refreshKlineSheet] 跳过：_currentBars 不匹配', { cbPeriod: cb?.period, need: period, cbCode: cb?.code, code });
+    return;
+  }
+  // 用最新周期数据刷新锚定的 bars，确保重绘仍是正确周期
+  if (cb.bars && cb.bars.length) _klineView.bars = cb.bars;
+  if (document.getElementById('kline-sheet-backdrop')?.classList.contains('show')) paintKline(true);
 }
 window.refreshKlineSheet = refreshKlineSheet;
 
