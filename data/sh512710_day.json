@@ -1,7 +1,7 @@
 {
   "code": "sh512710",
   "period": "day",
-  "exportedAt": 1785774705958,
+  "exportedAt": 1785856932691,
   "segments": [
     {
       "id": "s_4ihbx3j5",
@@ -116,7 +116,7 @@
       }
     },
     {
-      "id": "s_cfm65rp4",
+      "id": "s_y8jank8m",
       "kind": "segment",
       "period": "day",
       "direction": "down",
@@ -125,22 +125,22 @@
         "price": 0.701
       },
       "end": {
-        "time": 1784476800,
-        "price": 0.575
+        "time": 1785081600,
+        "price": 0.591
       }
     },
     {
-      "id": "s_gq1ss46c",
+      "id": "s_inaa74hl",
       "kind": "segment",
       "period": "day",
       "direction": "up",
       "start": {
-        "time": 1784476800,
-        "price": 0.575
+        "time": 1785081600,
+        "price": 0.591
       },
       "end": {
-        "time": 1784822400,
-        "price": 0.613
+        "time": 1785772800,
+        "price": 0.619
       }
     }
   ],
@@ -310,7 +310,7 @@
           }
         },
         {
-          "id": "s_cfm65rp4",
+          "id": "s_y8jank8m",
           "kind": "segment",
           "period": "day",
           "direction": "down",
@@ -319,22 +319,22 @@
             "price": 0.701
           },
           "end": {
-            "time": 1784476800,
-            "price": 0.575
+            "time": 1785081600,
+            "price": 0.591
           }
         },
         {
-          "id": "s_gq1ss46c",
+          "id": "s_inaa74hl",
           "kind": "segment",
           "period": "day",
           "direction": "up",
           "start": {
-            "time": 1784476800,
-            "price": 0.575
+            "time": 1785081600,
+            "price": 0.591
           },
           "end": {
-            "time": 1784822400,
-            "price": 0.613
+            "time": 1785772800,
+            "price": 0.619
           }
         }
       ],
@@ -391,14 +391,6 @@
   "activePreset": "default",
   "presetName": "",
   "bars": [
-    {
-      "time": "2023-04-14",
-      "open": 0.701,
-      "high": 0.703,
-      "low": 0.697,
-      "close": 0.703,
-      "volume": 2500292.0
-    },
     {
       "time": "2023-04-17",
       "open": 0.702,
@@ -6790,6 +6782,14 @@
       "low": 0.601,
       "close": 0.613,
       "volume": 4998222.0
+    },
+    {
+      "time": "2026-08-04",
+      "open": 0.613,
+      "high": 0.619,
+      "low": 0.612,
+      "close": 0.616,
+      "volume": 4683403.0
     }
   ]
 }

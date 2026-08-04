@@ -403,10 +403,13 @@ function bindCrosshair(view, main, opts = {}) {
   if (!view || !main) { console.warn('[十字] bindCrosshair skip: no view or main'); return; }
   if (main._klBound) return;
   main._klBound = true;
-  // 页面级视图快照：闭包持有，不受后续 renderKlineChart 覆盖全局 _view 的影响
   const noSwitch = opts.noSwitch;
   // noSwitch 为真（如段卡片 K 线弹层）时禁用横滑切段/切页，否则长按出十字后手指微动会误触发切段
   const swipeFn = noSwitch ? null : (opts.onSwipe || window.switchKlineSegment);
+  // noSwitch 场景：同一 canvas 会被多次 renderKlineChart 复用，闭包捕获的 view 会变陈旧，
+  // 因此必须实时读取模块级 _view（每次 renderKlineChart 都会更新它）。
+  // 非 noSwitch 场景（周期弹窗多页）：每页独立 canvas，使用闭包捕获的 view 避免被其他页覆盖。
+  const getView = noSwitch ? () => _view : () => view;
 
   const EDGE = 28;
   const LONG_MS = 350;
@@ -420,21 +423,25 @@ function bindCrosshair(view, main, opts = {}) {
   let hideTimer = null;
   let downT = 0;       // pointerdown 时间戳，用于区分「长按触发」与「十字线态下的轻点」
 
-  // 使用 view 而非 _view 的局部重绘
+  // 使用 getView() 获取当前视图（noSwitch 时实时读取 _view，否则用闭包 view）
   const repaintLocal = (cross) => {
-    const { bars, segs, zhongshus, colors, period, digits, themeLines } = view;
+    const v = getView();
+    if (!v) return;
+    const { bars, segs, zhongshus, colors, period, digits, themeLines } = v;
     if (!bars || !bars.length) return;
     if (!main.isConnected) return;
     if (!main.clientWidth || !main.clientHeight) return;
     const newMeta = drawMainCanvas(main, bars, segs, zhongshus, colors, period, digits, themeLines);
     if (!newMeta || !newMeta.n) return;
-    view.mainMeta = newMeta;
+    v.mainMeta = newMeta;
     if (cross) drawMainCrossLocal(cross);
   };
   const drawMainCrossLocal = (cross) => {
-    const meta = view.mainMeta;
+    const v = getView();
+    if (!v) return;
+    const meta = v.mainMeta;
     if (!meta) return;
-    const colors = view.colors;
+    const colors = v.colors;
     const { ctx, padL, plotW, plotH, min, max } = meta;
     const b = cross.bar;
     const cx = cross.x;
@@ -452,7 +459,7 @@ function bindCrosshair(view, main, opts = {}) {
     ctx.lineTo(padL + plotW, cy);
     ctx.stroke();
     ctx.setLineDash([]);
-    const digits = view.digits;
+    const digits = v.digits;
     const price = max - (cy / plotH) * (max - min);
     const priceTxt = price.toFixed(digits);
     ctx.font = '10px sans-serif';
@@ -465,7 +472,7 @@ function bindCrosshair(view, main, opts = {}) {
     ctx.fill();
     ctx.fillStyle = '#fff';
     ctx.fillText(priceTxt, px, py);
-    const timeTxt = fmtAxis(b.time, view.period);
+    const timeTxt = fmtAxis(b.time, v.period);
     ctx.textAlign = 'center';
     const timeW = ctx.measureText(timeTxt).width;
     const tx = Math.max(padL + 4 + timeW / 2, Math.min(padL + plotW - 4 - timeW / 2, cx));
@@ -478,7 +485,7 @@ function bindCrosshair(view, main, opts = {}) {
     const up = b.close >= b.open;
     const col = up ? colors.red : colors.green;
     const txt =
-      `${fmtAxis(b.time, view.period)}  开${b.open.toFixed(digits)} 高${b.high.toFixed(digits)} ` +
+      `${fmtAxis(b.time, v.period)}  开${b.open.toFixed(digits)} 高${b.high.toFixed(digits)} ` +
       `低${b.low.toFixed(digits)} 收${b.close.toFixed(digits)} 量${fmtVol(b.volume || 0)}`;
     ctx.font = '10px sans-serif';
     ctx.textBaseline = 'top';
@@ -503,25 +510,28 @@ function bindCrosshair(view, main, opts = {}) {
     return { x, y };
   };
   const showAt = (e) => {
-    if (!view.mainMeta) return;
+    const v = getView();
+    if (!v || !v.mainMeta) return;
     const { x, y } = crossPos(e);
-    const meta = view.mainMeta;
+    const meta = v.mainMeta;
     if (!meta || !meta.n) return;
     let idx = Math.round((x - meta.padL) / (meta.plotW / meta.n) - 0.5);
     idx = Math.max(0, Math.min(meta.n - 1, idx));
-    const b = view.bars[idx];
+    const b = v.bars[idx];
     if (!b) return;
     repaintLocal({ x, y, idx, bar: b });
   };
   const clearLp = () => { if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; } };
   const clearHide = () => { if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; } };
   const setCrossActive = (active) => {
-    view.crossActive = active;
-    if (view.onCrossChange) {
-      try { view.onCrossChange(active); } catch {}
+    const v = getView();
+    if (!v) return;
+    v.crossActive = active;
+    if (v.onCrossChange) {
+      try { v.onCrossChange(active); } catch {}
     }
   };
-  const hideCross = () => { if (view.crossActive) { setCrossActive(false); repaintLocal(); } };
+  const hideCross = () => { const v = getView(); if (v && v.crossActive) { setCrossActive(false); repaintLocal(); } };
   const scheduleHide = () => {
     clearHide();
     hideTimer = setTimeout(() => { hideTimer = null; hideCross(); }, 5000);
@@ -552,7 +562,8 @@ function bindCrosshair(view, main, opts = {}) {
 
   main.addEventListener('pointermove', (e) => {
     if (e.pointerType === 'mouse') { showAt(e); return; }
-    if (view.crossActive) {
+    const v = getView();
+    if (v && v.crossActive) {
       if (e.cancelable) e.preventDefault();
       e.stopPropagation();
       showAt(e);
@@ -574,7 +585,8 @@ function bindCrosshair(view, main, opts = {}) {
     if (e.pointerType === 'mouse') { hideCross(); return; }
     clearLp();
     try { main.releasePointerCapture(e.pointerId); } catch {}
-    if (swiping && swipeFn && !view.crossActive) {
+    const v = getView();
+    if (swiping && swipeFn && !(v && v.crossActive)) {
       const dx = e.clientX - sx;
       const dy = e.clientY - sy;
       const atEdge = sx <= EDGE || sx >= window.innerWidth - EDGE;
@@ -583,7 +595,7 @@ function bindCrosshair(view, main, opts = {}) {
       }
       return;
     }
-    if (view.crossActive) {
+    if (v && v.crossActive) {
       // 十字线已激活时：若为一次「轻点」（非长按触发、几乎未移动、间隔很短），
       // 视为点击空白区域，立即退出十字线；若是长按触发后松手则保留 5s 自动隐藏。
       const isTap = !lpFired && !moved && (Date.now() - downT) < LONG_MS;
