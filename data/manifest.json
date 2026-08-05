@@ -1,25 +1,6 @@
 {
   "securities": [
     {
-      "code": "sz159611",
-      "name": "电力ETF广发",
-      "periods": [
-        "1m",
-        "5m",
-        "30m"
-      ],
-      "presets": [
-        {
-          "id": "default",
-          "name": ""
-        },
-        {
-          "id": "preset_0m59mbzv",
-          "name": ""
-        }
-      ]
-    },
-    {
       "code": "sh588110",
       "name": "科创成长",
       "periods": [
@@ -51,6 +32,25 @@
       "presets": [
         {
           "id": "default",
+          "name": ""
+        }
+      ]
+    },
+    {
+      "code": "sz159611",
+      "name": "电力ETF广发",
+      "periods": [
+        "1m",
+        "5m",
+        "30m"
+      ],
+      "presets": [
+        {
+          "id": "default",
+          "name": ""
+        },
+        {
+          "id": "preset_0m59mbzv",
           "name": ""
         }
       ]

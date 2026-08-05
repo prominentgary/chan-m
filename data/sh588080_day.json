@@ -1,7 +1,7 @@
 {
   "code": "sh588080",
   "period": "day",
-  "exportedAt": 1785856931076,
+  "exportedAt": 1785946329469,
   "segments": [
     {
       "id": "s_cp09tvim",
@@ -631,6 +631,20 @@
       "end": {
         "time": 1785081600,
         "price": 1.849
+      }
+    },
+    {
+      "id": "s_efk386zl",
+      "kind": "segment",
+      "period": "day",
+      "direction": "down",
+      "start": {
+        "time": 1785081600,
+        "price": 1.849
+      },
+      "end": {
+        "time": 1785686400,
+        "price": 1.586
       }
     }
   ],
@@ -1322,6 +1336,20 @@
             "time": 1785081600,
             "price": 1.849
           }
+        },
+        {
+          "id": "s_efk386zl",
+          "kind": "segment",
+          "period": "day",
+          "direction": "down",
+          "start": {
+            "time": 1785081600,
+            "price": 1.849
+          },
+          "end": {
+            "time": 1785686400,
+            "price": 1.586
+          }
         }
       ],
       "zhongshus": [
@@ -1383,14 +1411,6 @@
   "activePreset": "default",
   "presetName": "",
   "bars": [
-    {
-      "time": "2023-04-17",
-      "open": 1.159,
-      "high": 1.175,
-      "low": 1.151,
-      "close": 1.165,
-      "volume": 2940532.0
-    },
     {
       "time": "2023-04-18",
       "open": 1.155,
@@ -7782,6 +7802,14 @@
       "low": 1.592,
       "close": 1.655,
       "volume": 16030756.0
+    },
+    {
+      "time": "2026-08-05",
+      "open": 1.649,
+      "high": 1.754,
+      "low": 1.648,
+      "close": 1.731,
+      "volume": 16531190.0
     }
   ]
 }

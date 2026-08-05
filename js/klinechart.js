@@ -174,7 +174,9 @@ export function renderKlineChart(main, sub, bars, opts = {}) {
     bindCrosshair(view, main, {});
     bindSubSwipe(sub, window.switchKlineSegment);
   } else if (opts.crosshairOnly) {
-    bindCrosshair(view, main, { noSwitch: true, onSwipe: opts.onSwipe });
+    // useGlobalView: 段卡片弹窗（无 subSwipe）同一 canvas 复用，需用全局 _view 获取最新数据；
+    // 周期卡片弹窗（有 subSwipe）每页独立 canvas，必须用闭包 view 避免被其他页覆盖。
+    bindCrosshair(view, main, { noSwitch: true, useGlobalView: !opts.subSwipe, onSwipe: opts.onSwipe });
     // 仅当显式要求副图横滑切换时才绑定（周期弹窗切页需要）。
     // 段卡片 K 线弹层(noSwipe)本就锁定显示该段，禁止任何横滑切换，否则长按出十字后
     // 手指在副图微动会误触发 switchKlineSegment，把 K 线换成相邻段（如 2、3、4 段）。
@@ -406,10 +408,10 @@ function bindCrosshair(view, main, opts = {}) {
   const noSwitch = opts.noSwitch;
   // noSwitch 为真（如段卡片 K 线弹层）时禁用横滑切段/切页，否则长按出十字后手指微动会误触发切段
   const swipeFn = noSwitch ? null : (opts.onSwipe || window.switchKlineSegment);
-  // noSwitch 场景：同一 canvas 会被多次 renderKlineChart 复用，闭包捕获的 view 会变陈旧，
-  // 因此必须实时读取模块级 _view（每次 renderKlineChart 都会更新它）。
-  // 非 noSwitch 场景（周期弹窗多页）：每页独立 canvas，使用闭包捕获的 view 避免被其他页覆盖。
-  const getView = noSwitch ? () => _view : () => view;
+  // useGlobalView：同一 canvas 会被多次 renderKlineChart 复用（段卡片弹窗）时，
+  // 闭包捕获的 view 会变陈旧，必须实时读取模块级 _view。
+  // 否则（周期弹窗多页，每页独立 canvas）使用闭包捕获的 view 避免被其他页覆盖。
+  const getView = opts.useGlobalView ? () => _view : () => view;
 
   const EDGE = 28;
   const LONG_MS = 350;

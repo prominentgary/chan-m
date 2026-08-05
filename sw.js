@@ -5,7 +5,7 @@ const ASSETS = [
   './css/m.css?v=20260725r',
   './js/app.js?v=20260725q', './js/gesture.js?v=20260725f', './js/fetcher.js?v=20260725i', './js/adjust.js?v=20260725b', './js/macd.js?v=20260725f', './js/model.js?v=20260725f',
   './js/algo.js?v=20260725f', './js/store.js?v=20260725f', './js/table.js?v=20260725v', './js/editor.js?v=20260725f', './js/sync.js?v=20260725g',
-  './js/klinechart.js?v=20260725g',
+  './js/klinechart.js?v=20260804a',
   './data/manifest.json',
 ];
 

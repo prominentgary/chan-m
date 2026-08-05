@@ -4,7 +4,7 @@ import { fetchBars, fetchRealtimeMulti, formatTime, formatPrice, isETF, resolveC
 import { computeMACD } from './macd.js?v=20260725f';
 import { segmentStrength, detectStrengthIndicators, detectOneBuySell, detectTwoAndThreeBuySell, computeZhongshuStrength, detectZhongshu } from './algo.js?v=20260725f';
 import { renderSegments } from './table.js?v=20260725v';
-import { renderKlineChart, sliceSegmentBars, renderIntradayChart } from './klinechart.js?v=20260725i';
+import { renderKlineChart, sliceSegmentBars, renderIntradayChart } from './klinechart.js?v=20260804a';
 import { loadStaticData } from './sync.js?v=20260725g';
 import { openEditor } from './editor.js?v=20260725f';
 import { makeZhongshu } from './model.js?v=20260725f';
