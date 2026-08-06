@@ -620,7 +620,7 @@ function renderSecurityList(filterQuery = '') {
       if (secCardLongPressFired) { secCardLongPressFired = false; return; }
       pushView('periods', code);
     });
-    attachSecCardLongPress(card, code, sec?.name || '');
+    attachSecCardLongPress(card);
   });
   // 仅在首次加载时播一次卡片依次进入动画（搜索/重渲染不再重复）
   if (!listEnterPlayed) {
@@ -631,16 +631,16 @@ function renderSecurityList(filterQuery = '') {
 
 let secCardLongPressFired = false;
 
-function attachSecCardLongPress(card, code, name) {
+function attachSecCardLongPress(card) {
   let timer = null;
   let sx = 0, sy = 0;
   const LONG_MS = 480;
   const start = (x, y) => {
     secCardLongPressFired = false;
     sx = x; sy = y;
+    // 长按卡片不再呼出提醒窗口（提醒改为长按底部「提醒」按钮呼出），仅占位以避免误触
     timer = setTimeout(() => {
       secCardLongPressFired = true;
-      openAddAlertSheet(code, name);
     }, LONG_MS);
   };
   const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
@@ -2390,25 +2390,42 @@ function watchInterval(period) {
 function startDetailRealtime() {
   if (state.rtTimers._detail) return;
   state.rtTimers._detail = setInterval(async () => {
-    if (state.view !== 'detail' || state.activeTab !== 'dingpan' || document.hidden) return;
-    const code = state.selectedCode;
-    const period = state.selectedPeriod;
+    if (document.hidden) return;
+    // 两种场景触发刷新：
+    //  1) 详情页盯盘 tab（需有盯盘段才更新段终点）
+    //  2) 周期列表页/详情页长按弹出的 K 线窗口（_klineView 存在且已展开）
+    // 周期列表页的 state.view 为 'periods'，原本的硬门槛会让弹窗在交易时段完全不刷新，
+    // 只有离开再进 detail 才更新，故在此解耦弹窗刷新与 detail 视图。
+    const sheetOpen = !!_klineView && document.getElementById('kline-sheet-backdrop')?.classList.contains('show');
+    let code, period, isWatchScope = false;
+    if (state.view === 'detail' && state.activeTab === 'dingpan') {
+      code = state.selectedCode;
+      period = state.selectedPeriod;
+      isWatchScope = true;
+    } else if (sheetOpen) {
+      code = _klineView.code;
+      period = _klineView.period;
+    } else {
+      return;
+    }
     const now = Date.now();
     // 按周期节流：未到该周期的刷新间隔则跳过本次网络请求
     if (now - (state._lastWatchFetch || 0) < watchInterval(period) - 200) return;
     const sec = state.securities.find((s) => s.code === code);
     if (!sec) return;
     const d = sec.drawings[period];
-    if (!d || !(d.segments || []).some((s) => s._isWatch)) return;
+    if (isWatchScope && (!d || !(d.segments || []).some((s) => s._isWatch))) return;
     state._lastWatchFetch = now;
     try {
       const res = await fetchBars(code, period, 800);
       const bars = res.bars || [];
       state._currentBars = { code, period, bars };
       computeMACD(bars);
-      const changed = updateWatchSegments(code, period, bars, false);
-      if (changed) refreshPeriodDetailWithoutFetch(code, period);
-      refreshKlineSheet();
+      if (isWatchScope) {
+        const changed = updateWatchSegments(code, period, bars, false);
+        if (changed) refreshPeriodDetailWithoutFetch(code, period);
+      }
+      if (sheetOpen) refreshKlineSheet();
     } catch {}
   }, 15000);
 }
@@ -3132,10 +3149,15 @@ function renderAlertView() {
 let _alertSheetCode = null;
 
 function openAddAlertSheet(code, name, period) {
+  // 未指定证券时（长按底部「提醒」按钮呼出），默认取盯盘列表首个证券
+  if (!code && state.securities && state.securities.length) {
+    code = state.securities[0].code;
+    if (name == null) name = state.securities[0].name;
+  }
   _alertSheetCode = code;
   const sec = state.securities.find((s) => s.code === code);
   const rt = state._rtPrices?.[code];
-  const curPrice = rt?.price;
+  let curPrice = rt?.price;
   const displayName = name || sec?.name || rt?.name || code;
   const availPeriods = (sec && sec.periods && sec.periods.length) ? sec.periods : PERIODS.map((p) => p[0]);
   let selectedPeriod = (period && availPeriods.includes(period)) ? period : (availPeriods[0] || 'day');
@@ -3152,13 +3174,26 @@ function openAddAlertSheet(code, name, period) {
   const periodOptsHtml = availPeriods.map((p) =>
     `<button class="alert-period-opt${p === selectedPeriod ? ' active' : ''}" data-period="${p}">${periodLabel(p)}</button>`
   ).join('');
+  // 证券选择器：允许在盯盘列表中切换目标证券（默认首个）
+  const secOptsHtml = (state.securities && state.securities.length)
+    ? state.securities.map((s) =>
+        `<option value="${s.code}"${s.code === code ? ' selected' : ''}>${s.name || s.code} (${s.code})</option>`
+      ).join('')
+    : `<option value="${code}">${displayName}</option>`;
+  const secSelectHtml = (state.securities && state.securities.length > 1)
+    ? `<div class="alert-sec-group">
+         <div class="alert-input-label">证券</div>
+         <select id="alert-sec-select" class="alert-sec-select">${secOptsHtml}</select>
+       </div>`
+    : '';
   sheet.innerHTML = `
     <div class="action-sheet">
       <div class="action-sheet-title">
-        <span>${displayName}</span>
+        <span id="alert-title-name">${displayName}</span>
         <button class="action-sheet-close" aria-label="关闭">×</button>
       </div>
       <div class="alert-sheet-body">
+        ${secSelectHtml}
         <div class="alert-type-group">
           <div class="alert-type-label">提醒类型</div>
           <div class="alert-type-options">${typeOptsHtml}</div>
@@ -3218,13 +3253,17 @@ function openAddAlertSheet(code, name, period) {
     };
   });
 
-  sheet.querySelectorAll('.alert-period-opt').forEach((btn) => {
-    btn.onclick = () => {
-      sheet.querySelectorAll('.alert-period-opt').forEach((b) => b.classList.remove('active'));
+  // 周期按钮用事件委托绑定（切换证券后会重建按钮，委托可自动生效）
+  const periodWrap = sheet.querySelector('#alert-period-group .alert-period-options');
+  if (periodWrap) {
+    periodWrap.onclick = (e) => {
+      const btn = e.target.closest('.alert-period-opt');
+      if (!btn) return;
+      periodWrap.querySelectorAll('.alert-period-opt').forEach((b) => b.classList.remove('active'));
       btn.classList.add('active');
       selectedPeriod = btn.dataset.period;
     };
-  });
+  }
 
   sheet.querySelectorAll('.alert-quick-btn').forEach((btn) => {
     btn.onclick = () => {
@@ -3248,6 +3287,33 @@ function openAddAlertSheet(code, name, period) {
 
   sheet.querySelector('.action-sheet-close').onclick = () => sheet.remove();
   sheet.onclick = (e) => { if (e.target === sheet) sheet.remove(); };
+
+  // 切换证券：更新 code / 名称 / 当前价 / 周期选项
+  const secSel = sheet.querySelector('#alert-sec-select');
+  if (secSel) {
+    secSel.onchange = () => {
+      const newCode = secSel.value;
+      code = newCode;
+      _alertSheetCode = newCode;
+      const ns = state.securities.find((s) => s.code === newCode);
+      const nrt = state._rtPrices?.[newCode];
+      curPrice = nrt?.price;
+      displayName = ns?.name || nrt?.name || newCode;
+      const titleEl = sheet.querySelector('#alert-title-name');
+      if (titleEl) titleEl.textContent = displayName;
+      const input = sheet.querySelector('#alert-input-value');
+      if (input) input.placeholder = curPrice != null ? '当前价 ' + formatPrice(code, curPrice) : '请输入';
+      // 重建周期选项（不同证券周期集合可能不同）
+      availPeriods = (ns && ns.periods && ns.periods.length) ? ns.periods : PERIODS.map((p) => p[0]);
+      if (!availPeriods.includes(selectedPeriod)) selectedPeriod = availPeriods[0] || 'day';
+      const pg = sheet.querySelector('#alert-period-group');
+      if (pg) {
+        pg.querySelector('.alert-period-options').innerHTML = availPeriods.map((p) =>
+          `<button class="alert-period-opt${p === selectedPeriod ? ' active' : ''}" data-period="${p}">${periodLabel(p)}</button>`
+        ).join('');
+      }
+    };
+  }
 
   sheet.querySelector('#alert-add-confirm').onclick = () => {
     if (isMacdAlert({ type: selectedType })) {
@@ -4002,9 +4068,12 @@ function closeHeaderSearch() {
   [120, 320, 600].forEach((ms) => setTimeout(syncWithKeyboard, ms));
 }
 
-// 长按主菜单：盯盘/行情触发标题栏搜索；其余 tab 仅防文字选中
+// 长按主菜单：盯盘/行情触发标题栏搜索；处于盯盘（证券列表）时，长按提醒按钮呼出提醒窗口
 function onTabLongPress(name) {
   if (name === 'dingpan' || name === 'hangqing') openHeaderSearch(name);
+  else if (name === 'alert') {
+    if (state.activeTab === 'dingpan' && state.view === 'list') openAddAlertSheet();
+  }
 }
 
 // ========== 初始化 ==========

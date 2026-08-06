@@ -20,6 +20,21 @@
       ]
     },
     {
+      "code": "sh512710",
+      "name": "军工龙头ETF",
+      "periods": [
+        "5m",
+        "30m",
+        "day"
+      ],
+      "presets": [
+        {
+          "id": "default",
+          "name": ""
+        }
+      ]
+    },
+    {
       "code": "sh588080",
       "name": "科创板50",
       "periods": [
@@ -61,20 +76,6 @@
       "periods": [
         "1m",
         "5m",
-        "30m",
-        "day"
-      ],
-      "presets": [
-        {
-          "id": "default",
-          "name": ""
-        }
-      ]
-    },
-    {
-      "code": "sh512710",
-      "name": "军工龙头ETF",
-      "periods": [
         "30m",
         "day"
       ],

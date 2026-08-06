@@ -1,7 +1,7 @@
 {
   "code": "sh512710",
   "period": "day",
-  "exportedAt": 1785946331493,
+  "exportedAt": 1786032946738,
   "segments": [
     {
       "id": "s_4ihbx3j5",
@@ -116,7 +116,7 @@
       }
     },
     {
-      "id": "s_y8jank8m",
+      "id": "s_q5sw2i80",
       "kind": "segment",
       "period": "day",
       "direction": "down",
@@ -125,22 +125,8 @@
         "price": 0.701
       },
       "end": {
-        "time": 1785081600,
-        "price": 0.591
-      }
-    },
-    {
-      "id": "s_inaa74hl",
-      "kind": "segment",
-      "period": "day",
-      "direction": "up",
-      "start": {
-        "time": 1785081600,
-        "price": 0.591
-      },
-      "end": {
-        "time": 1785772800,
-        "price": 0.619
+        "time": 1784476800,
+        "price": 0.575
       }
     }
   ],
@@ -310,7 +296,7 @@
           }
         },
         {
-          "id": "s_y8jank8m",
+          "id": "s_q5sw2i80",
           "kind": "segment",
           "period": "day",
           "direction": "down",
@@ -319,22 +305,8 @@
             "price": 0.701
           },
           "end": {
-            "time": 1785081600,
-            "price": 0.591
-          }
-        },
-        {
-          "id": "s_inaa74hl",
-          "kind": "segment",
-          "period": "day",
-          "direction": "up",
-          "start": {
-            "time": 1785081600,
-            "price": 0.591
-          },
-          "end": {
-            "time": 1785772800,
-            "price": 0.619
+            "time": 1784476800,
+            "price": 0.575
           }
         }
       ],
@@ -391,14 +363,6 @@
   "activePreset": "default",
   "presetName": "",
   "bars": [
-    {
-      "time": "2023-04-18",
-      "open": 0.704,
-      "high": 0.706,
-      "low": 0.7,
-      "close": 0.705,
-      "volume": 3121851.0
-    },
     {
       "time": "2023-04-19",
       "open": 0.702,
@@ -6790,6 +6754,14 @@
       "low": 0.615,
       "close": 0.621,
       "volume": 4690385.0
+    },
+    {
+      "time": "2026-08-06",
+      "open": 0.618,
+      "high": 0.623,
+      "low": 0.612,
+      "close": 0.62,
+      "volume": 5212564.0
     }
   ]
 }

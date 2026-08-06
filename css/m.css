@@ -1201,6 +1201,17 @@ body.search-header-fixed .search-edge-guard { display: block; }
 
 .alert-type-group { display: flex; flex-direction: column; gap: 8px; }
 .alert-type-label { font-size: 13px; color: var(--wx-muted); font-weight: 500; }
+.alert-sec-group { display: flex; flex-direction: column; gap: 8px; }
+.alert-sec-select {
+  width: 100%;
+  padding: 10px 8px;
+  border: 1px solid var(--wx-line);
+  border-radius: 8px;
+  background: var(--wx-bg);
+  color: var(--wx-txt);
+  font-size: 14px; font-weight: 500;
+  -webkit-appearance: none; appearance: none;
+}
 .alert-type-options {
   display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
 }
