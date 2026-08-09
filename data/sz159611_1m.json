@@ -1,7 +1,7 @@
 {
   "code": "sz159611",
   "period": "1m",
-  "exportedAt": 1786102801575,
+  "exportedAt": 1786274139879,
   "segments": [
     {
       "id": "s_vmj2h1cd",
@@ -2715,7 +2715,63 @@
         "price": 1.05
       },
       "end": {
-        "time": 1785997320,
+        "time": 1785999360,
+        "price": 1.06
+      }
+    },
+    {
+      "id": "s_l39alsel",
+      "kind": "segment",
+      "period": "1m",
+      "direction": "down",
+      "start": {
+        "time": 1785999360,
+        "price": 1.06
+      },
+      "end": {
+        "time": 1786069200,
+        "price": 1.047
+      }
+    },
+    {
+      "id": "s_n6qmysae",
+      "kind": "segment",
+      "period": "1m",
+      "direction": "up",
+      "start": {
+        "time": 1786069200,
+        "price": 1.047
+      },
+      "end": {
+        "time": 1786073040,
+        "price": 1.054
+      }
+    },
+    {
+      "id": "s_y9dhjy5d",
+      "kind": "segment",
+      "period": "1m",
+      "direction": "down",
+      "start": {
+        "time": 1786073040,
+        "price": 1.054
+      },
+      "end": {
+        "time": 1786080900,
+        "price": 1.05
+      }
+    },
+    {
+      "id": "s_bmgl294a",
+      "kind": "segment",
+      "period": "1m",
+      "direction": "up",
+      "start": {
+        "time": 1786080900,
+        "price": 1.05
+      },
+      "end": {
+        "time": 1786085820,
         "price": 1.059
       }
     }
@@ -6032,7 +6088,63 @@
             "price": 1.05
           },
           "end": {
-            "time": 1785997320,
+            "time": 1785999360,
+            "price": 1.06
+          }
+        },
+        {
+          "id": "s_l39alsel",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "down",
+          "start": {
+            "time": 1785999360,
+            "price": 1.06
+          },
+          "end": {
+            "time": 1786069200,
+            "price": 1.047
+          }
+        },
+        {
+          "id": "s_n6qmysae",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "up",
+          "start": {
+            "time": 1786069200,
+            "price": 1.047
+          },
+          "end": {
+            "time": 1786073040,
+            "price": 1.054
+          }
+        },
+        {
+          "id": "s_y9dhjy5d",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "down",
+          "start": {
+            "time": 1786073040,
+            "price": 1.054
+          },
+          "end": {
+            "time": 1786080900,
+            "price": 1.05
+          }
+        },
+        {
+          "id": "s_bmgl294a",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "up",
+          "start": {
+            "time": 1786080900,
+            "price": 1.05
+          },
+          "end": {
+            "time": 1786085820,
             "price": 1.059
           }
         }

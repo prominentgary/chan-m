@@ -1,7 +1,7 @@
 {
   "code": "sh512710",
   "period": "day",
-  "exportedAt": 1786102800284,
+  "exportedAt": 1786274139927,
   "segments": [
     {
       "id": "s_4ihbx3j5",
@@ -128,6 +128,50 @@
         "time": 1784476800,
         "price": 0.575
       }
+    },
+    {
+      "id": "s_agljefvh",
+      "kind": "segment",
+      "period": "day",
+      "direction": "up",
+      "start": {
+        "time": 1784476800,
+        "price": 0.575
+      },
+      "end": {
+        "time": 1784822400,
+        "price": 0.613
+      }
+    },
+    {
+      "id": "s_orpun26y",
+      "kind": "segment",
+      "period": "day",
+      "direction": "down",
+      "start": {
+        "time": 1784822400,
+        "price": 0.613
+      },
+      "end": {
+        "time": 1785168000,
+        "price": 0.592
+      }
+    },
+    {
+      "id": "s_o2b1y8zs",
+      "kind": "segment",
+      "period": "day",
+      "direction": "up",
+      "start": {
+        "time": 1785168000,
+        "price": 0.592
+      },
+      "end": {
+        "time": 1786032000,
+        "price": 0.626
+      },
+      "_isWatch": true,
+      "_watchSourceId": "s_orpun26y"
     }
   ],
   "zhongshus": [
@@ -308,6 +352,50 @@
             "time": 1784476800,
             "price": 0.575
           }
+        },
+        {
+          "id": "s_agljefvh",
+          "kind": "segment",
+          "period": "day",
+          "direction": "up",
+          "start": {
+            "time": 1784476800,
+            "price": 0.575
+          },
+          "end": {
+            "time": 1784822400,
+            "price": 0.613
+          }
+        },
+        {
+          "id": "s_orpun26y",
+          "kind": "segment",
+          "period": "day",
+          "direction": "down",
+          "start": {
+            "time": 1784822400,
+            "price": 0.613
+          },
+          "end": {
+            "time": 1785168000,
+            "price": 0.592
+          }
+        },
+        {
+          "id": "s_o2b1y8zs",
+          "kind": "segment",
+          "period": "day",
+          "direction": "up",
+          "start": {
+            "time": 1785168000,
+            "price": 0.592
+          },
+          "end": {
+            "time": 1786032000,
+            "price": 0.626
+          },
+          "_isWatch": true,
+          "_watchSourceId": "s_orpun26y"
         }
       ],
       "zhongshus": [

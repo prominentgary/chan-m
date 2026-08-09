@@ -257,6 +257,9 @@ export function detectOneBuySell(segments, zhongshus) {
     }
     if (!enterSeg) return;
 
+    // 进入段与离开段方向必须一致才参与背驰比较
+    if (enterSeg.direction !== leaveSeg.direction) return;
+
     // 找前一个中枢：其右边界时间等于进入段起点（与 PC 端对齐）
     let prevZs = null;
     for (const z of zhongshus) {

@@ -1,7 +1,7 @@
 {
   "code": "sz159611",
   "period": "5m",
-  "exportedAt": 1786102808695,
+  "exportedAt": 1786274140229,
   "segments": [
     {
       "id": "s_x4wimzci",
@@ -1135,6 +1135,20 @@
       "end": {
         "time": 1785984600,
         "price": 1.05
+      }
+    },
+    {
+      "id": "s_kz2zyhjw",
+      "kind": "segment",
+      "period": "5m",
+      "direction": "up",
+      "start": {
+        "time": 1785984600,
+        "price": 1.05
+      },
+      "end": {
+        "time": 1785999600,
+        "price": 1.06
       }
     }
   ],
@@ -2555,6 +2569,20 @@
           "end": {
             "time": 1785984600,
             "price": 1.05
+          }
+        },
+        {
+          "id": "s_kz2zyhjw",
+          "kind": "segment",
+          "period": "5m",
+          "direction": "up",
+          "start": {
+            "time": 1785984600,
+            "price": 1.05
+          },
+          "end": {
+            "time": 1785999600,
+            "price": 1.06
           }
         }
       ],

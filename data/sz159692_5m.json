@@ -1,7 +1,7 @@
 {
   "code": "sz159692",
   "period": "5m",
-  "exportedAt": 1786102809877,
+  "exportedAt": 1786274140597,
   "segments": [
     {
       "id": "s_803o5wnl",
@@ -1511,8 +1511,22 @@
         "price": 1.242
       },
       "end": {
-        "time": 1785994500,
-        "price": 1.22
+        "time": 1786066500,
+        "price": 1.218
+      }
+    },
+    {
+      "id": "s_fw175fcc",
+      "kind": "segment",
+      "period": "5m",
+      "direction": "up",
+      "start": {
+        "time": 1786066500,
+        "price": 1.218
+      },
+      "end": {
+        "time": 1786086000,
+        "price": 1.226
       }
     }
   ],
@@ -3219,8 +3233,22 @@
             "price": 1.242
           },
           "end": {
-            "time": 1785994500,
-            "price": 1.22
+            "time": 1786066500,
+            "price": 1.218
+          }
+        },
+        {
+          "id": "s_fw175fcc",
+          "kind": "segment",
+          "period": "5m",
+          "direction": "up",
+          "start": {
+            "time": 1786066500,
+            "price": 1.218
+          },
+          "end": {
+            "time": 1786086000,
+            "price": 1.226
           }
         }
       ],

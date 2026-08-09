@@ -87,28 +87,25 @@
       ]
     },
     {
-      "code": "sh000001",
-      "name": "上证指数",
+      "code": "sz399006",
+      "name": "创业板指",
       "periods": [
-        "5m",
-        "30m"
+        "30m",
+        "day"
       ],
       "presets": [
         {
           "id": "default",
           "name": ""
-        },
-        {
-          "id": "preset_u9eijhfd",
-          "name": ""
         }
       ]
     },
     {
-      "code": "sz399006",
-      "name": "创业板指",
+      "code": "sh588700",
+      "name": "科创生物",
       "periods": [
-        "day"
+        "5m",
+        "30m"
       ],
       "presets": [
         {
