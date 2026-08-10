@@ -113,6 +113,24 @@
           "name": ""
         }
       ]
+    },
+    {
+      "code": "sh000001",
+      "name": "上证指数",
+      "periods": [
+        "5m",
+        "30m"
+      ],
+      "presets": [
+        {
+          "id": "default",
+          "name": ""
+        },
+        {
+          "id": "preset_u9eijhfd",
+          "name": ""
+        }
+      ]
     }
   ]
 }

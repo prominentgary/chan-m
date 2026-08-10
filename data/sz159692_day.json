@@ -1,7 +1,7 @@
 {
   "code": "sz159692",
   "period": "day",
-  "exportedAt": 1786275895191,
+  "exportedAt": 1786377817531,
   "segments": [
     {
       "id": "s_wt02rrkh",
@@ -29,6 +29,34 @@
       "end": {
         "time": 1783958400,
         "price": 1.217
+      }
+    },
+    {
+      "id": "s_k909nw2r",
+      "kind": "segment",
+      "period": "day",
+      "direction": "down",
+      "start": {
+        "time": 1784736000,
+        "price": 1.268
+      },
+      "end": {
+        "time": 1786032000,
+        "price": 1.218
+      }
+    },
+    {
+      "id": "s_jazsmvwt",
+      "kind": "segment",
+      "period": "day",
+      "direction": "up",
+      "start": {
+        "time": 1783958400,
+        "price": 1.217
+      },
+      "end": {
+        "time": 1784736000,
+        "price": 1.268
       }
     }
   ],
@@ -64,6 +92,34 @@
           "end": {
             "time": 1783958400,
             "price": 1.217
+          }
+        },
+        {
+          "id": "s_k909nw2r",
+          "kind": "segment",
+          "period": "day",
+          "direction": "down",
+          "start": {
+            "time": 1784736000,
+            "price": 1.268
+          },
+          "end": {
+            "time": 1786032000,
+            "price": 1.218
+          }
+        },
+        {
+          "id": "s_jazsmvwt",
+          "kind": "segment",
+          "period": "day",
+          "direction": "up",
+          "start": {
+            "time": 1783958400,
+            "price": 1.217
+          },
+          "end": {
+            "time": 1784736000,
+            "price": 1.268
           }
         }
       ],
@@ -6312,6 +6368,14 @@
       "low": 1.218,
       "close": 1.226,
       "volume": 624545.0
+    },
+    {
+      "time": "2026-08-10",
+      "open": 1.228,
+      "high": 1.234,
+      "low": 1.226,
+      "close": 1.23,
+      "volume": 774204.0
     }
   ]
 }
