@@ -52,6 +52,22 @@
       ]
     },
     {
+      "code": "sz159692",
+      "name": "证券ETF东财",
+      "periods": [
+        "1m",
+        "5m",
+        "30m",
+        "day"
+      ],
+      "presets": [
+        {
+          "id": "default",
+          "name": ""
+        }
+      ]
+    },
+    {
       "code": "sz159611",
       "name": "电力ETF广发",
       "periods": [
@@ -66,22 +82,6 @@
         },
         {
           "id": "preset_0m59mbzv",
-          "name": ""
-        }
-      ]
-    },
-    {
-      "code": "sz159692",
-      "name": "证券ETF东财",
-      "periods": [
-        "1m",
-        "5m",
-        "30m",
-        "day"
-      ],
-      "presets": [
-        {
-          "id": "default",
           "name": ""
         }
       ]
