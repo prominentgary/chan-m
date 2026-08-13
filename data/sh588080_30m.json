@@ -1,7 +1,7 @@
 {
   "code": "sh588080",
   "period": "30m",
-  "exportedAt": 1786634955496,
+  "exportedAt": 1786635506180,
   "segments": [
     {
       "id": "s_h7x4seo8",
@@ -169,6 +169,20 @@
       "end": {
         "time": 1786327200,
         "price": 1.796
+      }
+    },
+    {
+      "id": "s_3c4xxjlo",
+      "kind": "segment",
+      "period": "30m",
+      "direction": "down",
+      "start": {
+        "time": 1786327200,
+        "price": 1.796
+      },
+      "end": {
+        "time": 1786431600,
+        "price": 1.746
       }
     }
   ],
@@ -370,6 +384,20 @@
           "end": {
             "time": 1786327200,
             "price": 1.796
+          }
+        },
+        {
+          "id": "s_3c4xxjlo",
+          "kind": "segment",
+          "period": "30m",
+          "direction": "down",
+          "start": {
+            "time": 1786327200,
+            "price": 1.796
+          },
+          "end": {
+            "time": 1786431600,
+            "price": 1.746
           }
         }
       ],
