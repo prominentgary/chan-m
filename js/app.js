@@ -21,11 +21,17 @@ const periodLabel = (p) => (PERIODS.find((x) => x[0] === p) || [p, p])[1];
 let longPressFired = false; // 周期行长按触发简图后，吞掉随后冒泡的 click，避免误进段详情
 let presetSwipeFired = false; // 周期列表页左右滑切换方案后，吞掉随后冒泡的 click，避免误进段详情
 
-// 返回当前周期在证券可用周期列表中的下一个更高级别周期
+// 辅助周期（15m 完全复刻 5m、60m 完全复刻 30m）不是真实级别，
+// 不参与隐藏规则的级别联立判断：既不能作为更高周期去隐藏低级别段，
+// 也不改变原有级别链顺序（5m→30m、30m→day），保证复刻周期与主周期显示一致。
+const AUX_PERIODS = { '15m': true, '60m': true };
+
+// 返回当前周期在证券可用周期列表中的下一个更高级别周期（跳过 15m/60m 辅助周期）
 function getHigherPeriod(period, availablePeriods) {
   const idx = PERIODS.findIndex((x) => x[0] === period);
   if (idx < 0) return null;
   for (let i = idx + 1; i < PERIODS.length; i++) {
+    if (AUX_PERIODS[PERIODS[i][0]]) continue;
     if (availablePeriods.includes(PERIODS[i][0])) return PERIODS[i][0];
   }
   return null;
@@ -164,8 +170,33 @@ function syncPresetsToStorage(drawings) {
   }
 }
 
+// 主周期 -> 辅助周期：15m 复刻 5m，60m 复刻 30m。
+// 这两个辅助周期本身没有独立画线，永远由对应主周期实时复刻，保证与主周期完全一致。
+const MASTER_AUX_MAP = { '5m': '15m', '30m': '60m' };
+
+// 将辅助周期的画线重置为对应主周期的复刻（深拷贝，并标记来源），使 15m≡5m、60m≡30m。
+// 在每次本地保存前调用，确保 5m/30m 的段/中枢/盯盘段的增删改自动同步到辅助周期。
+function syncAuxFromMaster(drawings) {
+  Object.keys(MASTER_AUX_MAP).forEach((master) => {
+    const aux = MASTER_AUX_MAP[master];
+    const src = drawings[master];
+    if (!src) return;
+    const copy = JSON.parse(JSON.stringify(src));
+    (copy.segments || []).forEach((s) => { s.period = aux; s._syncedFrom = master; });
+    (copy.zhongshus || []).forEach((z) => { z.period = aux; z._syncedFrom = master; });
+    if (copy.presets) {
+      copy.presets.forEach((p) => {
+        (p.segments || []).forEach((s) => { s.period = aux; s._syncedFrom = master; });
+        (p.zhongshus || []).forEach((z) => { z.period = aux; z._syncedFrom = master; });
+      });
+    }
+    drawings[aux] = copy;
+  });
+}
+
 function saveLocalEdits(code, drawings) {
   try {
+    syncAuxFromMaster(drawings);
     syncPresetsToStorage(drawings);
     localStorage.setItem(secStoreKey(code), JSON.stringify({ drawings, savedAt: Date.now() }));
   } catch {}
@@ -1371,7 +1402,10 @@ function refreshPeriodDetailWithoutFetch(code, period) {
     loaded: true,
     error: null,
   };
-  const higherPeriod = getHigherPeriod(period, sec.periods || []);
+  // 辅助周期（15m/60m）不参与级别联立：其隐藏规则完全复刻主周期（5m/30m），
+  // 即用主周期所对应的更高级别段来过滤，保证辅助周期与主周期显示完全一致。
+  const effPeriod = MASTER_AUX_MAP[period] ? MASTER_AUX_MAP[period] : period;
+  const higherPeriod = getHigherPeriod(effPeriod, sec.periods || []);
   const higherSegments = (higherPeriod && sec.drawings[higherPeriod]?.segments) || [];
   const bars = state._currentBars?.bars || [];
   if (bars.length && group.segments.length) {
