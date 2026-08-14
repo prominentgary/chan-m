@@ -25,6 +25,9 @@ let presetSwipeFired = false; // 周期列表页左右滑切换方案后，吞�
 // 不参与隐藏规则的级别联立判断：既不能作为更高周期去隐藏低级别段，
 // 也不改变原有级别链顺序（5m→30m、30m→day），保证复刻周期与主周期显示一致。
 const AUX_PERIODS = { '15m': true, '60m': true };
+// 辅助周期完全复刻主周期的画线，段的 start/end 时间都是主周期刻度，
+// 故 K 线弹窗取数也必须用主周期（否则段的 time 与 15m/60m K 线 time 不对齐，画线画不出来）。
+const AUX_TO_MAIN = { '15m': '5m', '60m': '30m' };
 
 // 返回当前周期在证券可用周期列表中的下一个更高级别周期（跳过 15m/60m 辅助周期）
 function getHigherPeriod(period, availablePeriods) {
@@ -170,33 +173,8 @@ function syncPresetsToStorage(drawings) {
   }
 }
 
-// 主周期 -> 辅助周期：15m 复刻 5m，60m 复刻 30m。
-// 这两个辅助周期本身没有独立画线，永远由对应主周期实时复刻，保证与主周期完全一致。
-const MASTER_AUX_MAP = { '5m': '15m', '30m': '60m' };
-
-// 将辅助周期的画线重置为对应主周期的复刻（深拷贝，并标记来源），使 15m≡5m、60m≡30m。
-// 在每次本地保存前调用，确保 5m/30m 的段/中枢/盯盘段的增删改自动同步到辅助周期。
-function syncAuxFromMaster(drawings) {
-  Object.keys(MASTER_AUX_MAP).forEach((master) => {
-    const aux = MASTER_AUX_MAP[master];
-    const src = drawings[master];
-    if (!src) return;
-    const copy = JSON.parse(JSON.stringify(src));
-    (copy.segments || []).forEach((s) => { s.period = aux; s._syncedFrom = master; });
-    (copy.zhongshus || []).forEach((z) => { z.period = aux; z._syncedFrom = master; });
-    if (copy.presets) {
-      copy.presets.forEach((p) => {
-        (p.segments || []).forEach((s) => { s.period = aux; s._syncedFrom = master; });
-        (p.zhongshus || []).forEach((z) => { z.period = aux; z._syncedFrom = master; });
-      });
-    }
-    drawings[aux] = copy;
-  });
-}
-
 function saveLocalEdits(code, drawings) {
   try {
-    syncAuxFromMaster(drawings);
     syncPresetsToStorage(drawings);
     localStorage.setItem(secStoreKey(code), JSON.stringify({ drawings, savedAt: Date.now() }));
   } catch {}
@@ -1402,10 +1380,7 @@ function refreshPeriodDetailWithoutFetch(code, period) {
     loaded: true,
     error: null,
   };
-  // 辅助周期（15m/60m）不参与级别联立：其隐藏规则完全复刻主周期（5m/30m），
-  // 即用主周期所对应的更高级别段来过滤，保证辅助周期与主周期显示完全一致。
-  const effPeriod = MASTER_AUX_MAP[period] ? MASTER_AUX_MAP[period] : period;
-  const higherPeriod = getHigherPeriod(effPeriod, sec.periods || []);
+  const higherPeriod = getHigherPeriod(period, sec.periods || []);
   const higherSegments = (higherPeriod && sec.drawings[higherPeriod]?.segments) || [];
   const bars = state._currentBars?.bars || [];
   if (bars.length && group.segments.length) {
@@ -1427,7 +1402,7 @@ function attachSegmentCardActions(code, period) {
 }
 
 // ========== 长按段号 → K 线弹层（自写 Canvas，零图表库依赖） ==========
-let _klineView = null;   // { code, period, segId }
+let _klineView = null;   // { code, period, fetchPeriod, segId, bars, visibleSegs }
 let _klineSub = 'macd';  // 'macd' | 'vol'
 
 // 长按段号：弹出 K 线弹层；stopPropagation 阻止冒泡到卡片级长按（避免同时弹出操作蒙板）
@@ -1551,26 +1526,27 @@ function buildZhongshuRects(zss, segs) {
 // 取数 + 切片 + 渲染（弹层已存在时仅重绘）
 function paintKline(diag) {
   if (!_klineView) return;
-  const { code, period, segId } = _klineView;
-  if (diag) console.log('[paintKline]', { code, period, segId, hasBars: !!(_klineView.bars && _klineView.bars.length), visLen: _klineView.visibleSegs?.length, diag });
+  const { code, period, fetchPeriod, segId } = _klineView;
+  if (diag) console.log('[paintKline]', { code, period, fetchPeriod, segId, hasBars: !!(_klineView.bars && _klineView.bars.length), visLen: _klineView.visibleSegs?.length, diag });
   const sec = state.securities.find((s) => s.code === code);
   const d = sec?.drawings?.[period];
   const seg = (d?.segments || []).find((s) => s.id === segId);
   if (!seg) return;
   // 优先用打开弹层时锚定的正确周期数据；否则回退到全局 _currentBars（需周期匹配），最后兜底重新取数。
   // 不能无条件用 _currentBars，因为它可能被详情页实时刷新或周期弹窗预渲染其它周期覆盖。
+  // 取数周期用 fetchPeriod（辅助周期回落主周期），段数据查找用 period（原周期键）。
   let bars = _klineView.bars && _klineView.bars.length ? _klineView.bars : null;
   if (!bars) {
     const cb = state._currentBars;
-    if (cb && cb.code === code && cb.period === period && cb.bars && cb.bars.length) {
+    if (cb && cb.code === code && cb.period === fetchPeriod && cb.bars && cb.bars.length) {
       bars = cb.bars;
-      if (diag) console.log('[paintKline] 回退到全局 _currentBars', { cbPeriod: cb.period, need: period });
+      if (diag) console.log('[paintKline] 回退到全局 _currentBars', { cbPeriod: cb.period, need: fetchPeriod });
     } else {
-      if (diag) console.log('[paintKline] bars为空且无匹配 _currentBars，将异步重新取数', { cbPeriod: cb?.period, need: period });
+      if (diag) console.log('[paintKline] bars为空且无匹配 _currentBars，将异步重新取数', { cbPeriod: cb?.period, need: fetchPeriod });
       bars = [];
       // 异步重新取正确周期数据并重绘，避免回退到其他周期造成跨周期污染
-      ensureBars(code, period).then((b) => {
-        if (_klineView && _klineView.code === code && _klineView.period === period) {
+      ensureBars(code, fetchPeriod).then((b) => {
+        if (_klineView && _klineView.code === code && _klineView.fetchPeriod === fetchPeriod) {
           computeMACD(b);
           _klineView.bars = b;
           paintKline(true);
@@ -1684,14 +1660,18 @@ async function openKlineSheet(code, period, segId) {
   const seg = (d?.segments || []).find((s) => s.id === segId);
   if (!seg) return;
 
+  // 辅助周期（15m/60m）的段实际是主周期（5m/30m）刻度，K 线必须用主周期取数，
+  // 否则段 start/end 的 time 与 15m/60m K 线 time 不对齐，drawSegConnector 找不到匹配 K 线而整段画不出来。
+  const fetchPeriod = AUX_TO_MAIN[period] || period;
+
   ensureKlineSheet();
 
   const cb = state._currentBars;
   let bars;
-  if (cb && cb.code === code && cb.period === period && cb.bars && cb.bars.length) {
+  if (cb && cb.code === code && cb.period === fetchPeriod && cb.bars && cb.bars.length) {
     bars = cb.bars;
   } else {
-    try { bars = await ensureBars(code, period); computeMACD(bars); }
+    try { bars = await ensureBars(code, fetchPeriod); computeMACD(bars); }
     catch { bars = []; }
   }
   // 把该周期数据锚定在 _klineView 上，避免后续被全局 _currentBars（可能被其它周期/弹窗覆盖）污染，
@@ -1699,7 +1679,8 @@ async function openKlineSheet(code, period, segId) {
   // 同时锚定 visibleSegs 快照：后台实时刷新可能重排段或改变 hideBefore，导致 getVisibleSegsForPeriod
   // 返回的可见段变少（如只剩 3 段），窗口计算 Math.min(idx-1, len-3) 在 len<=3 时强制 startIdx=0，
   // 于是长按出十字后的重绘会「固定显示前 3 段（1、2、3）」，而非停留在当前段。锚定后窗口稳定。
-  _klineView = { code, period, segId, bars, visibleSegs: getVisibleSegsForPeriod(code, period) };
+  // fetchPeriod 用于取数/匹配 _currentBars；period 用于段数据查找与标题显示。
+  _klineView = { code, period, fetchPeriod, segId, bars, visibleSegs: getVisibleSegsForPeriod(code, period) };
   paintKline(true);
   const backdrop = document.getElementById('kline-sheet-backdrop');
   const sheet = document.getElementById('kline-sheet');
@@ -1713,10 +1694,10 @@ async function openKlineSheet(code, period, segId) {
 // 详情页实时刷新：K 线弹层打开且匹配当前周期时，重切并重绘（盯盘段专用）
 function refreshKlineSheet() {
   if (!_klineView) return;
-  const { code, period } = _klineView;
+  const { code, fetchPeriod } = _klineView;
   const cb = state._currentBars;
-  if (!cb || cb.code !== code || cb.period !== period) {
-    console.log('[refreshKlineSheet] 跳过：_currentBars 不匹配', { cbPeriod: cb?.period, need: period, cbCode: cb?.code, code });
+  if (!cb || cb.code !== code || cb.period !== fetchPeriod) {
+    console.log('[refreshKlineSheet] 跳过：_currentBars 不匹配', { cbPeriod: cb?.period, need: fetchPeriod, cbCode: cb?.code, code });
     return;
   }
   // 用最新周期数据刷新锚定的 bars，确保重绘仍是正确周期
@@ -2438,7 +2419,9 @@ function startDetailRealtime() {
       isWatchScope = true;
     } else if (sheetOpen) {
       code = _klineView.code;
-      period = _klineView.period;
+      period = _klineView.period; // 用于 drawings[period] 找 watch 段
+      // 取数用主周期（辅助周期回落），保证段 time 与 K 线 time 对齐
+      if (_klineView.fetchPeriod) period = _klineView.fetchPeriod;
     } else {
       return;
     }
