@@ -4,7 +4,7 @@ import { fetchBars, fetchRealtimeMulti, formatTime, formatPrice, isETF, resolveC
 import { computeMACD } from './macd.js?v=20260725f';
 import { segmentStrength, detectStrengthIndicators, detectOneBuySell, detectTwoAndThreeBuySell, computeZhongshuStrength, detectZhongshu } from './algo.js?v=20260725f';
 import { renderSegments } from './table.js?v=20260725v';
-import { renderKlineChart, sliceSegmentBars, renderIntradayChart } from './klinechart.js?v=20260804a';
+import { renderKlineChart, sliceSegmentBars, renderIntradayChart } from './klinechart.js?v=20260814b';
 import { loadStaticData } from './sync.js?v=20260725g';
 import { openEditor } from './editor.js?v=20260725f';
 import { makeZhongshu } from './model.js?v=20260725f';
@@ -1158,7 +1158,10 @@ async function openMiniSheet(code, period) {
       const viewSegItems = visibleSegs.map((s) => ({ seg: s, no: '' }));
       const startTime = visibleSegs[0].start.time;
       const endTime = bars[bars.length - 1].time;
-      const sliced = bars.filter((b) => b.time >= startTime && b.time <= endTime);
+      // 包含 startTime 前一根 bar，使落在两根 bar 之间的段端点（如 60m 图上的 30m 段）
+      // 能通过 timeToX 时间插值精确定位，而非被截断到首根 bar。
+      const startIdx = Math.max(0, bars.findIndex((b) => b.time >= startTime) - 1);
+      const sliced = bars.slice(startIdx).filter((b) => b.time <= endTime);
       renderKlineChart(main, sub, sliced, {
         segs: viewSegItems, zhongshus: zhongshuRects, sub: 'macd', period: p, digits, subH: 96,
         noSwipe: true, subToggle: true, themeLines: true, solidMacd: true, crosshairOnly: true,

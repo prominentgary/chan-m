@@ -68,16 +68,32 @@ function roundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
+// 按时间查找 x 坐标：精确匹配优先，否则在相邻两根 bar 之间线性插值。
+// 用于辅助周期（如 60m 图上显示 30m 段）段端点时间与 bar 时间不对齐的场景。
+function timeToX(bars, time, xOf) {
+  if (!bars || !bars.length) return -1;
+  for (let i = 0; i < bars.length; i++) {
+    if (bars[i].time === time) return xOf(i);
+  }
+  if (time < bars[0].time) return xOf(0);
+  if (time > bars[bars.length - 1].time) return xOf(bars.length - 1);
+  for (let i = 0; i < bars.length - 1; i++) {
+    if (bars[i].time < time && bars[i + 1].time > time) {
+      const ratio = (time - bars[i].time) / (bars[i + 1].time - bars[i].time);
+      return xOf(i) + ratio * (xOf(i + 1) - xOf(i));
+    }
+  }
+  return xOf(bars.length - 1);
+}
+
 // 中枢矩形（点线/实线由 themeLines 决定，位于 K 线之上、段连线之下）
 function drawZhongshuRect(ctx, meta, zs, colors) {
   const { bars, xOf, yOf, themeLines } = meta;
   if (!bars || !bars.length) return;
-  const si = bars.findIndex((b) => b.time === zs.startTime);
-  const ei = bars.findIndex((b) => b.time === zs.endTime);
-  if (si < 0 || ei < 0) return;
-  const x1 = xOf(si);
+  const x1 = timeToX(bars, zs.startTime, xOf);
+  const x2 = timeToX(bars, zs.endTime, xOf);
+  if (x1 < 0 || x2 < 0) return;
   const y1 = yOf(zs.high);
-  const x2 = xOf(ei);
   const y2 = yOf(zs.low);
   ctx.save();
   ctx.strokeStyle = colors.accent;
@@ -91,11 +107,11 @@ function drawZhongshuRect(ctx, meta, zs, colors) {
 function drawSegConnector(ctx, meta, seg, colors, no) {
   const { bars, xOf, yOf, themeLines } = meta;
   if (!bars || !bars.length) return;
-  const si = bars.findIndex((b) => b.time === seg.start.time);
-  const ei = bars.findIndex((b) => b.time === seg.end.time);
-  if (si < 0 || ei < 0) return;
-  const x1 = xOf(si), y1 = yOf(seg.start.price);
-  const x2 = xOf(ei), y2 = yOf(seg.end.price);
+  const x1 = timeToX(bars, seg.start.time, xOf);
+  const x2 = timeToX(bars, seg.end.time, xOf);
+  if (x1 < 0 || x2 < 0) return;
+  const y1 = yOf(seg.start.price);
+  const y2 = yOf(seg.end.price);
   const col = themeLines ? colors.accent : (seg.direction === 'up' ? colors.red : colors.green);
   ctx.save();
   ctx.strokeStyle = col;
@@ -142,7 +158,10 @@ export function sliceSegmentBars(bars, seg) {
   const s = seg.start.time;
   // 盯盘段：终点之后到当前 K 线（剩余未分段部分）一并纳入，便于实时观察
   const e = seg._isWatch ? bars[bars.length - 1].time : seg.end.time;
-  return bars.filter((b) => b.time >= s && b.time <= e);
+  // 包含起点前一根 bar，使落在两根 bar 之间的段端点（如 60m 图上的 30m 段）
+  // 能通过 timeToX 时间插值精确定位，而非被截断到首根 bar。
+  const startIdx = Math.max(0, bars.findIndex((b) => b.time >= s) - 1);
+  return bars.slice(startIdx).filter((b) => b.time <= e);
 }
 
 export function renderKlineChart(main, sub, bars, opts = {}) {
