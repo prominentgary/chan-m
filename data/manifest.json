@@ -1,20 +1,22 @@
 {
   "securities": [
     {
-      "code": "sh588080",
-      "name": "科创板50",
+      "code": "sz159611",
+      "name": "电力ETF广发",
       "periods": [
         "1m",
         "5m",
         "15m",
         "30m",
-        "60m",
-        "day",
-        "week"
+        "60m"
       ],
       "presets": [
         {
           "id": "default",
+          "name": ""
+        },
+        {
+          "id": "preset_0m59mbzv",
           "name": ""
         }
       ]
@@ -36,6 +38,25 @@
         },
         {
           "id": "preset_8kais7ej",
+          "name": ""
+        }
+      ]
+    },
+    {
+      "code": "sh588080",
+      "name": "科创板50",
+      "periods": [
+        "1m",
+        "5m",
+        "15m",
+        "30m",
+        "60m",
+        "day",
+        "week"
+      ],
+      "presets": [
+        {
+          "id": "default",
           "name": ""
         }
       ]

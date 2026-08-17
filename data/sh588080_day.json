@@ -1,7 +1,7 @@
 {
   "code": "sh588080",
   "period": "day",
-  "exportedAt": 1786719742326,
+  "exportedAt": 1786982954402,
   "segments": [
     {
       "id": "s_cp09tvim",
@@ -606,41 +606,13 @@
       }
     },
     {
-      "id": "s_p9jugx8g",
+      "id": "s_pnbtobzo",
       "kind": "segment",
       "period": "day",
       "direction": "down",
       "start": {
         "time": 1783612800,
         "price": 2.314
-      },
-      "end": {
-        "time": 1784476800,
-        "price": 1.684
-      }
-    },
-    {
-      "id": "s_wg5a8omv",
-      "kind": "segment",
-      "period": "day",
-      "direction": "up",
-      "start": {
-        "time": 1784476800,
-        "price": 1.684
-      },
-      "end": {
-        "time": 1785081600,
-        "price": 1.849
-      }
-    },
-    {
-      "id": "s_efk386zl",
-      "kind": "segment",
-      "period": "day",
-      "direction": "down",
-      "start": {
-        "time": 1785081600,
-        "price": 1.849
       },
       "end": {
         "time": 1785686400,
@@ -1310,41 +1282,13 @@
           }
         },
         {
-          "id": "s_p9jugx8g",
+          "id": "s_pnbtobzo",
           "kind": "segment",
           "period": "day",
           "direction": "down",
           "start": {
             "time": 1783612800,
             "price": 2.314
-          },
-          "end": {
-            "time": 1784476800,
-            "price": 1.684
-          }
-        },
-        {
-          "id": "s_wg5a8omv",
-          "kind": "segment",
-          "period": "day",
-          "direction": "up",
-          "start": {
-            "time": 1784476800,
-            "price": 1.684
-          },
-          "end": {
-            "time": 1785081600,
-            "price": 1.849
-          }
-        },
-        {
-          "id": "s_efk386zl",
-          "kind": "segment",
-          "period": "day",
-          "direction": "down",
-          "start": {
-            "time": 1785081600,
-            "price": 1.849
           },
           "end": {
             "time": 1785686400,
@@ -1411,14 +1355,6 @@
   "activePreset": "default",
   "presetName": "",
   "bars": [
-    {
-      "time": "2023-04-27",
-      "open": 1.087,
-      "high": 1.106,
-      "low": 1.083,
-      "close": 1.092,
-      "volume": 4221483.0
-    },
     {
       "time": "2023-04-28",
       "open": 1.089,
@@ -7810,6 +7746,14 @@
       "low": 1.73,
       "close": 1.758,
       "volume": 7110990.0
+    },
+    {
+      "time": "2026-08-17",
+      "open": 1.758,
+      "high": 1.83,
+      "low": 1.757,
+      "close": 1.83,
+      "volume": 9210833.0
     }
   ]
 }
