@@ -1,10 +1,59 @@
 {
   "securities": [
     {
-      "code": "sz159611",
-      "name": "电力ETF广发",
+      "code": "sz399006",
+      "name": "创业板指",
       "periods": [
-        "1m",
+        "5m",
+        "15m",
+        "30m",
+        "60m",
+        "day"
+      ],
+      "presets": [
+        {
+          "id": "default",
+          "name": ""
+        }
+      ]
+    },
+    {
+      "code": "sh512710",
+      "name": "军工龙头ETF",
+      "periods": [
+        "5m",
+        "15m",
+        "30m",
+        "60m",
+        "day"
+      ],
+      "presets": [
+        {
+          "id": "default",
+          "name": ""
+        }
+      ]
+    },
+    {
+      "code": "sh588700",
+      "name": "科创生物",
+      "periods": [
+        "5m",
+        "15m",
+        "30m",
+        "60m"
+      ],
+      "presets": [
+        {
+          "id": "default",
+          "name": ""
+        }
+      ]
+    },
+    {
+      "code": "sh000001",
+      "name": "上证指数",
+      "periods": [
         "5m",
         "15m",
         "30m",
@@ -16,7 +65,43 @@
           "name": ""
         },
         {
-          "id": "preset_0m59mbzv",
+          "id": "preset_u9eijhfd",
+          "name": ""
+        }
+      ]
+    },
+    {
+      "code": "sz159692",
+      "name": "证券ETF东财",
+      "periods": [
+        "1m",
+        "5m",
+        "15m",
+        "30m",
+        "60m",
+        "day"
+      ],
+      "presets": [
+        {
+          "id": "default",
+          "name": ""
+        }
+      ]
+    },
+    {
+      "code": "sz159611",
+      "name": "电力ETF广发",
+      "periods": [
+        "1m",
+        "5m",
+        "15m",
+        "30m",
+        "60m",
+        "day"
+      ],
+      "presets": [
+        {
+          "id": "default",
           "name": ""
         }
       ]
