@@ -246,10 +246,6 @@ function drawMainCanvas(canvas, bars, segs, zhongshus, colors, period, digits, t
     if (b.low < min) min = b.low;
     if (b.high > max) max = b.high;
   }
-  for (const { seg: s } of segList) {
-    if (s?.start) { min = Math.min(min, s.start.price); max = Math.max(max, s.start.price); }
-    if (s?.end) { min = Math.min(min, s.end.price); max = Math.max(max, s.end.price); }
-  }
   const pad = (max - min) * 0.08 || 1;
   min -= pad; max += pad;
 
