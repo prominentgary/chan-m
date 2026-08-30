@@ -1,7 +1,7 @@
 // editor.js —— 用日期时间编辑段端点（非图上点）
 import { secToInputValue, inputValueToSec, formatTime } from './fetcher.js?v=20260725i';
 
-let modal, startEl, endEl, saveCb, editSeg, startLockedFlag;
+let modal, startEl, endEl, saveCb, onCancelCb, editSeg, startLockedFlag;
 
 function ensureModal() {
   if (modal) return;
@@ -20,7 +20,10 @@ function ensureModal() {
   document.body.appendChild(modal);
   startEl = modal.querySelector('#ed-start');
   endEl = modal.querySelector('#ed-end');
-  modal.querySelector('#ed-cancel').onclick = () => (modal.style.display = 'none');
+  modal.querySelector('#ed-cancel').onclick = () => {
+    modal.style.display = 'none';
+    onCancelCb && onCancelCb();
+  };
   modal.querySelector('#ed-save').onclick = () => {
     const s = startLockedFlag && editSeg ? editSeg.start.time : inputValueToSec(startEl.value);
     const e = inputValueToSec(endEl.value);
@@ -31,7 +34,7 @@ function ensureModal() {
 }
 
 // startLocked：true 表示该段起点连接着上一段终点，起点不可编辑
-export function openEditor(seg, onSave, defaults, startLocked) {
+export function openEditor(seg, onSave, defaults, startLocked, onCancel) {
   ensureModal();
   const now = Math.floor(Date.now() / 1000);
   let startTime, endTime;
@@ -54,5 +57,6 @@ export function openEditor(seg, onSave, defaults, startLocked) {
   if (hint) hint.hidden = !startLockedFlag;
   endEl.value = secToInputValue(endTime);
   saveCb = onSave;
+  onCancelCb = onCancel;
   modal.style.display = 'flex';
 }

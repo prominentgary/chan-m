@@ -6,8 +6,15 @@ import { segmentStrength, detectStrengthIndicators, detectOneBuySell, detectTwoA
 import { renderSegments } from './table.js?v=20260725v';
 import { renderKlineChart, sliceSegmentBars, renderIntradayChart } from './klinechart.js?v=20260814b';
 import { loadStaticData } from './sync.js?v=20260725g';
-import { openEditor } from './editor.js?v=20260725f';
+import { openEditor } from './editor.js?v=20260830b';
 import { makeZhongshu } from './model.js?v=20260725f';
+import {
+  calcNaturalDuanEndFull, canContinueFromSeg, narrowAlleyResult,
+  rollbackResult, evalAutoContinue, tightenCurrentResult, isRightmostAndUnoccupied,
+  findBarIdxByTime, segRight, segDirection, oppositeDir,
+  DEFAULT_CANDIDATE_SPAN_MIN, DEFAULT_CANDIDATE_SPAN_MAX, AUTO_CONTINUE_FIX_GAP,
+  resetWatchCaches,
+} from './watchmode.js?v=20260830a';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => document.querySelectorAll(s);
@@ -2268,6 +2275,8 @@ async function handleSegmentAction(act, segId, code, period) {
   } else if (act === 'edit') {
     if (!targetSeg) return;
     const wasWatch = targetSeg._isWatch;
+    // 盯盘段编辑过程中暂停实时自动延伸，避免被行情拉回
+    if (wasWatch) targetSeg._watchManualEnd = true;
     const sorted = [...(d.segments || [])].sort((a, b) => a.start.time - b.start.time);
     const idx = sorted.findIndex((s) => s.id === segId);
     // 起点即为上一段终点（之前连接着段）→ 起点不可编辑
@@ -2288,33 +2297,23 @@ async function handleSegmentAction(act, segId, code, period) {
       targetSeg.end.time = newEnd;
       targetSeg.end.price = endpointPrice(eBar, false, direction) ?? targetSeg.end.price;
       targetSeg.direction = direction;
-      // 盯盘段编辑后变为普通段，并基于新的终点自动生成新的盯盘段（所有周期通用）
+      // 编辑完成：恢复自动延伸；且盯盘段编辑后变为普通段，并基于新的终点自动生成新的盯盘段
+      delete targetSeg._watchManualEnd;
       if (wasWatch) {
         delete targetSeg._isWatch;
-        delete targetSeg._watchSourceId;
-        const startIdx = bars.findIndex((b) => b.time === targetSeg.end.time);
-        if (startIdx >= 0) {
-          const watchDir = oppositeDirection(targetSeg.direction);
-          const endInfo = calcWatchSegmentEnd(bars, startIdx, watchDir);
-          if (endInfo) {
-            d.segments.push({
-              id: 'w_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6),
-              kind: 'segment',
-              period,
-              direction: watchDir,
-              start: { time: targetSeg.end.time, price: targetSeg.end.price },
-              end: { time: endInfo.time, price: endInfo.price },
-              _isWatch: true,
-              _watchSourceId: targetSeg.id,
-            });
-          }
-        }
+        delete targetSeg._watchMaxSpan;
+        createWatchFromSource(targetSeg, bars, d.segments || [], period);
       }
       saveLocalEdits(code, sec.drawings);
       refreshPeriodDetailWithoutFetch(code, period);
-    }, null, startLocked);
+    }, null, startLocked, () => {
+      // 取消编辑：若为盯盘段则恢复实时自动延伸
+      if (targetSeg) delete targetSeg._watchManualEnd;
+    });
   } else if (act === 'commit') {
-    // 盯盘段经 ✓ 确认：转为普通段，并基于其终点自动生成下一个盯盘段，然后继续打开该盯盘段
+    // 盯盘段经 ✓ 确认：对齐桌面版「持续生成」逻辑。
+    // 能续接 → 冻结为普通段并自动生成下一段盯盘；已是最后一段(already_done) → 保持动态盯盘，提示；
+    // 行情充足但按规则找不到(rule_not_found) → 尝试死胡同回溯（收紧前一段）。
     if (!targetSeg || !targetSeg._isWatch) return;
     let bars;
     try {
@@ -2323,26 +2322,47 @@ async function handleSegmentAction(act, segId, code, period) {
       alert('行情数据加载失败，请检查网络后重试');
       return;
     }
-    delete targetSeg._isWatch;
-    delete targetSeg._watchSourceId;
-    const startIdx = bars.findIndex((b) => b.time === targetSeg.end.time);
-    let newWatchId = null;
-    if (startIdx >= 0) {
-      const watchDir = oppositeDirection(targetSeg.direction);
-      const endInfo = calcWatchSegmentEnd(bars, startIdx, watchDir);
-      if (endInfo) {
-        newWatchId = 'w_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
-        d.segments.push({
-          id: newWatchId,
-          kind: 'segment',
-          period,
-          direction: watchDir,
-          start: { time: targetSeg.end.time, price: targetSeg.end.price },
-          end: { time: endInfo.time, price: endInfo.price },
-          _isWatch: true,
-          _watchSourceId: targetSeg.id,
-        });
+    const segs = d.segments || [];
+    const con = canContinueFromSeg(segs, targetSeg, bars);
+    if (!con.can) {
+      if (con.reason === 'already_done') {
+        toast('已是最后一段（后续行情不足），保持当前盯盘段');
+        refreshPeriodDetailWithoutFetch(code, period);
+        return;
       }
+      // 死胡同回溯：删除 b，收紧前一段并激活为盯盘段
+      const roll = rollbackResult(segs, targetSeg, bars);
+      if (!roll.ok) {
+        toast(roll.reason === 'no_prev' ? '已是最后一段，前面无可回溯的段' : '已是最后一段，无法回溯重算');
+        refreshPeriodDetailWithoutFetch(code, period);
+        return;
+      }
+      const prev = roll.prevSeg;
+      d.segments = segs.filter((s) => s.id !== targetSeg.id);
+      prev.end = { time: Math.floor(roll.newEnd.time), price: roll.newEnd.price };
+      prev.direction = prev.direction || segDirection(prev);
+      prev._isWatch = true;
+      prev._watchMaxSpan = roll.tempMax;
+      toast('已回溯收紧前段，继续盯盘');
+      saveLocalEdits(code, sec.drawings);
+      refreshPeriodDetailWithoutFetch(code, period);
+      return;
+    }
+    // 能续接：冻结当前盯盘段并续接生成下一段；下一段若未生成则保持当前为盯盘段
+    const frozenId = targetSeg.id;
+    degradeWatch(targetSeg);
+    const made = createWatchFromSource(targetSeg, bars, segs, period);
+    if (made.reason === 'narrow') {
+      // 窄胡同：源段已被收紧并激活为盯盘段，无需额外操作
+      saveLocalEdits(code, sec.drawings);
+      refreshPeriodDetailWithoutFetch(code, period);
+      toast('已收紧前段，继续盯盘');
+      return;
+    }
+    if (!made.created) {
+      const frozen = segs.find((s) => s.id === frozenId);
+      if (frozen) frozen._isWatch = true;
+      toast(made.reason === 'already_done' ? '已是最后一段（后续行情不足），保持当前盯盘段' : '已是最后一段，无法续接下一段');
     }
     saveLocalEdits(code, sec.drawings);
     refreshPeriodDetailWithoutFetch(code, period);
@@ -2441,9 +2461,18 @@ function startDetailRealtime() {
       const bars = res.bars || [];
       state._currentBars = { code, period, bars };
       computeMACD(bars);
+      // 只要该(证券,周期)存在盯盘段即更新（对齐桌面每帧逻辑），不限 detail 盯盘 tab
+      const hasWatch = !!(d && (d.segments || []).some((s) => s._isWatch));
       if (isWatchScope) {
-        const changed = updateWatchSegments(code, period, bars, false);
-        if (changed) refreshPeriodDetailWithoutFetch(code, period);
+        if (hasWatch) {
+          const u = updateWatchSegments(code, period, bars, false);
+          if (u.changed || u.structural) refreshPeriodDetailWithoutFetch(code, period);
+        } else {
+          refreshPeriodDetailWithoutFetch(code, period);
+        }
+      } else if (hasWatch && sheetOpen) {
+        const u = updateWatchSegments(code, period, bars, false);
+        if (u.changed || u.structural) refreshKlineSheet();
       }
       if (sheetOpen) refreshKlineSheet();
     } catch {}
@@ -2588,25 +2617,176 @@ async function addSegment(code, period, afterSegId) {
   }, defaults);
 }
 
-// 计算盯盘段终点：从起点所在 K 线到最新 K 线区间内的最高/最低价
-function calcWatchSegmentEnd(bars, startIdx, direction) {
-  if (!bars || startIdx < 0 || startIdx >= bars.length) return null;
-  let endBar = bars[startIdx];
-  if (direction === 'up') {
-    for (let i = startIdx + 1; i < bars.length; i++) {
-      if (bars[i].high > endBar.high) endBar = bars[i];
-    }
-  } else {
-    for (let i = startIdx + 1; i < bars.length; i++) {
-      if (bars[i].low < endBar.low) endBar = bars[i];
-    }
-  }
-  return {
-    time: endBar.time,
-    price: direction === 'up' ? endBar.high : endBar.low,
-  };
+// ===== 盯盘段：选点 / 创建 / 动态更新 / 自动续接（对齐桌面版 watch 逻辑） =====
+
+let _watchEndCache = null;   // 盯盘段终点缓存：仅行情数据变化时重算，避免每帧 O(N²)
+let _watchScopeKey = null;   // 当前盯盘 scope（code|period），切换时清空派生缓存
+
+// 降级盯盘段为普通段（清除盯盘标记，保留为普通段）
+function degradeWatch(seg) {
+  delete seg._isWatch;
+  delete seg._watchDirection;
+  delete seg._watchMaxSpan;
+  delete seg._watchManualEnd;
 }
 
+// 从源段 sourceSeg 的终点创建/续接盯盘段；含窄胡同回算（把源段自身收紧并转为盯盘段）。
+// 直接修改 segs（d.segments）。返回 { created, reason }。
+function createWatchFromSource(sourceSeg, bars, segs, period) {
+  const right = segRight(sourceSeg);
+  if (!right) return { created: false, reason: 'invalid' };
+  const startIdx = findBarIdxByTime(bars, right.time);
+  if (startIdx < 0) return { created: false, reason: 'no_start' };
+  const direction = oppositeDir(sourceSeg.direction || segDirection(sourceSeg));
+  const startPrice = right.price;
+  const foundB = calcNaturalDuanEndFull(bars, startIdx, startPrice, direction);
+  // 窄胡同回算：右侧行情充足(avail>=9)且 b 长档未命中时，先把源段收紧并转为盯盘段
+  if (bars.length - startIdx >= 9) {
+    const bLongHit = !!(foundB && foundB.endInfo && foundB.matchedTier && foundB.matchedTier.indexOf('长档') === 0);
+    if (!bLongHit) {
+      const narrow = narrowAlleyResult(sourceSeg, segs, bars);
+      if (narrow.ok) {
+        // 把源段收紧并激活为新盯盘段（对齐 _commitWatchRecompute）
+        sourceSeg.end = { time: Math.floor(narrow.newEnd.time), price: narrow.newEnd.price };
+        sourceSeg.direction = sourceSeg.direction || segDirection(sourceSeg);
+        sourceSeg._isWatch = true;
+        sourceSeg._watchMaxSpan = narrow.tempMax;
+        return { created: false, reason: 'narrow' };
+      }
+    }
+  }
+  if (!foundB || !foundB.endInfo || foundB.endInfo.barIdx <= startIdx) {
+    return { created: false, reason: (foundB && foundB._reason) || 'rule_not_found' };
+  }
+  // 同一源段只能有一个盯盘段，先移除旧的（避免重复）
+  for (let i = segs.length - 1; i >= 0; i--) {
+    const s = segs[i];
+    if (s !== sourceSeg && s._isWatch && s._watchSourceId === sourceSeg.id) segs.splice(i, 1);
+  }
+  const seg = {
+    id: 'w_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6),
+    kind: 'segment',
+    period,
+    direction,
+    start: { time: Math.floor(right.time), price: right.price },
+    end: { time: Math.floor(foundB.endInfo.time), price: foundB.endInfo.price },
+    _isWatch: true,
+    _watchSourceId: sourceSeg.id,
+  };
+  segs.push(seg);
+  return { created: true, reason: 'found' };
+}
+
+// 根据最新行情更新所有盯盘段终点；含失效降级、终点缓存、自动续接/自动回修。
+// 返回 { changed, structural }；structural=发生了冻结/续接/回修等结构性变化，需重渲染。
+function updateWatchSegments(code, period, bars, refresh = true) {
+  const sec = state.securities.find((s) => s.code === code);
+  if (!sec) return { changed: false, structural: false };
+  const d = sec.drawings[period];
+  if (!d) return { changed: false, structural: false };
+  if (!bars || !bars.length) bars = state._currentBars?.bars || [];
+  if (!bars || !bars.length) return { changed: false, structural: false };
+  const segs = d.segments || [];
+  if (!segs.length) return { changed: false, structural: false };
+  // scope 切换（证券/周期变化）时清空派生缓存
+  const scopeKey = code + '|' + period;
+  if (_watchScopeKey !== scopeKey) {
+    _watchScopeKey = scopeKey;
+    _watchEndCache = null;
+    resetWatchCaches();
+  }
+  let changed = false, structural = false;
+
+  // 1) 失效降级：非最右端/右端点被占用/起点不在bars中 → 降级为普通段
+  for (const s of segs) {
+    if (!s._isWatch) continue;
+    if (!isRightmostAndUnoccupied(s, segs) || findBarIdxByTime(bars, s.start.time) < 0) {
+      degradeWatch(s);
+      changed = structural = true;
+    }
+  }
+  // 2) 唯一活跃盯盘段 = 仍标记 _isWatch 的那条（失效的已降级）
+  const activeWatch = segs.find((s) => s._isWatch);
+  if (!activeWatch) {
+    if (changed) {
+      d.segments = segs;
+      if (refresh) refreshPeriodDetailWithoutFetch(code, period);
+    }
+    return { changed: changed, structural: structural };
+  }
+  // 3) 手动接管（编辑中）暂停自动延伸
+  if (activeWatch._watchManualEnd) {
+    if (changed) {
+      d.segments = segs;
+      if (refresh) refreshPeriodDetailWithoutFetch(code, period);
+    }
+    return { changed: changed, structural: structural };
+  }
+  const startIdx = findBarIdxByTime(bars, activeWatch.start.time);
+  let recomputed = false;
+  if (startIdx >= 0) {
+    const direction = activeWatch.direction || segDirection(activeWatch);
+    const maxSpanOverride = (activeWatch._watchMaxSpan != null && activeWatch._watchMaxSpan >= DEFAULT_CANDIDATE_SPAN_MIN)
+      ? activeWatch._watchMaxSpan : undefined;
+    const lastBar = bars[bars.length - 1];
+    const cacheKey = activeWatch.id + '|' + bars.length + '|' + Math.floor(lastBar.time) + '|' + lastBar.high + '|' + lastBar.low + '|' + (maxSpanOverride != null ? maxSpanOverride : '');
+    let foundEnd;
+    if (_watchEndCache && _watchEndCache.key === cacheKey) {
+      foundEnd = _watchEndCache.result;
+    } else {
+      foundEnd = calcNaturalDuanEndFull(bars, startIdx, activeWatch.start.price, direction, maxSpanOverride);
+      _watchEndCache = { key: cacheKey, result: foundEnd };
+      recomputed = true;
+    }
+    const endInfo = foundEnd ? foundEnd.endInfo : null;
+    if (endInfo && endInfo.barIdx > startIdx) {
+      const nt = Math.floor(endInfo.time);
+      if (activeWatch.end.time !== nt || activeWatch.end.price !== endInfo.price) {
+        activeWatch.end = { time: nt, price: endInfo.price };
+        changed = true;
+      }
+    }
+    // 4) 自动续接 / 自动回修（仅重建触发时判定）
+    if (recomputed) {
+      const verdict = evalAutoContinue(segs, activeWatch, bars, startIdx, maxSpanOverride);
+      if (verdict === 'continue') {
+        // 冻结当前盯盘段并续接下一段；续接失败则恢复为盯盘段
+        const frozenId = activeWatch.id;
+        degradeWatch(activeWatch);
+        const made = createWatchFromSource(activeWatch, bars, segs, period);
+        if (!made.created) {
+          const frozen = segs.find((s) => s.id === frozenId);
+          if (frozen) frozen._isWatch = true;
+        }
+        changed = structural = true;
+      } else if (verdict === 'fix') {
+        // 闸2：两次回修间至少间隔 AUTO_CONTINUE_FIX_GAP 根新K线
+        let fixOk = true;
+        if (activeWatch._watchLastFixTime != null) {
+          const lastFixIdx = findBarIdxByTime(bars, activeWatch._watchLastFixTime);
+          if (lastFixIdx >= 0 && (bars.length - 1 - lastFixIdx) < AUTO_CONTINUE_FIX_GAP) fixOk = false;
+        }
+        if (fixOk) {
+          const t = tightenCurrentResult(activeWatch, bars, startIdx);
+          if (t.ok) {
+            activeWatch.end = { time: Math.floor(t.newEnd.time), price: t.newEnd.price };
+            activeWatch._watchMaxSpan = t.tempMax;
+            activeWatch._watchFixCount = (activeWatch._watchFixCount || 0) + 1;
+            activeWatch._watchLastFixTime = Math.floor(bars[bars.length - 1].time);
+            changed = structural = true;
+          }
+        }
+      }
+    }
+  }
+  if (changed || structural) {
+    d.segments = segs;
+    if (refresh) refreshPeriodDetailWithoutFetch(code, period);
+  }
+  return { changed: changed || structural, structural: structural };
+}
+
+// watch 按钮入口：从某最近画线源段创建盯盘段
 async function addWatchSegment(code, period, sourceSegId) {
   const sec = state.securities.find((s) => s.code === code);
   if (!sec) return;
@@ -2618,69 +2798,22 @@ async function addWatchSegment(code, period, sourceSegId) {
     return;
   }
   const d = sec.drawings[period] || { segments: [], zhongshus: [] };
-  let segs = d.segments || [];
-  // 同一源段只能有一个盯盘段，先移除旧的
-  segs = segs.filter((s) => !(s._isWatch && s._watchSourceId === sourceSegId));
+  const segs = d.segments || [];
   const sourceSeg = segs.find((s) => s.id === sourceSegId);
   if (!sourceSeg) return;
-  const startTime = sourceSeg.end.time;
-  const startIdx = bars.findIndex((b) => b.time === startTime);
-  if (startIdx < 0) {
-    alert('未找到起点对应K线');
+  if (segRight(sourceSeg) && findBarIdxByTime(bars, segRight(sourceSeg).time) < 0) {
+    toast('未找到起点对应K线');
     return;
   }
-  const direction = oppositeDirection(sourceSeg.direction);
-  const endInfo = calcWatchSegmentEnd(bars, startIdx, direction);
-  if (!endInfo) return;
-  const seg = {
-    id: 'w_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6),
-    kind: 'segment',
-    period,
-    direction,
-    start: { time: startTime, price: sourceSeg.end.price },
-    end: { time: endInfo.time, price: endInfo.price },
-    _isWatch: true,
-    _watchSourceId: sourceSegId,
-  };
-  d.segments = [...segs, seg];
+  const made = createWatchFromSource(sourceSeg, bars, segs, period);
   sec.drawings[period] = d;
   saveLocalEdits(code, sec.drawings);
   refreshPeriodDetailWithoutFetch(code, period);
-}
-
-// 根据最新行情更新盯盘段终点；refresh 为 false 时只更新数据不重新渲染
-function updateWatchSegments(code, period, bars, refresh = true) {
-  const sec = state.securities.find((s) => s.code === code);
-  if (!sec) return false;
-  const d = sec.drawings[period];
-  if (!d) return false;
-  if (!bars || !bars.length) bars = state._currentBars?.bars || [];
-  if (!bars || !bars.length) return false;
-  const segs = d.segments || [];
-  let changed = false;
-  const newSegs = segs.filter((s) => {
-    if (!s._isWatch) return true;
-    const sourceSeg = segs.find((x) => x.id === s._watchSourceId);
-    if (!sourceSeg) {
-      changed = true;
-      return false;
-    }
-    const startIdx = bars.findIndex((b) => b.time === sourceSeg.end.time);
-    if (startIdx < 0) return true;
-    const direction = oppositeDirection(sourceSeg.direction);
-    const endInfo = calcWatchSegmentEnd(bars, startIdx, direction);
-    if (!endInfo) return true;
-    if (s.end.time !== endInfo.time || s.end.price !== endInfo.price) {
-      s.end = { time: endInfo.time, price: endInfo.price };
-      changed = true;
-    }
-    return true;
-  });
-  if (changed) {
-    d.segments = newSegs;
-    if (refresh) refreshPeriodDetailWithoutFetch(code, period);
+  if (!made.created && made.reason !== 'narrow') {
+    toast(made.reason === 'already_done' ? '盯盘已完成/后续K线不足，暂不生成' : '按当前规则未找到显著极值，暂不生成盯盘段');
+  } else if (made.reason === 'narrow') {
+    toast('已收紧前段，继续盯盘');
   }
-  return changed;
 }
 
 // ========== 底部 tabbar 视口适配（修复小米等安卓机页面切换时 tabbar 被遮挡/裁切） ==========
