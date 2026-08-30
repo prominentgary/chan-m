@@ -1,10 +1,10 @@
 {
   "code": "sh588110",
   "period": "60m",
-  "exportedAt": 1788053270486,
+  "exportedAt": 1788106055192,
   "segments": [
     {
-      "id": "s_vbfmfntw",
+      "id": "s_rymtswad",
       "kind": "segment",
       "period": "30m",
       "direction": "down",
@@ -18,7 +18,7 @@
       }
     },
     {
-      "id": "s_drr09bw2",
+      "id": "s_oyrc2227",
       "kind": "segment",
       "period": "30m",
       "direction": "up",
@@ -32,7 +32,7 @@
       }
     },
     {
-      "id": "s_ocul59rx",
+      "id": "s_1z0qhzwc",
       "kind": "segment",
       "period": "30m",
       "direction": "down",
@@ -46,7 +46,7 @@
       }
     },
     {
-      "id": "s_8h5uzrs1",
+      "id": "s_owly1kln",
       "kind": "segment",
       "period": "30m",
       "direction": "up",
@@ -60,7 +60,7 @@
       }
     },
     {
-      "id": "s_weu7dixi",
+      "id": "s_2pxnkhoh",
       "kind": "segment",
       "period": "30m",
       "direction": "down",
@@ -74,7 +74,7 @@
       }
     },
     {
-      "id": "s_2mpb0xdb",
+      "id": "s_880zsvyl",
       "kind": "segment",
       "period": "30m",
       "direction": "up",
@@ -88,7 +88,7 @@
       }
     },
     {
-      "id": "s_1gsbzk2b",
+      "id": "s_jo42vvcf",
       "kind": "segment",
       "period": "30m",
       "direction": "down",
@@ -102,7 +102,7 @@
       }
     },
     {
-      "id": "s_y2z5mwkl",
+      "id": "s_pjg5o0nr",
       "kind": "segment",
       "period": "30m",
       "direction": "up",
@@ -116,7 +116,7 @@
       }
     },
     {
-      "id": "s_tsy8b3j7",
+      "id": "s_r6qj76in",
       "kind": "segment",
       "period": "30m",
       "direction": "down",
@@ -130,7 +130,7 @@
       }
     },
     {
-      "id": "s_n2swd6u1",
+      "id": "s_etpflbaj",
       "kind": "segment",
       "period": "30m",
       "direction": "up",
@@ -144,7 +144,7 @@
       }
     },
     {
-      "id": "s_bo848i38",
+      "id": "s_t4zbum4s",
       "kind": "segment",
       "period": "30m",
       "direction": "down",
@@ -158,7 +158,7 @@
       }
     },
     {
-      "id": "s_m1yx9xa6",
+      "id": "s_lpx3tpnp",
       "kind": "segment",
       "period": "30m",
       "direction": "up",
@@ -172,7 +172,7 @@
       }
     },
     {
-      "id": "s_77j46per",
+      "id": "s_f02tzk9i",
       "kind": "segment",
       "period": "30m",
       "direction": "down",
@@ -188,12 +188,12 @@
   ],
   "zhongshus": [
     {
-      "id": "s_1k5jqqjz",
+      "id": "s_43drkwue",
       "kind": "zhongshu",
       "segmentIds": [
-        "s_drr09bw2",
-        "s_ocul59rx",
-        "s_8h5uzrs1"
+        "s_oyrc2227",
+        "s_1z0qhzwc",
+        "s_owly1kln"
       ],
       "startTime": 1782957600,
       "endTime": 1783648800,
@@ -211,12 +211,12 @@
       ]
     },
     {
-      "id": "s_sgk7wxu3",
+      "id": "s_wrlh5vam",
       "kind": "zhongshu",
       "segmentIds": [
-        "s_2mpb0xdb",
-        "s_1gsbzk2b",
-        "s_y2z5mwkl"
+        "s_880zsvyl",
+        "s_jo42vvcf",
+        "s_pjg5o0nr"
       ],
       "startTime": 1784516400,
       "endTime": 1785135600,
@@ -240,7 +240,7 @@
       "name": "",
       "segments": [
         {
-          "id": "s_vbfmfntw",
+          "id": "s_rymtswad",
           "kind": "segment",
           "period": "30m",
           "direction": "down",
@@ -254,7 +254,7 @@
           }
         },
         {
-          "id": "s_drr09bw2",
+          "id": "s_oyrc2227",
           "kind": "segment",
           "period": "30m",
           "direction": "up",
@@ -268,7 +268,7 @@
           }
         },
         {
-          "id": "s_ocul59rx",
+          "id": "s_1z0qhzwc",
           "kind": "segment",
           "period": "30m",
           "direction": "down",
@@ -282,7 +282,7 @@
           }
         },
         {
-          "id": "s_8h5uzrs1",
+          "id": "s_owly1kln",
           "kind": "segment",
           "period": "30m",
           "direction": "up",
@@ -296,7 +296,7 @@
           }
         },
         {
-          "id": "s_weu7dixi",
+          "id": "s_2pxnkhoh",
           "kind": "segment",
           "period": "30m",
           "direction": "down",
@@ -310,7 +310,7 @@
           }
         },
         {
-          "id": "s_2mpb0xdb",
+          "id": "s_880zsvyl",
           "kind": "segment",
           "period": "30m",
           "direction": "up",
@@ -324,7 +324,7 @@
           }
         },
         {
-          "id": "s_1gsbzk2b",
+          "id": "s_jo42vvcf",
           "kind": "segment",
           "period": "30m",
           "direction": "down",
@@ -338,7 +338,7 @@
           }
         },
         {
-          "id": "s_y2z5mwkl",
+          "id": "s_pjg5o0nr",
           "kind": "segment",
           "period": "30m",
           "direction": "up",
@@ -352,7 +352,7 @@
           }
         },
         {
-          "id": "s_tsy8b3j7",
+          "id": "s_r6qj76in",
           "kind": "segment",
           "period": "30m",
           "direction": "down",
@@ -366,7 +366,7 @@
           }
         },
         {
-          "id": "s_n2swd6u1",
+          "id": "s_etpflbaj",
           "kind": "segment",
           "period": "30m",
           "direction": "up",
@@ -380,7 +380,7 @@
           }
         },
         {
-          "id": "s_bo848i38",
+          "id": "s_t4zbum4s",
           "kind": "segment",
           "period": "30m",
           "direction": "down",
@@ -394,7 +394,7 @@
           }
         },
         {
-          "id": "s_m1yx9xa6",
+          "id": "s_lpx3tpnp",
           "kind": "segment",
           "period": "30m",
           "direction": "up",
@@ -408,7 +408,7 @@
           }
         },
         {
-          "id": "s_77j46per",
+          "id": "s_f02tzk9i",
           "kind": "segment",
           "period": "30m",
           "direction": "down",
@@ -424,12 +424,12 @@
       ],
       "zhongshus": [
         {
-          "id": "s_1k5jqqjz",
+          "id": "s_43drkwue",
           "kind": "zhongshu",
           "segmentIds": [
-            "s_drr09bw2",
-            "s_ocul59rx",
-            "s_8h5uzrs1"
+            "s_oyrc2227",
+            "s_1z0qhzwc",
+            "s_owly1kln"
           ],
           "startTime": 1782957600,
           "endTime": 1783648800,
@@ -447,12 +447,12 @@
           ]
         },
         {
-          "id": "s_sgk7wxu3",
+          "id": "s_wrlh5vam",
           "kind": "zhongshu",
           "segmentIds": [
-            "s_2mpb0xdb",
-            "s_1gsbzk2b",
-            "s_y2z5mwkl"
+            "s_880zsvyl",
+            "s_jo42vvcf",
+            "s_pjg5o0nr"
           ],
           "startTime": 1784516400,
           "endTime": 1785135600,
@@ -470,24 +470,6 @@
           ]
         }
       ]
-    },
-    {
-      "id": "preset_8kais7ej",
-      "name": "",
-      "segments": [],
-      "zhongshus": []
-    },
-    {
-      "id": "preset_6x4dr2iv",
-      "name": "",
-      "segments": [],
-      "zhongshus": []
-    },
-    {
-      "id": "preset_0osro6i0",
-      "name": "",
-      "segments": [],
-      "zhongshus": []
     }
   ],
   "activePreset": "default",
@@ -6514,16 +6496,16 @@
       "open": 0.635,
       "high": 0.652,
       "low": 0.635,
-      "close": 0.647,
-      "volume": 38710600.0
+      "close": 0.649,
+      "volume": 38666400.0
     },
     {
       "time": 1786591800,
-      "open": 0.648,
+      "open": 0.647,
       "high": 0.648,
       "low": 0.641,
       "close": 0.647,
-      "volume": 7416100.0
+      "volume": 7460300.0
     },
     {
       "time": 1786600800,
