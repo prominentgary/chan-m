@@ -9,7 +9,7 @@
 export const DEFAULT_CANDIDATE_SPAN_MIN = 3;
 export const DEFAULT_CANDIDATE_SPAN_MAX = 27;
 export const WATCH_CONFIRM_BARS = 10;      // 极值身份确认所需真 K 线数（滑窗半径 N 最大 10）
-export const AUTO_CONTINUE_FIX_GAP = 10;   // 两次自动回修之间至少间隔的新 K 线数（闸2）
+export const AUTO_CONTINUE_FIX_GAP = 10;   // 两次自回修之间至少间隔的新 K 线数（闸2）
 
 // ========== 段基础工具（移动端段对象 { start:{time,price}, end:{time,price}, direction }） ==========
 
@@ -244,7 +244,7 @@ export function canContinueFromSeg(segs, seg, bars) {
   return { can: can, reason: reason, matchedTier: (found && found.matchedTier) || null };
 }
 
-// 窄胡同回算（纯计算）：从源段 a 画 b 时 b 长档失败但行情充足(avail>=9)，
+// 窄胡同回溯（纯计算）：从源段 a 画 b 时 b 长档失败但行情充足(avail>=9)，
 // 把 a 按「临时上限=a当前跨数-1、仅用长档」收紧。成功返回 { ok:true, newEnd, tempMax }。
 // 不修改 sourceSeg；由调用方提交。
 export function narrowAlleyResult(sourceSeg, segs, bars) {
@@ -320,7 +320,7 @@ export function tightenCurrentResult(seg, bars, startIdx) {
   return { ok: true, newEnd: found.endInfo, tempMax: tempMax, curSpan: curSpan };
 }
 
-// ========== 自动续接/自动回修 三判定（含跨数缓存） ==========
+// ========== 自动续接/自回修 三判定（含跨数缓存） ==========
 
 let _watchSpanCache = null;    // 跨数计算缓存（O(N²)，仅行情变化时重算）
 let _watchCappedKeys = Object.create(null); // 跨数封顶记忆（单调不减 ⇒ 一旦超限永久超限）

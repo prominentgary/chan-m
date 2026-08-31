@@ -1,7 +1,7 @@
 {
   "code": "sh588700",
   "period": "1m",
-  "exportedAt": 1788106053822,
+  "exportedAt": 1788194258437,
   "segments": [
     {
       "id": "s_nypin68a",
@@ -897,9 +897,135 @@
       "end": {
         "time": 1787898960,
         "price": 1.01
+      }
+    },
+    {
+      "id": "s_2grfgcnu",
+      "kind": "segment",
+      "period": "1m",
+      "direction": "down",
+      "start": {
+        "time": 1787898960,
+        "price": 1.01
+      },
+      "end": {
+        "time": 1788141240,
+        "price": 0.983
+      }
+    },
+    {
+      "id": "s_iygo54e6",
+      "kind": "segment",
+      "period": "1m",
+      "direction": "up",
+      "start": {
+        "time": 1788141240,
+        "price": 0.983
+      },
+      "end": {
+        "time": 1788142140,
+        "price": 0.989
+      }
+    },
+    {
+      "id": "s_19pk8kb8",
+      "kind": "segment",
+      "period": "1m",
+      "direction": "down",
+      "start": {
+        "time": 1788142140,
+        "price": 0.989
+      },
+      "end": {
+        "time": 1788144900,
+        "price": 0.979
+      }
+    },
+    {
+      "id": "s_uhvfm35h",
+      "kind": "segment",
+      "period": "1m",
+      "direction": "up",
+      "start": {
+        "time": 1788144900,
+        "price": 0.979
+      },
+      "end": {
+        "time": 1788145980,
+        "price": 0.984
+      }
+    },
+    {
+      "id": "s_vucjds9m",
+      "kind": "segment",
+      "period": "1m",
+      "direction": "down",
+      "start": {
+        "time": 1788145980,
+        "price": 0.984
+      },
+      "end": {
+        "time": 1788152940,
+        "price": 0.98
+      }
+    },
+    {
+      "id": "s_k1d6m4bx",
+      "kind": "segment",
+      "period": "1m",
+      "direction": "up",
+      "start": {
+        "time": 1788152940,
+        "price": 0.98
+      },
+      "end": {
+        "time": 1788154200,
+        "price": 0.991
+      }
+    },
+    {
+      "id": "s_0e5bh8zj",
+      "kind": "segment",
+      "period": "1m",
+      "direction": "down",
+      "start": {
+        "time": 1788154200,
+        "price": 0.991
+      },
+      "end": {
+        "time": 1788155700,
+        "price": 0.986
+      }
+    },
+    {
+      "id": "s_lm594he4",
+      "kind": "segment",
+      "period": "1m",
+      "direction": "up",
+      "start": {
+        "time": 1788155700,
+        "price": 0.986
+      },
+      "end": {
+        "time": 1788158040,
+        "price": 0.997
+      }
+    },
+    {
+      "id": "s_lbq5vndv",
+      "kind": "segment",
+      "period": "1m",
+      "direction": "down",
+      "start": {
+        "time": 1788158040,
+        "price": 0.997
+      },
+      "end": {
+        "time": 1788158700,
+        "price": 0.994
       },
       "_isWatch": true,
-      "_watchSourceId": "s_8iznmau2"
+      "_watchSourceId": "s_lm594he4"
     }
   ],
   "zhongshus": [
@@ -977,7 +1103,7 @@
       ]
     },
     {
-      "id": "s_3487enoz",
+      "id": "s_abp2ecla",
       "kind": "zhongshu",
       "segmentIds": [
         "s_c1xe6lo1",
@@ -996,6 +1122,52 @@
         {
           "time": 1787883720,
           "price": 1.018
+        }
+      ]
+    },
+    {
+      "id": "s_cs8eru3z",
+      "kind": "zhongshu",
+      "segmentIds": [
+        "s_iygo54e6",
+        "s_19pk8kb8",
+        "s_uhvfm35h"
+      ],
+      "startTime": 1788141240,
+      "endTime": 1788145980,
+      "low": 0.983,
+      "high": 0.984,
+      "points": [
+        {
+          "time": 1788141240,
+          "price": 0.984
+        },
+        {
+          "time": 1788145980,
+          "price": 0.983
+        }
+      ]
+    },
+    {
+      "id": "s_y4sxzm6o",
+      "kind": "zhongshu",
+      "segmentIds": [
+        "s_e1q6xf5b",
+        "s_u6waj3w5",
+        "s_8iznmau2"
+      ],
+      "startTime": 1787895120,
+      "endTime": 1787898300,
+      "low": 1.008,
+      "high": 1.01,
+      "points": [
+        {
+          "time": 1787895120,
+          "price": 1.01
+        },
+        {
+          "time": 1787898300,
+          "price": 1.008
         }
       ]
     }
@@ -1899,9 +2071,135 @@
           "end": {
             "time": 1787898960,
             "price": 1.01
+          }
+        },
+        {
+          "id": "s_2grfgcnu",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "down",
+          "start": {
+            "time": 1787898960,
+            "price": 1.01
+          },
+          "end": {
+            "time": 1788141240,
+            "price": 0.983
+          }
+        },
+        {
+          "id": "s_iygo54e6",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "up",
+          "start": {
+            "time": 1788141240,
+            "price": 0.983
+          },
+          "end": {
+            "time": 1788142140,
+            "price": 0.989
+          }
+        },
+        {
+          "id": "s_19pk8kb8",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "down",
+          "start": {
+            "time": 1788142140,
+            "price": 0.989
+          },
+          "end": {
+            "time": 1788144900,
+            "price": 0.979
+          }
+        },
+        {
+          "id": "s_uhvfm35h",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "up",
+          "start": {
+            "time": 1788144900,
+            "price": 0.979
+          },
+          "end": {
+            "time": 1788145980,
+            "price": 0.984
+          }
+        },
+        {
+          "id": "s_vucjds9m",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "down",
+          "start": {
+            "time": 1788145980,
+            "price": 0.984
+          },
+          "end": {
+            "time": 1788152940,
+            "price": 0.98
+          }
+        },
+        {
+          "id": "s_k1d6m4bx",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "up",
+          "start": {
+            "time": 1788152940,
+            "price": 0.98
+          },
+          "end": {
+            "time": 1788154200,
+            "price": 0.991
+          }
+        },
+        {
+          "id": "s_0e5bh8zj",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "down",
+          "start": {
+            "time": 1788154200,
+            "price": 0.991
+          },
+          "end": {
+            "time": 1788155700,
+            "price": 0.986
+          }
+        },
+        {
+          "id": "s_lm594he4",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "up",
+          "start": {
+            "time": 1788155700,
+            "price": 0.986
+          },
+          "end": {
+            "time": 1788158040,
+            "price": 0.997
+          }
+        },
+        {
+          "id": "s_lbq5vndv",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "down",
+          "start": {
+            "time": 1788158040,
+            "price": 0.997
+          },
+          "end": {
+            "time": 1788158700,
+            "price": 0.994
           },
           "_isWatch": true,
-          "_watchSourceId": "s_8iznmau2"
+          "_watchSourceId": "s_lm594he4"
         }
       ],
       "zhongshus": [
@@ -1979,7 +2277,7 @@
           ]
         },
         {
-          "id": "s_3487enoz",
+          "id": "s_abp2ecla",
           "kind": "zhongshu",
           "segmentIds": [
             "s_c1xe6lo1",
@@ -2000,1939 +2298,642 @@
               "price": 1.018
             }
           ]
+        },
+        {
+          "id": "s_cs8eru3z",
+          "kind": "zhongshu",
+          "segmentIds": [
+            "s_iygo54e6",
+            "s_19pk8kb8",
+            "s_uhvfm35h"
+          ],
+          "startTime": 1788141240,
+          "endTime": 1788145980,
+          "low": 0.983,
+          "high": 0.984,
+          "points": [
+            {
+              "time": 1788141240,
+              "price": 0.984
+            },
+            {
+              "time": 1788145980,
+              "price": 0.983
+            }
+          ]
+        },
+        {
+          "id": "s_y4sxzm6o",
+          "kind": "zhongshu",
+          "segmentIds": [
+            "s_e1q6xf5b",
+            "s_u6waj3w5",
+            "s_8iznmau2"
+          ],
+          "startTime": 1787895120,
+          "endTime": 1787898300,
+          "low": 1.008,
+          "high": 1.01,
+          "points": [
+            {
+              "time": 1787895120,
+              "price": 1.01
+            },
+            {
+              "time": 1787898300,
+              "price": 1.008
+            }
+          ]
         }
       ]
     },
     {
       "id": "preset_ondd450u",
       "name": "",
-      "segments": [],
+      "segments": [
+        {
+          "id": "s_5kamtxa6",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "down",
+          "start": {
+            "time": 1787708580,
+            "price": 1.039
+          },
+          "end": {
+            "time": 1787711160,
+            "price": 1.015
+          }
+        },
+        {
+          "id": "s_sq0axbq6",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "up",
+          "start": {
+            "time": 1787711160,
+            "price": 1.015
+          },
+          "end": {
+            "time": 1787712120,
+            "price": 1.023
+          }
+        },
+        {
+          "id": "s_elrss5ag",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "down",
+          "start": {
+            "time": 1787712120,
+            "price": 1.023
+          },
+          "end": {
+            "time": 1787714100,
+            "price": 1.013
+          }
+        },
+        {
+          "id": "s_xgs6qoor",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "up",
+          "start": {
+            "time": 1787714100,
+            "price": 1.013
+          },
+          "end": {
+            "time": 1787720640,
+            "price": 1.017
+          }
+        },
+        {
+          "id": "s_8y1qrpmw",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "down",
+          "start": {
+            "time": 1787720640,
+            "price": 1.017
+          },
+          "end": {
+            "time": 1787721480,
+            "price": 1.013
+          }
+        },
+        {
+          "id": "s_fu7enmoj",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "up",
+          "start": {
+            "time": 1787721480,
+            "price": 1.013
+          },
+          "end": {
+            "time": 1787722200,
+            "price": 1.017
+          }
+        },
+        {
+          "id": "s_6fr4cb3a",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "down",
+          "start": {
+            "time": 1787722200,
+            "price": 1.017
+          },
+          "end": {
+            "time": 1787722920,
+            "price": 1.012
+          }
+        },
+        {
+          "id": "s_hrmbku96",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "up",
+          "start": {
+            "time": 1787722920,
+            "price": 1.012
+          },
+          "end": {
+            "time": 1787723640,
+            "price": 1.017
+          }
+        },
+        {
+          "id": "s_egjizmga",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "down",
+          "start": {
+            "time": 1787723640,
+            "price": 1.017
+          },
+          "end": {
+            "time": 1787724660,
+            "price": 1.013
+          }
+        },
+        {
+          "id": "s_2vmu2mde",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "up",
+          "start": {
+            "time": 1787724660,
+            "price": 1.013
+          },
+          "end": {
+            "time": 1787725920,
+            "price": 1.02
+          }
+        },
+        {
+          "id": "s_62rhenwl",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "down",
+          "start": {
+            "time": 1787725920,
+            "price": 1.02
+          },
+          "end": {
+            "time": 1787726820,
+            "price": 1.017
+          }
+        },
+        {
+          "id": "s_5cz26wam",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "up",
+          "start": {
+            "time": 1787726820,
+            "price": 1.017
+          },
+          "end": {
+            "time": 1787794500,
+            "price": 1.019
+          }
+        },
+        {
+          "id": "s_t1u42r3w",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "down",
+          "start": {
+            "time": 1787794500,
+            "price": 1.019
+          },
+          "end": {
+            "time": 1787796480,
+            "price": 1
+          }
+        },
+        {
+          "id": "s_kyxle49i",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "up",
+          "start": {
+            "time": 1787796480,
+            "price": 1
+          },
+          "end": {
+            "time": 1787799120,
+            "price": 1.012
+          }
+        },
+        {
+          "id": "s_09gag3tf",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "down",
+          "start": {
+            "time": 1787799120,
+            "price": 1.012
+          },
+          "end": {
+            "time": 1787799720,
+            "price": 1.008
+          }
+        },
+        {
+          "id": "s_01negb8b",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "up",
+          "start": {
+            "time": 1787799720,
+            "price": 1.008
+          },
+          "end": {
+            "time": 1787800980,
+            "price": 1.012
+          }
+        },
+        {
+          "id": "s_v4yv6d96",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "down",
+          "start": {
+            "time": 1787800980,
+            "price": 1.012
+          },
+          "end": {
+            "time": 1787807100,
+            "price": 1.01
+          }
+        },
+        {
+          "id": "s_285rnshq",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "up",
+          "start": {
+            "time": 1787807100,
+            "price": 1.01
+          },
+          "end": {
+            "time": 1787808180,
+            "price": 1.021
+          }
+        },
+        {
+          "id": "s_2iylzaqb",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "down",
+          "start": {
+            "time": 1787808180,
+            "price": 1.021
+          },
+          "end": {
+            "time": 1787809260,
+            "price": 1.014
+          }
+        },
+        {
+          "id": "s_kzv22uzv",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "up",
+          "start": {
+            "time": 1787809260,
+            "price": 1.014
+          },
+          "end": {
+            "time": 1787813220,
+            "price": 1.026
+          }
+        },
+        {
+          "id": "s_lemkqz6h",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "down",
+          "start": {
+            "time": 1787813220,
+            "price": 1.026
+          },
+          "end": {
+            "time": 1787880720,
+            "price": 1.017
+          }
+        },
+        {
+          "id": "s_y1zf04ni",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "up",
+          "start": {
+            "time": 1787880720,
+            "price": 1.017
+          },
+          "end": {
+            "time": 1787881800,
+            "price": 1.022
+          }
+        },
+        {
+          "id": "s_t6m74977",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "down",
+          "start": {
+            "time": 1787881800,
+            "price": 1.022
+          },
+          "end": {
+            "time": 1787882760,
+            "price": 1.018
+          }
+        },
+        {
+          "id": "s_3vq9d6mf",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "up",
+          "start": {
+            "time": 1787882760,
+            "price": 1.018
+          },
+          "end": {
+            "time": 1787883720,
+            "price": 1.019
+          }
+        },
+        {
+          "id": "s_b1unzsqi",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "down",
+          "start": {
+            "time": 1787883720,
+            "price": 1.019
+          },
+          "end": {
+            "time": 1787885400,
+            "price": 1.007
+          }
+        },
+        {
+          "id": "s_gk1icp0j",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "up",
+          "start": {
+            "time": 1787885400,
+            "price": 1.007
+          },
+          "end": {
+            "time": 1787887260,
+            "price": 1.017
+          }
+        },
+        {
+          "id": "s_02lry7d0",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "down",
+          "start": {
+            "time": 1787887260,
+            "price": 1.017
+          },
+          "end": {
+            "time": 1787893920,
+            "price": 1.009
+          }
+        },
+        {
+          "id": "s_15ierce8",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "up",
+          "start": {
+            "time": 1787893920,
+            "price": 1.009
+          },
+          "end": {
+            "time": 1787895120,
+            "price": 1.011
+          }
+        },
+        {
+          "id": "s_bd1viuf6",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "down",
+          "start": {
+            "time": 1787895120,
+            "price": 1.011
+          },
+          "end": {
+            "time": 1787896200,
+            "price": 1.008
+          }
+        },
+        {
+          "id": "s_6tn9659n",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "up",
+          "start": {
+            "time": 1787896200,
+            "price": 1.008
+          },
+          "end": {
+            "time": 1787897160,
+            "price": 1.01
+          }
+        },
+        {
+          "id": "s_vo9yqv8l",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "down",
+          "start": {
+            "time": 1787897160,
+            "price": 1.01
+          },
+          "end": {
+            "time": 1787898300,
+            "price": 1.008
+          }
+        },
+        {
+          "id": "s_7cu49wzi",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "up",
+          "start": {
+            "time": 1787898300,
+            "price": 1.008
+          },
+          "end": {
+            "time": 1787898960,
+            "price": 1.01
+          }
+        },
+        {
+          "id": "s_nn5oxos6",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "down",
+          "start": {
+            "time": 1787898960,
+            "price": 1.01
+          },
+          "end": {
+            "time": 1788141240,
+            "price": 0.983
+          }
+        },
+        {
+          "id": "s_qf0zorrz",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "up",
+          "start": {
+            "time": 1788141240,
+            "price": 0.983
+          },
+          "end": {
+            "time": 1788142140,
+            "price": 0.989
+          }
+        },
+        {
+          "id": "s_7h4hzb3x",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "down",
+          "start": {
+            "time": 1788142140,
+            "price": 0.989
+          },
+          "end": {
+            "time": 1788144900,
+            "price": 0.979
+          }
+        },
+        {
+          "id": "s_8tvl1ta8",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "up",
+          "start": {
+            "time": 1788144900,
+            "price": 0.979
+          },
+          "end": {
+            "time": 1788145980,
+            "price": 0.984
+          }
+        },
+        {
+          "id": "s_2nlhfc7p",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "down",
+          "start": {
+            "time": 1788145980,
+            "price": 0.984
+          },
+          "end": {
+            "time": 1788152940,
+            "price": 0.98
+          }
+        },
+        {
+          "id": "s_ttuis6d6",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "up",
+          "start": {
+            "time": 1788152940,
+            "price": 0.98
+          },
+          "end": {
+            "time": 1788154200,
+            "price": 0.991
+          }
+        },
+        {
+          "id": "s_xl5qel3i",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "down",
+          "start": {
+            "time": 1788154200,
+            "price": 0.991
+          },
+          "end": {
+            "time": 1788155700,
+            "price": 0.986
+          }
+        },
+        {
+          "id": "s_p12zs68m",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "up",
+          "start": {
+            "time": 1788155700,
+            "price": 0.986
+          },
+          "end": {
+            "time": 1788158040,
+            "price": 0.997
+          }
+        },
+        {
+          "id": "s_j6wjwcw6",
+          "kind": "segment",
+          "period": "1m",
+          "direction": "down",
+          "start": {
+            "time": 1788158040,
+            "price": 0.997
+          },
+          "end": {
+            "time": 1788158700,
+            "price": 0.994
+          },
+          "_isWatch": true,
+          "_watchSourceId": "s_p12zs68m"
+        }
+      ],
       "zhongshus": []
     }
   ],
   "activePreset": "default",
   "presetName": "",
   "bars": [
-    {
-      "time": 1787636460,
-      "open": 1.013,
-      "high": 1.013,
-      "low": 1.013,
-      "close": 1.013,
-      "volume": 12000.0
-    },
-    {
-      "time": 1787636520,
-      "open": 1.013,
-      "high": 1.013,
-      "low": 1.012,
-      "close": 1.012,
-      "volume": 32700.0
-    },
-    {
-      "time": 1787636580,
-      "open": 1.012,
-      "high": 1.012,
-      "low": 1.012,
-      "close": 1.012,
-      "volume": 92700.0
-    },
-    {
-      "time": 1787636640,
-      "open": 1.012,
-      "high": 1.012,
-      "low": 1.012,
-      "close": 1.012,
-      "volume": 486300.0
-    },
-    {
-      "time": 1787636700,
-      "open": 1.012,
-      "high": 1.012,
-      "low": 1.012,
-      "close": 1.012,
-      "volume": 14200.0
-    },
-    {
-      "time": 1787636760,
-      "open": 1.012,
-      "high": 1.012,
-      "low": 1.012,
-      "close": 1.012,
-      "volume": 22100.0
-    },
-    {
-      "time": 1787636820,
-      "open": 1.012,
-      "high": 1.013,
-      "low": 1.012,
-      "close": 1.013,
-      "volume": 361600.0
-    },
-    {
-      "time": 1787636880,
-      "open": 1.013,
-      "high": 1.013,
-      "low": 1.012,
-      "close": 1.013,
-      "volume": 197800.0
-    },
-    {
-      "time": 1787636940,
-      "open": 1.013,
-      "high": 1.013,
-      "low": 1.013,
-      "close": 1.013,
-      "volume": 220000.0
-    },
-    {
-      "time": 1787637000,
-      "open": 1.013,
-      "high": 1.013,
-      "low": 1.013,
-      "close": 1.013,
-      "volume": 50000.0
-    },
-    {
-      "time": 1787637060,
-      "open": 1.013,
-      "high": 1.013,
-      "low": 1.013,
-      "close": 1.013,
-      "volume": 4400.0
-    },
-    {
-      "time": 1787637120,
-      "open": 1.012,
-      "high": 1.012,
-      "low": 1.012,
-      "close": 1.012,
-      "volume": 730200.0
-    },
-    {
-      "time": 1787637180,
-      "open": 1.012,
-      "high": 1.013,
-      "low": 1.012,
-      "close": 1.013,
-      "volume": 225000.0
-    },
-    {
-      "time": 1787637240,
-      "open": 1.013,
-      "high": 1.013,
-      "low": 1.013,
-      "close": 1.013,
-      "volume": 5.877471754111438e-39
-    },
-    {
-      "time": 1787637300,
-      "open": 1.013,
-      "high": 1.014,
-      "low": 1.012,
-      "close": 1.014,
-      "volume": 749200.0
-    },
-    {
-      "time": 1787637360,
-      "open": 1.014,
-      "high": 1.014,
-      "low": 1.014,
-      "close": 1.014,
-      "volume": 8500.0
-    },
-    {
-      "time": 1787637420,
-      "open": 1.014,
-      "high": 1.014,
-      "low": 1.014,
-      "close": 1.014,
-      "volume": 5.877471754111438e-39
-    },
-    {
-      "time": 1787637480,
-      "open": 1.013,
-      "high": 1.014,
-      "low": 1.013,
-      "close": 1.014,
-      "volume": 1195500.0
-    },
-    {
-      "time": 1787637540,
-      "open": 1.014,
-      "high": 1.014,
-      "low": 1.013,
-      "close": 1.013,
-      "volume": 226000.0
-    },
-    {
-      "time": 1787637600,
-      "open": 1.013,
-      "high": 1.013,
-      "low": 1.013,
-      "close": 1.013,
-      "volume": 5.877471754111438e-39
-    },
-    {
-      "time": 1787637660,
-      "open": 1.014,
-      "high": 1.015,
-      "low": 1.014,
-      "close": 1.015,
-      "volume": 500000.0
-    },
-    {
-      "time": 1787637720,
-      "open": 1.015,
-      "high": 1.015,
-      "low": 1.015,
-      "close": 1.015,
-      "volume": 542100.0
-    },
-    {
-      "time": 1787637780,
-      "open": 1.015,
-      "high": 1.015,
-      "low": 1.014,
-      "close": 1.015,
-      "volume": 362800.0
-    },
-    {
-      "time": 1787637840,
-      "open": 1.015,
-      "high": 1.015,
-      "low": 1.015,
-      "close": 1.015,
-      "volume": 247700.0
-    },
-    {
-      "time": 1787637900,
-      "open": 1.015,
-      "high": 1.015,
-      "low": 1.015,
-      "close": 1.015,
-      "volume": 5.877471754111438e-39
-    },
-    {
-      "time": 1787637960,
-      "open": 1.015,
-      "high": 1.015,
-      "low": 1.014,
-      "close": 1.014,
-      "volume": 53100.0
-    },
-    {
-      "time": 1787638020,
-      "open": 1.014,
-      "high": 1.014,
-      "low": 1.014,
-      "close": 1.014,
-      "volume": 5.877471754111438e-39
-    },
-    {
-      "time": 1787638080,
-      "open": 1.014,
-      "high": 1.016,
-      "low": 1.014,
-      "close": 1.016,
-      "volume": 64200.0
-    },
-    {
-      "time": 1787638140,
-      "open": 1.016,
-      "high": 1.016,
-      "low": 1.015,
-      "close": 1.015,
-      "volume": 20500.0
-    },
-    {
-      "time": 1787638200,
-      "open": 1.015,
-      "high": 1.015,
-      "low": 1.014,
-      "close": 1.014,
-      "volume": 3000.0
-    },
-    {
-      "time": 1787638260,
-      "open": 1.014,
-      "high": 1.014,
-      "low": 1.014,
-      "close": 1.014,
-      "volume": 30500.0
-    },
-    {
-      "time": 1787638320,
-      "open": 1.014,
-      "high": 1.014,
-      "low": 1.014,
-      "close": 1.014,
-      "volume": 213000.0
-    },
-    {
-      "time": 1787638380,
-      "open": 1.015,
-      "high": 1.015,
-      "low": 1.015,
-      "close": 1.015,
-      "volume": 64100.0
-    },
-    {
-      "time": 1787638440,
-      "open": 1.015,
-      "high": 1.016,
-      "low": 1.015,
-      "close": 1.016,
-      "volume": 95200.0
-    },
-    {
-      "time": 1787638500,
-      "open": 1.016,
-      "high": 1.016,
-      "low": 1.016,
-      "close": 1.016,
-      "volume": 10200.0
-    },
-    {
-      "time": 1787638560,
-      "open": 1.015,
-      "high": 1.015,
-      "low": 1.015,
-      "close": 1.015,
-      "volume": 85700.0
-    },
-    {
-      "time": 1787638620,
-      "open": 1.015,
-      "high": 1.015,
-      "low": 1.015,
-      "close": 1.015,
-      "volume": 53100.0
-    },
-    {
-      "time": 1787638680,
-      "open": 1.016,
-      "high": 1.016,
-      "low": 1.016,
-      "close": 1.016,
-      "volume": 3200.0
-    },
-    {
-      "time": 1787638740,
-      "open": 1.016,
-      "high": 1.016,
-      "low": 1.016,
-      "close": 1.016,
-      "volume": 5.877471754111438e-39
-    },
-    {
-      "time": 1787638800,
-      "open": 1.015,
-      "high": 1.015,
-      "low": 1.015,
-      "close": 1.015,
-      "volume": 5000.0
-    },
-    {
-      "time": 1787638860,
-      "open": 1.016,
-      "high": 1.016,
-      "low": 1.016,
-      "close": 1.016,
-      "volume": 345900.0
-    },
-    {
-      "time": 1787638920,
-      "open": 1.016,
-      "high": 1.016,
-      "low": 1.016,
-      "close": 1.016,
-      "volume": 17500.0
-    },
-    {
-      "time": 1787638980,
-      "open": 1.016,
-      "high": 1.017,
-      "low": 1.016,
-      "close": 1.017,
-      "volume": 27100.0
-    },
-    {
-      "time": 1787639040,
-      "open": 1.017,
-      "high": 1.017,
-      "low": 1.017,
-      "close": 1.017,
-      "volume": 222100.0
-    },
-    {
-      "time": 1787639100,
-      "open": 1.017,
-      "high": 1.017,
-      "low": 1.016,
-      "close": 1.016,
-      "volume": 21100.0
-    },
-    {
-      "time": 1787639160,
-      "open": 1.016,
-      "high": 1.016,
-      "low": 1.016,
-      "close": 1.016,
-      "volume": 5.877471754111438e-39
-    },
-    {
-      "time": 1787639220,
-      "open": 1.016,
-      "high": 1.016,
-      "low": 1.016,
-      "close": 1.016,
-      "volume": 5.877471754111438e-39
-    },
-    {
-      "time": 1787639280,
-      "open": 1.015,
-      "high": 1.015,
-      "low": 1.014,
-      "close": 1.014,
-      "volume": 600.0
-    },
-    {
-      "time": 1787639340,
-      "open": 1.015,
-      "high": 1.015,
-      "low": 1.015,
-      "close": 1.015,
-      "volume": 28200.0
-    },
-    {
-      "time": 1787639400,
-      "open": 1.015,
-      "high": 1.015,
-      "low": 1.015,
-      "close": 1.015,
-      "volume": 54000.0
-    },
-    {
-      "time": 1787639460,
-      "open": 1.015,
-      "high": 1.016,
-      "low": 1.015,
-      "close": 1.016,
-      "volume": 165900.0
-    },
-    {
-      "time": 1787639520,
-      "open": 1.017,
-      "high": 1.017,
-      "low": 1.017,
-      "close": 1.017,
-      "volume": 33000.0
-    },
-    {
-      "time": 1787639580,
-      "open": 1.017,
-      "high": 1.017,
-      "low": 1.017,
-      "close": 1.017,
-      "volume": 5.877471754111438e-39
-    },
-    {
-      "time": 1787639640,
-      "open": 1.017,
-      "high": 1.017,
-      "low": 1.017,
-      "close": 1.017,
-      "volume": 23300.0
-    },
-    {
-      "time": 1787639700,
-      "open": 1.018,
-      "high": 1.019,
-      "low": 1.018,
-      "close": 1.019,
-      "volume": 169400.0
-    },
-    {
-      "time": 1787639760,
-      "open": 1.017,
-      "high": 1.018,
-      "low": 1.017,
-      "close": 1.017,
-      "volume": 59800.0
-    },
-    {
-      "time": 1787639820,
-      "open": 1.017,
-      "high": 1.018,
-      "low": 1.017,
-      "close": 1.018,
-      "volume": 30300.0
-    },
-    {
-      "time": 1787639880,
-      "open": 1.018,
-      "high": 1.018,
-      "low": 1.017,
-      "close": 1.017,
-      "volume": 20400.0
-    },
-    {
-      "time": 1787639940,
-      "open": 1.017,
-      "high": 1.017,
-      "low": 1.016,
-      "close": 1.016,
-      "volume": 8800.0
-    },
-    {
-      "time": 1787640000,
-      "open": 1.015,
-      "high": 1.015,
-      "low": 1.015,
-      "close": 1.015,
-      "volume": 50000.0
-    },
-    {
-      "time": 1787640060,
-      "open": 1.016,
-      "high": 1.016,
-      "low": 1.016,
-      "close": 1.016,
-      "volume": 161500.0
-    },
-    {
-      "time": 1787640120,
-      "open": 1.016,
-      "high": 1.016,
-      "low": 1.016,
-      "close": 1.016,
-      "volume": 116700.0
-    },
-    {
-      "time": 1787640180,
-      "open": 1.016,
-      "high": 1.016,
-      "low": 1.016,
-      "close": 1.016,
-      "volume": 55000.0
-    },
-    {
-      "time": 1787640240,
-      "open": 1.016,
-      "high": 1.016,
-      "low": 1.016,
-      "close": 1.016,
-      "volume": 5.877471754111438e-39
-    },
-    {
-      "time": 1787640300,
-      "open": 1.016,
-      "high": 1.016,
-      "low": 1.015,
-      "close": 1.015,
-      "volume": 18800.0
-    },
-    {
-      "time": 1787640360,
-      "open": 1.016,
-      "high": 1.016,
-      "low": 1.015,
-      "close": 1.015,
-      "volume": 31300.0
-    },
-    {
-      "time": 1787640420,
-      "open": 1.016,
-      "high": 1.016,
-      "low": 1.016,
-      "close": 1.016,
-      "volume": 20000.0
-    },
-    {
-      "time": 1787640480,
-      "open": 1.016,
-      "high": 1.016,
-      "low": 1.016,
-      "close": 1.016,
-      "volume": 55200.0
-    },
-    {
-      "time": 1787640540,
-      "open": 1.016,
-      "high": 1.016,
-      "low": 1.016,
-      "close": 1.016,
-      "volume": 144900.0
-    },
-    {
-      "time": 1787640600,
-      "open": 1.015,
-      "high": 1.016,
-      "low": 1.015,
-      "close": 1.015,
-      "volume": 83700.0
-    },
-    {
-      "time": 1787640660,
-      "open": 1.015,
-      "high": 1.016,
-      "low": 1.015,
-      "close": 1.016,
-      "volume": 4100.0
-    },
-    {
-      "time": 1787640720,
-      "open": 1.015,
-      "high": 1.016,
-      "low": 1.015,
-      "close": 1.016,
-      "volume": 141200.0
-    },
-    {
-      "time": 1787640780,
-      "open": 1.015,
-      "high": 1.016,
-      "low": 1.015,
-      "close": 1.016,
-      "volume": 42400.0
-    },
-    {
-      "time": 1787640840,
-      "open": 1.015,
-      "high": 1.016,
-      "low": 1.015,
-      "close": 1.016,
-      "volume": 10500.0
-    },
-    {
-      "time": 1787640900,
-      "open": 1.016,
-      "high": 1.016,
-      "low": 1.015,
-      "close": 1.015,
-      "volume": 279000.0
-    },
-    {
-      "time": 1787640960,
-      "open": 1.015,
-      "high": 1.015,
-      "low": 1.014,
-      "close": 1.014,
-      "volume": 113900.0
-    },
-    {
-      "time": 1787641020,
-      "open": 1.014,
-      "high": 1.016,
-      "low": 1.014,
-      "close": 1.016,
-      "volume": 93300.0
-    },
-    {
-      "time": 1787641080,
-      "open": 1.014,
-      "high": 1.014,
-      "low": 1.014,
-      "close": 1.014,
-      "volume": 10000.0
-    },
-    {
-      "time": 1787641140,
-      "open": 1.014,
-      "high": 1.014,
-      "low": 1.014,
-      "close": 1.014,
-      "volume": 5.877471754111438e-39
-    },
-    {
-      "time": 1787641200,
-      "open": 1.016,
-      "high": 1.016,
-      "low": 1.016,
-      "close": 1.016,
-      "volume": 870400.0
-    },
-    {
-      "time": 1787707860,
-      "open": 1.02,
-      "high": 1.034,
-      "low": 1.02,
-      "close": 1.034,
-      "volume": 1863000.0
-    },
-    {
-      "time": 1787707920,
-      "open": 1.034,
-      "high": 1.034,
-      "low": 1.023,
-      "close": 1.026,
-      "volume": 533100.0
-    },
-    {
-      "time": 1787707980,
-      "open": 1.028,
-      "high": 1.028,
-      "low": 1.023,
-      "close": 1.025,
-      "volume": 469000.0
-    },
-    {
-      "time": 1787708040,
-      "open": 1.024,
-      "high": 1.029,
-      "low": 1.024,
-      "close": 1.029,
-      "volume": 331300.0
-    },
-    {
-      "time": 1787708100,
-      "open": 1.029,
-      "high": 1.03,
-      "low": 1.027,
-      "close": 1.028,
-      "volume": 489500.0
-    },
-    {
-      "time": 1787708160,
-      "open": 1.028,
-      "high": 1.03,
-      "low": 1.027,
-      "close": 1.028,
-      "volume": 545500.0
-    },
-    {
-      "time": 1787708220,
-      "open": 1.028,
-      "high": 1.028,
-      "low": 1.025,
-      "close": 1.028,
-      "volume": 2723000.0
-    },
-    {
-      "time": 1787708280,
-      "open": 1.029,
-      "high": 1.033,
-      "low": 1.027,
-      "close": 1.033,
-      "volume": 3774100.0
-    },
-    {
-      "time": 1787708340,
-      "open": 1.032,
-      "high": 1.034,
-      "low": 1.029,
-      "close": 1.029,
-      "volume": 702200.0
-    },
-    {
-      "time": 1787708400,
-      "open": 1.028,
-      "high": 1.034,
-      "low": 1.028,
-      "close": 1.034,
-      "volume": 2201300.0
-    },
-    {
-      "time": 1787708460,
-      "open": 1.033,
-      "high": 1.037,
-      "low": 1.031,
-      "close": 1.036,
-      "volume": 1112200.0
-    },
-    {
-      "time": 1787708520,
-      "open": 1.034,
-      "high": 1.037,
-      "low": 1.034,
-      "close": 1.037,
-      "volume": 535500.0
-    },
-    {
-      "time": 1787708580,
-      "open": 1.037,
-      "high": 1.039,
-      "low": 1.032,
-      "close": 1.032,
-      "volume": 6577400.0
-    },
-    {
-      "time": 1787708640,
-      "open": 1.031,
-      "high": 1.031,
-      "low": 1.027,
-      "close": 1.027,
-      "volume": 153900.0
-    },
-    {
-      "time": 1787708700,
-      "open": 1.029,
-      "high": 1.031,
-      "low": 1.027,
-      "close": 1.029,
-      "volume": 1640400.0
-    },
-    {
-      "time": 1787708760,
-      "open": 1.028,
-      "high": 1.033,
-      "low": 1.028,
-      "close": 1.032,
-      "volume": 1698500.0
-    },
-    {
-      "time": 1787708820,
-      "open": 1.031,
-      "high": 1.032,
-      "low": 1.031,
-      "close": 1.031,
-      "volume": 174200.0
-    },
-    {
-      "time": 1787708880,
-      "open": 1.033,
-      "high": 1.035,
-      "low": 1.033,
-      "close": 1.035,
-      "volume": 841000.0
-    },
-    {
-      "time": 1787708940,
-      "open": 1.034,
-      "high": 1.036,
-      "low": 1.033,
-      "close": 1.036,
-      "volume": 661200.0
-    },
-    {
-      "time": 1787709000,
-      "open": 1.035,
-      "high": 1.035,
-      "low": 1.035,
-      "close": 1.035,
-      "volume": 183400.0
-    },
-    {
-      "time": 1787709060,
-      "open": 1.033,
-      "high": 1.033,
-      "low": 1.026,
-      "close": 1.027,
-      "volume": 1599300.0
-    },
-    {
-      "time": 1787709120,
-      "open": 1.027,
-      "high": 1.03,
-      "low": 1.027,
-      "close": 1.03,
-      "volume": 1210000.0
-    },
-    {
-      "time": 1787709180,
-      "open": 1.033,
-      "high": 1.033,
-      "low": 1.03,
-      "close": 1.03,
-      "volume": 241200.0
-    },
-    {
-      "time": 1787709240,
-      "open": 1.03,
-      "high": 1.034,
-      "low": 1.03,
-      "close": 1.034,
-      "volume": 334200.0
-    },
-    {
-      "time": 1787709300,
-      "open": 1.033,
-      "high": 1.033,
-      "low": 1.028,
-      "close": 1.028,
-      "volume": 286000.0
-    },
-    {
-      "time": 1787709360,
-      "open": 1.029,
-      "high": 1.03,
-      "low": 1.027,
-      "close": 1.03,
-      "volume": 759600.0
-    },
-    {
-      "time": 1787709420,
-      "open": 1.028,
-      "high": 1.03,
-      "low": 1.028,
-      "close": 1.03,
-      "volume": 283100.0
-    },
-    {
-      "time": 1787709480,
-      "open": 1.03,
-      "high": 1.03,
-      "low": 1.029,
-      "close": 1.029,
-      "volume": 446600.0
-    },
-    {
-      "time": 1787709540,
-      "open": 1.028,
-      "high": 1.028,
-      "low": 1.025,
-      "close": 1.025,
-      "volume": 556000.0
-    },
-    {
-      "time": 1787709600,
-      "open": 1.026,
-      "high": 1.026,
-      "low": 1.026,
-      "close": 1.026,
-      "volume": 19800.0
-    },
-    {
-      "time": 1787709660,
-      "open": 1.027,
-      "high": 1.029,
-      "low": 1.027,
-      "close": 1.029,
-      "volume": 931600.0
-    },
-    {
-      "time": 1787709720,
-      "open": 1.03,
-      "high": 1.03,
-      "low": 1.03,
-      "close": 1.03,
-      "volume": 1277800.0
-    },
-    {
-      "time": 1787709780,
-      "open": 1.029,
-      "high": 1.029,
-      "low": 1.027,
-      "close": 1.027,
-      "volume": 460500.0
-    },
-    {
-      "time": 1787709840,
-      "open": 1.027,
-      "high": 1.029,
-      "low": 1.027,
-      "close": 1.028,
-      "volume": 512700.0
-    },
-    {
-      "time": 1787709900,
-      "open": 1.027,
-      "high": 1.027,
-      "low": 1.026,
-      "close": 1.026,
-      "volume": 614400.0
-    },
-    {
-      "time": 1787709960,
-      "open": 1.025,
-      "high": 1.025,
-      "low": 1.025,
-      "close": 1.025,
-      "volume": 338300.0
-    },
-    {
-      "time": 1787710020,
-      "open": 1.025,
-      "high": 1.025,
-      "low": 1.022,
-      "close": 1.022,
-      "volume": 1377100.0
-    },
-    {
-      "time": 1787710080,
-      "open": 1.021,
-      "high": 1.024,
-      "low": 1.021,
-      "close": 1.022,
-      "volume": 1972800.0
-    },
-    {
-      "time": 1787710140,
-      "open": 1.022,
-      "high": 1.023,
-      "low": 1.021,
-      "close": 1.021,
-      "volume": 91600.0
-    },
-    {
-      "time": 1787710200,
-      "open": 1.02,
-      "high": 1.023,
-      "low": 1.02,
-      "close": 1.021,
-      "volume": 689100.0
-    },
-    {
-      "time": 1787710260,
-      "open": 1.023,
-      "high": 1.024,
-      "low": 1.023,
-      "close": 1.023,
-      "volume": 490000.0
-    },
-    {
-      "time": 1787710320,
-      "open": 1.022,
-      "high": 1.022,
-      "low": 1.022,
-      "close": 1.022,
-      "volume": 14200.0
-    },
-    {
-      "time": 1787710380,
-      "open": 1.022,
-      "high": 1.022,
-      "low": 1.019,
-      "close": 1.019,
-      "volume": 379700.0
-    },
-    {
-      "time": 1787710440,
-      "open": 1.019,
-      "high": 1.019,
-      "low": 1.017,
-      "close": 1.017,
-      "volume": 245600.0
-    },
-    {
-      "time": 1787710500,
-      "open": 1.019,
-      "high": 1.021,
-      "low": 1.019,
-      "close": 1.019,
-      "volume": 906100.0
-    },
-    {
-      "time": 1787710560,
-      "open": 1.02,
-      "high": 1.02,
-      "low": 1.019,
-      "close": 1.019,
-      "volume": 1183300.0
-    },
-    {
-      "time": 1787710620,
-      "open": 1.019,
-      "high": 1.019,
-      "low": 1.019,
-      "close": 1.019,
-      "volume": 44900.0
-    },
-    {
-      "time": 1787710680,
-      "open": 1.02,
-      "high": 1.02,
-      "low": 1.017,
-      "close": 1.017,
-      "volume": 218700.0
-    },
-    {
-      "time": 1787710740,
-      "open": 1.017,
-      "high": 1.017,
-      "low": 1.016,
-      "close": 1.016,
-      "volume": 140900.0
-    },
-    {
-      "time": 1787710800,
-      "open": 1.016,
-      "high": 1.016,
-      "low": 1.016,
-      "close": 1.016,
-      "volume": 342600.0
-    },
-    {
-      "time": 1787710860,
-      "open": 1.016,
-      "high": 1.017,
-      "low": 1.016,
-      "close": 1.017,
-      "volume": 22900.0
-    },
-    {
-      "time": 1787710920,
-      "open": 1.019,
-      "high": 1.019,
-      "low": 1.018,
-      "close": 1.018,
-      "volume": 1600.0
-    },
-    {
-      "time": 1787710980,
-      "open": 1.019,
-      "high": 1.019,
-      "low": 1.018,
-      "close": 1.018,
-      "volume": 22400.0
-    },
-    {
-      "time": 1787711040,
-      "open": 1.018,
-      "high": 1.018,
-      "low": 1.016,
-      "close": 1.016,
-      "volume": 142200.0
-    },
-    {
-      "time": 1787711100,
-      "open": 1.016,
-      "high": 1.016,
-      "low": 1.015,
-      "close": 1.015,
-      "volume": 557200.0
-    },
-    {
-      "time": 1787711160,
-      "open": 1.015,
-      "high": 1.015,
-      "low": 1.015,
-      "close": 1.015,
-      "volume": 66100.0
-    },
-    {
-      "time": 1787711220,
-      "open": 1.015,
-      "high": 1.016,
-      "low": 1.015,
-      "close": 1.016,
-      "volume": 246600.0
-    },
-    {
-      "time": 1787711280,
-      "open": 1.017,
-      "high": 1.017,
-      "low": 1.016,
-      "close": 1.016,
-      "volume": 4300.0
-    },
-    {
-      "time": 1787711340,
-      "open": 1.016,
-      "high": 1.016,
-      "low": 1.016,
-      "close": 1.016,
-      "volume": 5.877471754111438e-39
-    },
-    {
-      "time": 1787711400,
-      "open": 1.017,
-      "high": 1.017,
-      "low": 1.017,
-      "close": 1.017,
-      "volume": 5000.0
-    },
-    {
-      "time": 1787711460,
-      "open": 1.017,
-      "high": 1.017,
-      "low": 1.017,
-      "close": 1.017,
-      "volume": 541500.0
-    },
-    {
-      "time": 1787711520,
-      "open": 1.017,
-      "high": 1.018,
-      "low": 1.017,
-      "close": 1.018,
-      "volume": 248500.0
-    },
-    {
-      "time": 1787711580,
-      "open": 1.019,
-      "high": 1.02,
-      "low": 1.019,
-      "close": 1.02,
-      "volume": 7400.0
-    },
-    {
-      "time": 1787711640,
-      "open": 1.02,
-      "high": 1.021,
-      "low": 1.02,
-      "close": 1.021,
-      "volume": 3799600.0
-    },
-    {
-      "time": 1787711700,
-      "open": 1.021,
-      "high": 1.021,
-      "low": 1.02,
-      "close": 1.02,
-      "volume": 10300.0
-    },
-    {
-      "time": 1787711760,
-      "open": 1.021,
-      "high": 1.021,
-      "low": 1.02,
-      "close": 1.02,
-      "volume": 3800.0
-    },
-    {
-      "time": 1787711820,
-      "open": 1.019,
-      "high": 1.019,
-      "low": 1.017,
-      "close": 1.019,
-      "volume": 58000.0
-    },
-    {
-      "time": 1787711880,
-      "open": 1.018,
-      "high": 1.018,
-      "low": 1.018,
-      "close": 1.018,
-      "volume": 6100.0
-    },
-    {
-      "time": 1787711940,
-      "open": 1.02,
-      "high": 1.02,
-      "low": 1.02,
-      "close": 1.02,
-      "volume": 74000.0
-    },
-    {
-      "time": 1787712000,
-      "open": 1.02,
-      "high": 1.02,
-      "low": 1.02,
-      "close": 1.02,
-      "volume": 5200.0
-    },
-    {
-      "time": 1787712060,
-      "open": 1.021,
-      "high": 1.022,
-      "low": 1.021,
-      "close": 1.022,
-      "volume": 88600.0
-    },
-    {
-      "time": 1787712120,
-      "open": 1.022,
-      "high": 1.023,
-      "low": 1.021,
-      "close": 1.021,
-      "volume": 464500.0
-    },
-    {
-      "time": 1787712180,
-      "open": 1.021,
-      "high": 1.021,
-      "low": 1.02,
-      "close": 1.02,
-      "volume": 3200.0
-    },
-    {
-      "time": 1787712240,
-      "open": 1.021,
-      "high": 1.021,
-      "low": 1.021,
-      "close": 1.021,
-      "volume": 1000.0
-    },
-    {
-      "time": 1787712300,
-      "open": 1.021,
-      "high": 1.021,
-      "low": 1.021,
-      "close": 1.021,
-      "volume": 2000.0
-    },
-    {
-      "time": 1787712360,
-      "open": 1.021,
-      "high": 1.021,
-      "low": 1.019,
-      "close": 1.02,
-      "volume": 44200.0
-    },
-    {
-      "time": 1787712420,
-      "open": 1.018,
-      "high": 1.018,
-      "low": 1.018,
-      "close": 1.018,
-      "volume": 7100.0
-    },
-    {
-      "time": 1787712480,
-      "open": 1.018,
-      "high": 1.018,
-      "low": 1.018,
-      "close": 1.018,
-      "volume": 2100.0
-    },
-    {
-      "time": 1787712540,
-      "open": 1.017,
-      "high": 1.018,
-      "low": 1.017,
-      "close": 1.018,
-      "volume": 10500.0
-    },
-    {
-      "time": 1787712600,
-      "open": 1.017,
-      "high": 1.018,
-      "low": 1.017,
-      "close": 1.018,
-      "volume": 284800.0
-    },
-    {
-      "time": 1787712660,
-      "open": 1.018,
-      "high": 1.018,
-      "low": 1.017,
-      "close": 1.017,
-      "volume": 253200.0
-    },
-    {
-      "time": 1787712720,
-      "open": 1.018,
-      "high": 1.019,
-      "low": 1.018,
-      "close": 1.019,
-      "volume": 1600.0
-    },
-    {
-      "time": 1787712780,
-      "open": 1.019,
-      "high": 1.019,
-      "low": 1.019,
-      "close": 1.019,
-      "volume": 19600.0
-    },
-    {
-      "time": 1787712840,
-      "open": 1.017,
-      "high": 1.017,
-      "low": 1.017,
-      "close": 1.017,
-      "volume": 421100.0
-    },
-    {
-      "time": 1787712900,
-      "open": 1.016,
-      "high": 1.017,
-      "low": 1.016,
-      "close": 1.017,
-      "volume": 73200.0
-    },
-    {
-      "time": 1787712960,
-      "open": 1.018,
-      "high": 1.018,
-      "low": 1.018,
-      "close": 1.018,
-      "volume": 300.0
-    },
-    {
-      "time": 1787713020,
-      "open": 1.018,
-      "high": 1.018,
-      "low": 1.018,
-      "close": 1.018,
-      "volume": 100.0
-    },
-    {
-      "time": 1787713080,
-      "open": 1.018,
-      "high": 1.018,
-      "low": 1.016,
-      "close": 1.016,
-      "volume": 118900.0
-    },
-    {
-      "time": 1787713140,
-      "open": 1.016,
-      "high": 1.016,
-      "low": 1.016,
-      "close": 1.016,
-      "volume": 5.877471754111438e-39
-    },
-    {
-      "time": 1787713200,
-      "open": 1.017,
-      "high": 1.017,
-      "low": 1.017,
-      "close": 1.017,
-      "volume": 1000.0
-    },
-    {
-      "time": 1787713260,
-      "open": 1.016,
-      "high": 1.016,
-      "low": 1.015,
-      "close": 1.015,
-      "volume": 345500.0
-    },
-    {
-      "time": 1787713320,
-      "open": 1.016,
-      "high": 1.017,
-      "low": 1.016,
-      "close": 1.017,
-      "volume": 319000.0
-    },
-    {
-      "time": 1787713380,
-      "open": 1.016,
-      "high": 1.016,
-      "low": 1.016,
-      "close": 1.016,
-      "volume": 5400.0
-    },
-    {
-      "time": 1787713440,
-      "open": 1.017,
-      "high": 1.017,
-      "low": 1.016,
-      "close": 1.016,
-      "volume": 12300.0
-    },
-    {
-      "time": 1787713500,
-      "open": 1.015,
-      "high": 1.016,
-      "low": 1.015,
-      "close": 1.016,
-      "volume": 48700.0
-    },
-    {
-      "time": 1787713560,
-      "open": 1.016,
-      "high": 1.016,
-      "low": 1.016,
-      "close": 1.016,
-      "volume": 5.877471754111438e-39
-    },
-    {
-      "time": 1787713620,
-      "open": 1.015,
-      "high": 1.015,
-      "low": 1.015,
-      "close": 1.015,
-      "volume": 58400.0
-    },
-    {
-      "time": 1787713680,
-      "open": 1.015,
-      "high": 1.015,
-      "low": 1.014,
-      "close": 1.014,
-      "volume": 1175400.0
-    },
-    {
-      "time": 1787713740,
-      "open": 1.014,
-      "high": 1.014,
-      "low": 1.014,
-      "close": 1.014,
-      "volume": 14200.0
-    },
-    {
-      "time": 1787713800,
-      "open": 1.014,
-      "high": 1.014,
-      "low": 1.014,
-      "close": 1.014,
-      "volume": 1400.0
-    },
-    {
-      "time": 1787713860,
-      "open": 1.013,
-      "high": 1.015,
-      "low": 1.013,
-      "close": 1.014,
-      "volume": 10100.0
-    },
-    {
-      "time": 1787713920,
-      "open": 1.015,
-      "high": 1.015,
-      "low": 1.015,
-      "close": 1.015,
-      "volume": 14900.0
-    },
-    {
-      "time": 1787713980,
-      "open": 1.015,
-      "high": 1.015,
-      "low": 1.015,
-      "close": 1.015,
-      "volume": 5400.0
-    },
-    {
-      "time": 1787714040,
-      "open": 1.013,
-      "high": 1.013,
-      "low": 1.013,
-      "close": 1.013,
-      "volume": 143200.0
-    },
-    {
-      "time": 1787714100,
-      "open": 1.013,
-      "high": 1.013,
-      "low": 1.013,
-      "close": 1.013,
-      "volume": 5.877471754111438e-39
-    },
-    {
-      "time": 1787714160,
-      "open": 1.013,
-      "high": 1.013,
-      "low": 1.013,
-      "close": 1.013,
-      "volume": 5.877471754111438e-39
-    },
-    {
-      "time": 1787714220,
-      "open": 1.013,
-      "high": 1.013,
-      "low": 1.013,
-      "close": 1.013,
-      "volume": 5.877471754111438e-39
-    },
-    {
-      "time": 1787714280,
-      "open": 1.015,
-      "high": 1.015,
-      "low": 1.015,
-      "close": 1.015,
-      "volume": 6200.0
-    },
-    {
-      "time": 1787714340,
-      "open": 1.015,
-      "high": 1.015,
-      "low": 1.015,
-      "close": 1.015,
-      "volume": 225700.0
-    },
-    {
-      "time": 1787714400,
-      "open": 1.015,
-      "high": 1.015,
-      "low": 1.015,
-      "close": 1.015,
-      "volume": 5.877471754111438e-39
-    },
-    {
-      "time": 1787714460,
-      "open": 1.016,
-      "high": 1.016,
-      "low": 1.016,
-      "close": 1.016,
-      "volume": 8900.0
-    },
-    {
-      "time": 1787714520,
-      "open": 1.017,
-      "high": 1.017,
-      "low": 1.017,
-      "close": 1.017,
-      "volume": 27500.0
-    },
-    {
-      "time": 1787714580,
-      "open": 1.016,
-      "high": 1.016,
-      "low": 1.016,
-      "close": 1.016,
-      "volume": 21400.0
-    },
-    {
-      "time": 1787714640,
-      "open": 1.015,
-      "high": 1.015,
-      "low": 1.015,
-      "close": 1.015,
-      "volume": 255000.0
-    },
-    {
-      "time": 1787714700,
-      "open": 1.015,
-      "high": 1.015,
-      "low": 1.015,
-      "close": 1.015,
-      "volume": 5.877471754111438e-39
-    },
-    {
-      "time": 1787714760,
-      "open": 1.016,
-      "high": 1.017,
-      "low": 1.016,
-      "close": 1.016,
-      "volume": 270300.0
-    },
-    {
-      "time": 1787714820,
-      "open": 1.017,
-      "high": 1.017,
-      "low": 1.017,
-      "close": 1.017,
-      "volume": 5000.0
-    },
-    {
-      "time": 1787714880,
-      "open": 1.017,
-      "high": 1.017,
-      "low": 1.017,
-      "close": 1.017,
-      "volume": 1000.0
-    },
-    {
-      "time": 1787714940,
-      "open": 1.015,
-      "high": 1.015,
-      "low": 1.015,
-      "close": 1.015,
-      "volume": 244800.0
-    },
-    {
-      "time": 1787715000,
-      "open": 1.015,
-      "high": 1.016,
-      "low": 1.015,
-      "close": 1.015,
-      "volume": 262900.0
-    },
-    {
-      "time": 1787720460,
-      "open": 1.017,
-      "high": 1.017,
-      "low": 1.015,
-      "close": 1.015,
-      "volume": 194300.0
-    },
-    {
-      "time": 1787720520,
-      "open": 1.017,
-      "high": 1.017,
-      "low": 1.016,
-      "close": 1.017,
-      "volume": 55400.0
-    },
-    {
-      "time": 1787720580,
-      "open": 1.015,
-      "high": 1.015,
-      "low": 1.015,
-      "close": 1.015,
-      "volume": 6400.0
-    },
-    {
-      "time": 1787720640,
-      "open": 1.015,
-      "high": 1.017,
-      "low": 1.015,
-      "close": 1.017,
-      "volume": 58800.0
-    },
-    {
-      "time": 1787720700,
-      "open": 1.016,
-      "high": 1.016,
-      "low": 1.016,
-      "close": 1.016,
-      "volume": 1300.0
-    },
-    {
-      "time": 1787720760,
-      "open": 1.016,
-      "high": 1.016,
-      "low": 1.015,
-      "close": 1.015,
-      "volume": 10000.0
-    },
-    {
-      "time": 1787720820,
-      "open": 1.015,
-      "high": 1.015,
-      "low": 1.015,
-      "close": 1.015,
-      "volume": 15600.0
-    },
-    {
-      "time": 1787720880,
-      "open": 1.015,
-      "high": 1.015,
-      "low": 1.015,
-      "close": 1.015,
-      "volume": 31600.0
-    },
-    {
-      "time": 1787720940,
-      "open": 1.016,
-      "high": 1.016,
-      "low": 1.016,
-      "close": 1.016,
-      "volume": 20000.0
-    },
-    {
-      "time": 1787721000,
-      "open": 1.014,
-      "high": 1.015,
-      "low": 1.014,
-      "close": 1.015,
-      "volume": 12000.0
-    },
-    {
-      "time": 1787721060,
-      "open": 1.015,
-      "high": 1.015,
-      "low": 1.015,
-      "close": 1.015,
-      "volume": 6000.0
-    },
-    {
-      "time": 1787721120,
-      "open": 1.015,
-      "high": 1.015,
-      "low": 1.015,
-      "close": 1.015,
-      "volume": 2200.0
-    },
-    {
-      "time": 1787721180,
-      "open": 1.015,
-      "high": 1.015,
-      "low": 1.015,
-      "close": 1.015,
-      "volume": 5.877471754111438e-39
-    },
-    {
-      "time": 1787721240,
-      "open": 1.014,
-      "high": 1.014,
-      "low": 1.014,
-      "close": 1.014,
-      "volume": 189400.0
-    },
-    {
-      "time": 1787721300,
-      "open": 1.014,
-      "high": 1.014,
-      "low": 1.014,
-      "close": 1.014,
-      "volume": 5.877471754111438e-39
-    },
-    {
-      "time": 1787721360,
-      "open": 1.015,
-      "high": 1.015,
-      "low": 1.015,
-      "close": 1.015,
-      "volume": 156900.0
-    },
-    {
-      "time": 1787721420,
-      "open": 1.015,
-      "high": 1.015,
-      "low": 1.013,
-      "close": 1.013,
-      "volume": 11000.0
-    },
-    {
-      "time": 1787721480,
-      "open": 1.013,
-      "high": 1.014,
-      "low": 1.013,
-      "close": 1.014,
-      "volume": 16700.0
-    },
-    {
-      "time": 1787721540,
-      "open": 1.014,
-      "high": 1.014,
-      "low": 1.014,
-      "close": 1.014,
-      "volume": 5.877471754111438e-39
-    },
-    {
-      "time": 1787721600,
-      "open": 1.014,
-      "high": 1.014,
-      "low": 1.014,
-      "close": 1.014,
-      "volume": 5.877471754111438e-39
-    },
-    {
-      "time": 1787721660,
-      "open": 1.014,
-      "high": 1.014,
-      "low": 1.013,
-      "close": 1.013,
-      "volume": 51100.0
-    },
-    {
-      "time": 1787721720,
-      "open": 1.014,
-      "high": 1.014,
-      "low": 1.014,
-      "close": 1.014,
-      "volume": 2800.0
-    },
-    {
-      "time": 1787721780,
-      "open": 1.015,
-      "high": 1.015,
-      "low": 1.015,
-      "close": 1.015,
-      "volume": 10800.0
-    },
-    {
-      "time": 1787721840,
-      "open": 1.015,
-      "high": 1.015,
-      "low": 1.015,
-      "close": 1.015,
-      "volume": 1200.0
-    },
-    {
-      "time": 1787721900,
-      "open": 1.015,
-      "high": 1.015,
-      "low": 1.015,
-      "close": 1.015,
-      "volume": 5.877471754111438e-39
-    },
-    {
-      "time": 1787721960,
-      "open": 1.015,
-      "high": 1.015,
-      "low": 1.015,
-      "close": 1.015,
-      "volume": 5.877471754111438e-39
-    },
-    {
-      "time": 1787722020,
-      "open": 1.015,
-      "high": 1.015,
-      "low": 1.015,
-      "close": 1.015,
-      "volume": 5.877471754111438e-39
-    },
-    {
-      "time": 1787722080,
-      "open": 1.017,
-      "high": 1.017,
-      "low": 1.017,
-      "close": 1.017,
-      "volume": 20000.0
-    },
-    {
-      "time": 1787722140,
-      "open": 1.017,
-      "high": 1.017,
-      "low": 1.017,
-      "close": 1.017,
-      "volume": 5.877471754111438e-39
-    },
-    {
-      "time": 1787722200,
-      "open": 1.017,
-      "high": 1.017,
-      "low": 1.017,
-      "close": 1.017,
-      "volume": 5.877471754111438e-39
-    },
-    {
-      "time": 1787722260,
-      "open": 1.015,
-      "high": 1.015,
-      "low": 1.015,
-      "close": 1.015,
-      "volume": 3000.0
-    },
-    {
-      "time": 1787722320,
-      "open": 1.015,
-      "high": 1.015,
-      "low": 1.015,
-      "close": 1.015,
-      "volume": 5.877471754111438e-39
-    },
-    {
-      "time": 1787722380,
-      "open": 1.016,
-      "high": 1.016,
-      "low": 1.016,
-      "close": 1.016,
-      "volume": 51800.0
-    },
-    {
-      "time": 1787722440,
-      "open": 1.015,
-      "high": 1.015,
-      "low": 1.014,
-      "close": 1.014,
-      "volume": 92900.0
-    },
-    {
-      "time": 1787722500,
-      "open": 1.014,
-      "high": 1.014,
-      "low": 1.014,
-      "close": 1.014,
-      "volume": 5.877471754111438e-39
-    },
-    {
-      "time": 1787722560,
-      "open": 1.014,
-      "high": 1.014,
-      "low": 1.013,
-      "close": 1.013,
-      "volume": 23000.0
-    },
-    {
-      "time": 1787722620,
-      "open": 1.013,
-      "high": 1.013,
-      "low": 1.013,
-      "close": 1.013,
-      "volume": 2000.0
-    },
-    {
-      "time": 1787722680,
-      "open": 1.013,
-      "high": 1.014,
-      "low": 1.012,
-      "close": 1.013,
-      "volume": 968800.0
-    },
-    {
-      "time": 1787722740,
-      "open": 1.013,
-      "high": 1.013,
-      "low": 1.013,
-      "close": 1.013,
-      "volume": 1124800.0
-    },
-    {
-      "time": 1787722800,
-      "open": 1.013,
-      "high": 1.013,
-      "low": 1.013,
-      "close": 1.013,
-      "volume": 5.877471754111438e-39
-    },
     {
       "time": 1787722860,
       "open": 1.014,
@@ -8412,6 +7413,1926 @@
       "low": 1.007,
       "close": 1.007,
       "volume": 226600.0
+    },
+    {
+      "time": 1788139860,
+      "open": 0.997,
+      "high": 0.997,
+      "low": 0.99,
+      "close": 0.99,
+      "volume": 796800.0
+    },
+    {
+      "time": 1788139920,
+      "open": 0.989,
+      "high": 0.996,
+      "low": 0.988,
+      "close": 0.996,
+      "volume": 568400.0
+    },
+    {
+      "time": 1788139980,
+      "open": 0.996,
+      "high": 0.998,
+      "low": 0.994,
+      "close": 0.997,
+      "volume": 1507400.0
+    },
+    {
+      "time": 1788140040,
+      "open": 0.998,
+      "high": 0.998,
+      "low": 0.996,
+      "close": 0.996,
+      "volume": 202100.0
+    },
+    {
+      "time": 1788140100,
+      "open": 0.997,
+      "high": 0.997,
+      "low": 0.993,
+      "close": 0.993,
+      "volume": 157100.0
+    },
+    {
+      "time": 1788140160,
+      "open": 0.994,
+      "high": 0.995,
+      "low": 0.993,
+      "close": 0.995,
+      "volume": 59200.0
+    },
+    {
+      "time": 1788140220,
+      "open": 0.994,
+      "high": 0.998,
+      "low": 0.994,
+      "close": 0.998,
+      "volume": 908300.0
+    },
+    {
+      "time": 1788140280,
+      "open": 0.998,
+      "high": 0.998,
+      "low": 0.993,
+      "close": 0.996,
+      "volume": 1093800.0
+    },
+    {
+      "time": 1788140340,
+      "open": 0.996,
+      "high": 0.996,
+      "low": 0.994,
+      "close": 0.995,
+      "volume": 384400.0
+    },
+    {
+      "time": 1788140400,
+      "open": 0.996,
+      "high": 0.997,
+      "low": 0.996,
+      "close": 0.997,
+      "volume": 1063500.0
+    },
+    {
+      "time": 1788140460,
+      "open": 0.997,
+      "high": 0.997,
+      "low": 0.996,
+      "close": 0.996,
+      "volume": 447200.0
+    },
+    {
+      "time": 1788140520,
+      "open": 0.995,
+      "high": 0.995,
+      "low": 0.994,
+      "close": 0.994,
+      "volume": 95500.0
+    },
+    {
+      "time": 1788140580,
+      "open": 0.994,
+      "high": 0.996,
+      "low": 0.994,
+      "close": 0.996,
+      "volume": 1526100.0
+    },
+    {
+      "time": 1788140640,
+      "open": 0.995,
+      "high": 0.996,
+      "low": 0.993,
+      "close": 0.993,
+      "volume": 1144100.0
+    },
+    {
+      "time": 1788140700,
+      "open": 0.994,
+      "high": 0.994,
+      "low": 0.99,
+      "close": 0.991,
+      "volume": 1274100.0
+    },
+    {
+      "time": 1788140760,
+      "open": 0.99,
+      "high": 0.992,
+      "low": 0.989,
+      "close": 0.989,
+      "volume": 353300.0
+    },
+    {
+      "time": 1788140820,
+      "open": 0.989,
+      "high": 0.989,
+      "low": 0.988,
+      "close": 0.988,
+      "volume": 26400.0
+    },
+    {
+      "time": 1788140880,
+      "open": 0.989,
+      "high": 0.989,
+      "low": 0.988,
+      "close": 0.989,
+      "volume": 587000.0
+    },
+    {
+      "time": 1788140940,
+      "open": 0.989,
+      "high": 0.989,
+      "low": 0.986,
+      "close": 0.986,
+      "volume": 1219100.0
+    },
+    {
+      "time": 1788141000,
+      "open": 0.985,
+      "high": 0.987,
+      "low": 0.985,
+      "close": 0.985,
+      "volume": 1200700.0
+    },
+    {
+      "time": 1788141060,
+      "open": 0.985,
+      "high": 0.987,
+      "low": 0.984,
+      "close": 0.986,
+      "volume": 1871700.0
+    },
+    {
+      "time": 1788141120,
+      "open": 0.985,
+      "high": 0.985,
+      "low": 0.984,
+      "close": 0.985,
+      "volume": 257900.0
+    },
+    {
+      "time": 1788141180,
+      "open": 0.983,
+      "high": 0.985,
+      "low": 0.983,
+      "close": 0.984,
+      "volume": 297900.0
+    },
+    {
+      "time": 1788141240,
+      "open": 0.983,
+      "high": 0.985,
+      "low": 0.983,
+      "close": 0.984,
+      "volume": 261300.0
+    },
+    {
+      "time": 1788141300,
+      "open": 0.987,
+      "high": 0.989,
+      "low": 0.987,
+      "close": 0.989,
+      "volume": 1053700.0
+    },
+    {
+      "time": 1788141360,
+      "open": 0.989,
+      "high": 0.989,
+      "low": 0.987,
+      "close": 0.987,
+      "volume": 491400.0
+    },
+    {
+      "time": 1788141420,
+      "open": 0.987,
+      "high": 0.987,
+      "low": 0.985,
+      "close": 0.985,
+      "volume": 85400.0
+    },
+    {
+      "time": 1788141480,
+      "open": 0.986,
+      "high": 0.987,
+      "low": 0.985,
+      "close": 0.987,
+      "volume": 696000.0
+    },
+    {
+      "time": 1788141540,
+      "open": 0.987,
+      "high": 0.988,
+      "low": 0.987,
+      "close": 0.988,
+      "volume": 18500.0
+    },
+    {
+      "time": 1788141600,
+      "open": 0.987,
+      "high": 0.987,
+      "low": 0.985,
+      "close": 0.985,
+      "volume": 134500.0
+    },
+    {
+      "time": 1788141660,
+      "open": 0.985,
+      "high": 0.985,
+      "low": 0.984,
+      "close": 0.984,
+      "volume": 96000.0
+    },
+    {
+      "time": 1788141720,
+      "open": 0.984,
+      "high": 0.984,
+      "low": 0.984,
+      "close": 0.984,
+      "volume": 32300.0
+    },
+    {
+      "time": 1788141780,
+      "open": 0.984,
+      "high": 0.984,
+      "low": 0.983,
+      "close": 0.983,
+      "volume": 139500.0
+    },
+    {
+      "time": 1788141840,
+      "open": 0.984,
+      "high": 0.985,
+      "low": 0.983,
+      "close": 0.985,
+      "volume": 1074900.0
+    },
+    {
+      "time": 1788141900,
+      "open": 0.985,
+      "high": 0.986,
+      "low": 0.985,
+      "close": 0.985,
+      "volume": 154400.0
+    },
+    {
+      "time": 1788141960,
+      "open": 0.987,
+      "high": 0.987,
+      "low": 0.986,
+      "close": 0.987,
+      "volume": 64600.0
+    },
+    {
+      "time": 1788142020,
+      "open": 0.987,
+      "high": 0.987,
+      "low": 0.987,
+      "close": 0.987,
+      "volume": 100000.0
+    },
+    {
+      "time": 1788142080,
+      "open": 0.987,
+      "high": 0.987,
+      "low": 0.987,
+      "close": 0.987,
+      "volume": 20000.0
+    },
+    {
+      "time": 1788142140,
+      "open": 0.988,
+      "high": 0.989,
+      "low": 0.988,
+      "close": 0.989,
+      "volume": 20000.0
+    },
+    {
+      "time": 1788142200,
+      "open": 0.989,
+      "high": 0.989,
+      "low": 0.989,
+      "close": 0.989,
+      "volume": 5.877471754111438e-39
+    },
+    {
+      "time": 1788142260,
+      "open": 0.988,
+      "high": 0.988,
+      "low": 0.988,
+      "close": 0.988,
+      "volume": 92000.0
+    },
+    {
+      "time": 1788142320,
+      "open": 0.988,
+      "high": 0.988,
+      "low": 0.988,
+      "close": 0.988,
+      "volume": 5.877471754111438e-39
+    },
+    {
+      "time": 1788142380,
+      "open": 0.988,
+      "high": 0.988,
+      "low": 0.988,
+      "close": 0.988,
+      "volume": 5.877471754111438e-39
+    },
+    {
+      "time": 1788142440,
+      "open": 0.986,
+      "high": 0.988,
+      "low": 0.986,
+      "close": 0.986,
+      "volume": 45200.0
+    },
+    {
+      "time": 1788142500,
+      "open": 0.988,
+      "high": 0.988,
+      "low": 0.988,
+      "close": 0.988,
+      "volume": 169400.0
+    },
+    {
+      "time": 1788142560,
+      "open": 0.988,
+      "high": 0.988,
+      "low": 0.988,
+      "close": 0.988,
+      "volume": 25000.0
+    },
+    {
+      "time": 1788142620,
+      "open": 0.988,
+      "high": 0.988,
+      "low": 0.988,
+      "close": 0.988,
+      "volume": 8000.0
+    },
+    {
+      "time": 1788142680,
+      "open": 0.988,
+      "high": 0.988,
+      "low": 0.988,
+      "close": 0.988,
+      "volume": 5.877471754111438e-39
+    },
+    {
+      "time": 1788142740,
+      "open": 0.988,
+      "high": 0.988,
+      "low": 0.986,
+      "close": 0.986,
+      "volume": 175700.0
+    },
+    {
+      "time": 1788142800,
+      "open": 0.986,
+      "high": 0.987,
+      "low": 0.986,
+      "close": 0.986,
+      "volume": 60100.0
+    },
+    {
+      "time": 1788142860,
+      "open": 0.985,
+      "high": 0.986,
+      "low": 0.985,
+      "close": 0.986,
+      "volume": 6200.0
+    },
+    {
+      "time": 1788142920,
+      "open": 0.985,
+      "high": 0.985,
+      "low": 0.985,
+      "close": 0.985,
+      "volume": 102600.0
+    },
+    {
+      "time": 1788142980,
+      "open": 0.984,
+      "high": 0.984,
+      "low": 0.984,
+      "close": 0.984,
+      "volume": 19200.0
+    },
+    {
+      "time": 1788143040,
+      "open": 0.986,
+      "high": 0.986,
+      "low": 0.986,
+      "close": 0.986,
+      "volume": 10000.0
+    },
+    {
+      "time": 1788143100,
+      "open": 0.985,
+      "high": 0.986,
+      "low": 0.985,
+      "close": 0.986,
+      "volume": 42700.0
+    },
+    {
+      "time": 1788143160,
+      "open": 0.986,
+      "high": 0.986,
+      "low": 0.986,
+      "close": 0.986,
+      "volume": 5.877471754111438e-39
+    },
+    {
+      "time": 1788143220,
+      "open": 0.986,
+      "high": 0.987,
+      "low": 0.986,
+      "close": 0.987,
+      "volume": 275300.0
+    },
+    {
+      "time": 1788143280,
+      "open": 0.987,
+      "high": 0.987,
+      "low": 0.987,
+      "close": 0.987,
+      "volume": 16000.0
+    },
+    {
+      "time": 1788143340,
+      "open": 0.987,
+      "high": 0.987,
+      "low": 0.987,
+      "close": 0.987,
+      "volume": 1200.0
+    },
+    {
+      "time": 1788143400,
+      "open": 0.987,
+      "high": 0.987,
+      "low": 0.987,
+      "close": 0.987,
+      "volume": 2800.0
+    },
+    {
+      "time": 1788143460,
+      "open": 0.986,
+      "high": 0.986,
+      "low": 0.985,
+      "close": 0.985,
+      "volume": 165200.0
+    },
+    {
+      "time": 1788143520,
+      "open": 0.985,
+      "high": 0.985,
+      "low": 0.984,
+      "close": 0.984,
+      "volume": 278500.0
+    },
+    {
+      "time": 1788143580,
+      "open": 0.983,
+      "high": 0.983,
+      "low": 0.983,
+      "close": 0.983,
+      "volume": 6000.0
+    },
+    {
+      "time": 1788143640,
+      "open": 0.984,
+      "high": 0.984,
+      "low": 0.983,
+      "close": 0.983,
+      "volume": 56100.0
+    },
+    {
+      "time": 1788143700,
+      "open": 0.983,
+      "high": 0.983,
+      "low": 0.983,
+      "close": 0.983,
+      "volume": 114200.0
+    },
+    {
+      "time": 1788143760,
+      "open": 0.983,
+      "high": 0.983,
+      "low": 0.983,
+      "close": 0.983,
+      "volume": 5.877471754111438e-39
+    },
+    {
+      "time": 1788143820,
+      "open": 0.983,
+      "high": 0.983,
+      "low": 0.981,
+      "close": 0.982,
+      "volume": 648200.0
+    },
+    {
+      "time": 1788143880,
+      "open": 0.982,
+      "high": 0.983,
+      "low": 0.982,
+      "close": 0.983,
+      "volume": 44500.0
+    },
+    {
+      "time": 1788143940,
+      "open": 0.982,
+      "high": 0.982,
+      "low": 0.982,
+      "close": 0.982,
+      "volume": 100000.0
+    },
+    {
+      "time": 1788144000,
+      "open": 0.984,
+      "high": 0.984,
+      "low": 0.984,
+      "close": 0.984,
+      "volume": 3400.0
+    },
+    {
+      "time": 1788144060,
+      "open": 0.984,
+      "high": 0.984,
+      "low": 0.983,
+      "close": 0.983,
+      "volume": 22100.0
+    },
+    {
+      "time": 1788144120,
+      "open": 0.983,
+      "high": 0.983,
+      "low": 0.983,
+      "close": 0.983,
+      "volume": 3500.0
+    },
+    {
+      "time": 1788144180,
+      "open": 0.982,
+      "high": 0.983,
+      "low": 0.982,
+      "close": 0.982,
+      "volume": 75600.0
+    },
+    {
+      "time": 1788144240,
+      "open": 0.982,
+      "high": 0.982,
+      "low": 0.982,
+      "close": 0.982,
+      "volume": 2400.0
+    },
+    {
+      "time": 1788144300,
+      "open": 0.981,
+      "high": 0.983,
+      "low": 0.981,
+      "close": 0.982,
+      "volume": 13900.0
+    },
+    {
+      "time": 1788144360,
+      "open": 0.983,
+      "high": 0.983,
+      "low": 0.982,
+      "close": 0.982,
+      "volume": 2600.0
+    },
+    {
+      "time": 1788144420,
+      "open": 0.984,
+      "high": 0.984,
+      "low": 0.984,
+      "close": 0.984,
+      "volume": 21000.0
+    },
+    {
+      "time": 1788144480,
+      "open": 0.984,
+      "high": 0.984,
+      "low": 0.984,
+      "close": 0.984,
+      "volume": 314000.0
+    },
+    {
+      "time": 1788144540,
+      "open": 0.983,
+      "high": 0.983,
+      "low": 0.983,
+      "close": 0.983,
+      "volume": 6700.0
+    },
+    {
+      "time": 1788144600,
+      "open": 0.983,
+      "high": 0.983,
+      "low": 0.982,
+      "close": 0.982,
+      "volume": 104500.0
+    },
+    {
+      "time": 1788144660,
+      "open": 0.981,
+      "high": 0.981,
+      "low": 0.981,
+      "close": 0.981,
+      "volume": 3000.0
+    },
+    {
+      "time": 1788144720,
+      "open": 0.982,
+      "high": 0.982,
+      "low": 0.981,
+      "close": 0.981,
+      "volume": 101100.0
+    },
+    {
+      "time": 1788144780,
+      "open": 0.981,
+      "high": 0.981,
+      "low": 0.98,
+      "close": 0.98,
+      "volume": 11500.0
+    },
+    {
+      "time": 1788144840,
+      "open": 0.98,
+      "high": 0.98,
+      "low": 0.979,
+      "close": 0.979,
+      "volume": 997300.0
+    },
+    {
+      "time": 1788144900,
+      "open": 0.979,
+      "high": 0.979,
+      "low": 0.979,
+      "close": 0.979,
+      "volume": 184200.0
+    },
+    {
+      "time": 1788144960,
+      "open": 0.979,
+      "high": 0.981,
+      "low": 0.979,
+      "close": 0.98,
+      "volume": 295600.0
+    },
+    {
+      "time": 1788145020,
+      "open": 0.981,
+      "high": 0.981,
+      "low": 0.981,
+      "close": 0.981,
+      "volume": 10000.0
+    },
+    {
+      "time": 1788145080,
+      "open": 0.981,
+      "high": 0.981,
+      "low": 0.981,
+      "close": 0.981,
+      "volume": 13200.0
+    },
+    {
+      "time": 1788145140,
+      "open": 0.982,
+      "high": 0.982,
+      "low": 0.982,
+      "close": 0.982,
+      "volume": 3000.0
+    },
+    {
+      "time": 1788145200,
+      "open": 0.981,
+      "high": 0.982,
+      "low": 0.981,
+      "close": 0.982,
+      "volume": 12000.0
+    },
+    {
+      "time": 1788145260,
+      "open": 0.982,
+      "high": 0.982,
+      "low": 0.982,
+      "close": 0.982,
+      "volume": 51500.0
+    },
+    {
+      "time": 1788145320,
+      "open": 0.982,
+      "high": 0.982,
+      "low": 0.982,
+      "close": 0.982,
+      "volume": 5.877471754111438e-39
+    },
+    {
+      "time": 1788145380,
+      "open": 0.981,
+      "high": 0.981,
+      "low": 0.981,
+      "close": 0.981,
+      "volume": 45200.0
+    },
+    {
+      "time": 1788145440,
+      "open": 0.982,
+      "high": 0.982,
+      "low": 0.982,
+      "close": 0.982,
+      "volume": 11100.0
+    },
+    {
+      "time": 1788145500,
+      "open": 0.984,
+      "high": 0.984,
+      "low": 0.984,
+      "close": 0.984,
+      "volume": 5000.0
+    },
+    {
+      "time": 1788145560,
+      "open": 0.984,
+      "high": 0.984,
+      "low": 0.984,
+      "close": 0.984,
+      "volume": 10000.0
+    },
+    {
+      "time": 1788145620,
+      "open": 0.984,
+      "high": 0.984,
+      "low": 0.983,
+      "close": 0.983,
+      "volume": 24800.0
+    },
+    {
+      "time": 1788145680,
+      "open": 0.983,
+      "high": 0.983,
+      "low": 0.983,
+      "close": 0.983,
+      "volume": 5.877471754111438e-39
+    },
+    {
+      "time": 1788145740,
+      "open": 0.983,
+      "high": 0.983,
+      "low": 0.983,
+      "close": 0.983,
+      "volume": 100.0
+    },
+    {
+      "time": 1788145800,
+      "open": 0.983,
+      "high": 0.983,
+      "low": 0.983,
+      "close": 0.983,
+      "volume": 57900.0
+    },
+    {
+      "time": 1788145860,
+      "open": 0.983,
+      "high": 0.983,
+      "low": 0.983,
+      "close": 0.983,
+      "volume": 76400.0
+    },
+    {
+      "time": 1788145920,
+      "open": 0.983,
+      "high": 0.983,
+      "low": 0.983,
+      "close": 0.983,
+      "volume": 3500.0
+    },
+    {
+      "time": 1788145980,
+      "open": 0.984,
+      "high": 0.984,
+      "low": 0.984,
+      "close": 0.984,
+      "volume": 15000.0
+    },
+    {
+      "time": 1788146040,
+      "open": 0.984,
+      "high": 0.984,
+      "low": 0.982,
+      "close": 0.982,
+      "volume": 99200.0
+    },
+    {
+      "time": 1788146100,
+      "open": 0.982,
+      "high": 0.982,
+      "low": 0.982,
+      "close": 0.982,
+      "volume": 15000.0
+    },
+    {
+      "time": 1788146160,
+      "open": 0.982,
+      "high": 0.983,
+      "low": 0.982,
+      "close": 0.983,
+      "volume": 31400.0
+    },
+    {
+      "time": 1788146220,
+      "open": 0.983,
+      "high": 0.984,
+      "low": 0.982,
+      "close": 0.982,
+      "volume": 44600.0
+    },
+    {
+      "time": 1788146280,
+      "open": 0.982,
+      "high": 0.983,
+      "low": 0.982,
+      "close": 0.982,
+      "volume": 31400.0
+    },
+    {
+      "time": 1788146340,
+      "open": 0.982,
+      "high": 0.983,
+      "low": 0.982,
+      "close": 0.982,
+      "volume": 71200.0
+    },
+    {
+      "time": 1788146400,
+      "open": 0.982,
+      "high": 0.983,
+      "low": 0.982,
+      "close": 0.983,
+      "volume": 30800.0
+    },
+    {
+      "time": 1788146460,
+      "open": 0.983,
+      "high": 0.983,
+      "low": 0.983,
+      "close": 0.983,
+      "volume": 5.877471754111438e-39
+    },
+    {
+      "time": 1788146520,
+      "open": 0.984,
+      "high": 0.984,
+      "low": 0.983,
+      "close": 0.983,
+      "volume": 7200.0
+    },
+    {
+      "time": 1788146580,
+      "open": 0.984,
+      "high": 0.984,
+      "low": 0.984,
+      "close": 0.984,
+      "volume": 50000.0
+    },
+    {
+      "time": 1788146640,
+      "open": 0.983,
+      "high": 0.983,
+      "low": 0.983,
+      "close": 0.983,
+      "volume": 100.0
+    },
+    {
+      "time": 1788146700,
+      "open": 0.983,
+      "high": 0.983,
+      "low": 0.983,
+      "close": 0.983,
+      "volume": 5.877471754111438e-39
+    },
+    {
+      "time": 1788146760,
+      "open": 0.983,
+      "high": 0.983,
+      "low": 0.983,
+      "close": 0.983,
+      "volume": 5.877471754111438e-39
+    },
+    {
+      "time": 1788146820,
+      "open": 0.983,
+      "high": 0.983,
+      "low": 0.983,
+      "close": 0.983,
+      "volume": 5.877471754111438e-39
+    },
+    {
+      "time": 1788146880,
+      "open": 0.983,
+      "high": 0.983,
+      "low": 0.983,
+      "close": 0.983,
+      "volume": 5.877471754111438e-39
+    },
+    {
+      "time": 1788146940,
+      "open": 0.983,
+      "high": 0.983,
+      "low": 0.983,
+      "close": 0.983,
+      "volume": 5.877471754111438e-39
+    },
+    {
+      "time": 1788147000,
+      "open": 0.984,
+      "high": 0.984,
+      "low": 0.984,
+      "close": 0.984,
+      "volume": 9700.0
+    },
+    {
+      "time": 1788152460,
+      "open": 0.983,
+      "high": 0.986,
+      "low": 0.983,
+      "close": 0.986,
+      "volume": 513000.0
+    },
+    {
+      "time": 1788152520,
+      "open": 0.986,
+      "high": 0.986,
+      "low": 0.986,
+      "close": 0.986,
+      "volume": 1000.0
+    },
+    {
+      "time": 1788152580,
+      "open": 0.985,
+      "high": 0.986,
+      "low": 0.984,
+      "close": 0.986,
+      "volume": 31000.0
+    },
+    {
+      "time": 1788152640,
+      "open": 0.985,
+      "high": 0.986,
+      "low": 0.985,
+      "close": 0.986,
+      "volume": 102900.0
+    },
+    {
+      "time": 1788152700,
+      "open": 0.985,
+      "high": 0.985,
+      "low": 0.985,
+      "close": 0.985,
+      "volume": 100000.0
+    },
+    {
+      "time": 1788152760,
+      "open": 0.983,
+      "high": 0.984,
+      "low": 0.983,
+      "close": 0.984,
+      "volume": 42500.0
+    },
+    {
+      "time": 1788152820,
+      "open": 0.983,
+      "high": 0.983,
+      "low": 0.983,
+      "close": 0.983,
+      "volume": 8000.0
+    },
+    {
+      "time": 1788152880,
+      "open": 0.982,
+      "high": 0.982,
+      "low": 0.981,
+      "close": 0.981,
+      "volume": 160700.0
+    },
+    {
+      "time": 1788152940,
+      "open": 0.981,
+      "high": 0.982,
+      "low": 0.98,
+      "close": 0.98,
+      "volume": 56900.0
+    },
+    {
+      "time": 1788153000,
+      "open": 0.982,
+      "high": 0.983,
+      "low": 0.982,
+      "close": 0.983,
+      "volume": 611300.0
+    },
+    {
+      "time": 1788153060,
+      "open": 0.982,
+      "high": 0.982,
+      "low": 0.982,
+      "close": 0.982,
+      "volume": 278700.0
+    },
+    {
+      "time": 1788153120,
+      "open": 0.983,
+      "high": 0.983,
+      "low": 0.983,
+      "close": 0.983,
+      "volume": 600.0
+    },
+    {
+      "time": 1788153180,
+      "open": 0.983,
+      "high": 0.983,
+      "low": 0.983,
+      "close": 0.983,
+      "volume": 13000.0
+    },
+    {
+      "time": 1788153240,
+      "open": 0.984,
+      "high": 0.984,
+      "low": 0.984,
+      "close": 0.984,
+      "volume": 21100.0
+    },
+    {
+      "time": 1788153300,
+      "open": 0.984,
+      "high": 0.984,
+      "low": 0.984,
+      "close": 0.984,
+      "volume": 5.877471754111438e-39
+    },
+    {
+      "time": 1788153360,
+      "open": 0.984,
+      "high": 0.985,
+      "low": 0.984,
+      "close": 0.985,
+      "volume": 3000.0
+    },
+    {
+      "time": 1788153420,
+      "open": 0.986,
+      "high": 0.986,
+      "low": 0.986,
+      "close": 0.986,
+      "volume": 1500.0
+    },
+    {
+      "time": 1788153480,
+      "open": 0.986,
+      "high": 0.988,
+      "low": 0.986,
+      "close": 0.988,
+      "volume": 231100.0
+    },
+    {
+      "time": 1788153540,
+      "open": 0.988,
+      "high": 0.988,
+      "low": 0.988,
+      "close": 0.988,
+      "volume": 1000.0
+    },
+    {
+      "time": 1788153600,
+      "open": 0.988,
+      "high": 0.988,
+      "low": 0.988,
+      "close": 0.988,
+      "volume": 400.0
+    },
+    {
+      "time": 1788153660,
+      "open": 0.988,
+      "high": 0.989,
+      "low": 0.988,
+      "close": 0.989,
+      "volume": 75000.0
+    },
+    {
+      "time": 1788153720,
+      "open": 0.988,
+      "high": 0.988,
+      "low": 0.988,
+      "close": 0.988,
+      "volume": 5000.0
+    },
+    {
+      "time": 1788153780,
+      "open": 0.988,
+      "high": 0.989,
+      "low": 0.988,
+      "close": 0.989,
+      "volume": 7300.0
+    },
+    {
+      "time": 1788153840,
+      "open": 0.988,
+      "high": 0.988,
+      "low": 0.987,
+      "close": 0.987,
+      "volume": 408700.0
+    },
+    {
+      "time": 1788153900,
+      "open": 0.987,
+      "high": 0.988,
+      "low": 0.987,
+      "close": 0.988,
+      "volume": 784500.0
+    },
+    {
+      "time": 1788153960,
+      "open": 0.988,
+      "high": 0.988,
+      "low": 0.988,
+      "close": 0.988,
+      "volume": 4000.0
+    },
+    {
+      "time": 1788154020,
+      "open": 0.989,
+      "high": 0.989,
+      "low": 0.989,
+      "close": 0.989,
+      "volume": 100.0
+    },
+    {
+      "time": 1788154080,
+      "open": 0.989,
+      "high": 0.989,
+      "low": 0.989,
+      "close": 0.989,
+      "volume": 67500.0
+    },
+    {
+      "time": 1788154140,
+      "open": 0.991,
+      "high": 0.991,
+      "low": 0.989,
+      "close": 0.989,
+      "volume": 92000.0
+    },
+    {
+      "time": 1788154200,
+      "open": 0.991,
+      "high": 0.991,
+      "low": 0.991,
+      "close": 0.991,
+      "volume": 1100.0
+    },
+    {
+      "time": 1788154260,
+      "open": 0.99,
+      "high": 0.99,
+      "low": 0.99,
+      "close": 0.99,
+      "volume": 1700.0
+    },
+    {
+      "time": 1788154320,
+      "open": 0.99,
+      "high": 0.991,
+      "low": 0.99,
+      "close": 0.991,
+      "volume": 36700.0
+    },
+    {
+      "time": 1788154380,
+      "open": 0.99,
+      "high": 0.99,
+      "low": 0.989,
+      "close": 0.989,
+      "volume": 123500.0
+    },
+    {
+      "time": 1788154440,
+      "open": 0.989,
+      "high": 0.99,
+      "low": 0.989,
+      "close": 0.99,
+      "volume": 69900.0
+    },
+    {
+      "time": 1788154500,
+      "open": 0.99,
+      "high": 0.99,
+      "low": 0.99,
+      "close": 0.99,
+      "volume": 5.877471754111438e-39
+    },
+    {
+      "time": 1788154560,
+      "open": 0.989,
+      "high": 0.989,
+      "low": 0.989,
+      "close": 0.989,
+      "volume": 46200.0
+    },
+    {
+      "time": 1788154620,
+      "open": 0.989,
+      "high": 0.989,
+      "low": 0.988,
+      "close": 0.988,
+      "volume": 60600.0
+    },
+    {
+      "time": 1788154680,
+      "open": 0.988,
+      "high": 0.988,
+      "low": 0.988,
+      "close": 0.988,
+      "volume": 10500.0
+    },
+    {
+      "time": 1788154740,
+      "open": 0.988,
+      "high": 0.988,
+      "low": 0.988,
+      "close": 0.988,
+      "volume": 800.0
+    },
+    {
+      "time": 1788154800,
+      "open": 0.987,
+      "high": 0.988,
+      "low": 0.987,
+      "close": 0.988,
+      "volume": 84600.0
+    },
+    {
+      "time": 1788154860,
+      "open": 0.987,
+      "high": 0.988,
+      "low": 0.987,
+      "close": 0.988,
+      "volume": 4200.0
+    },
+    {
+      "time": 1788154920,
+      "open": 0.988,
+      "high": 0.988,
+      "low": 0.988,
+      "close": 0.988,
+      "volume": 10000.0
+    },
+    {
+      "time": 1788154980,
+      "open": 0.988,
+      "high": 0.988,
+      "low": 0.988,
+      "close": 0.988,
+      "volume": 20000.0
+    },
+    {
+      "time": 1788155040,
+      "open": 0.987,
+      "high": 0.988,
+      "low": 0.987,
+      "close": 0.988,
+      "volume": 201000.0
+    },
+    {
+      "time": 1788155100,
+      "open": 0.989,
+      "high": 0.989,
+      "low": 0.989,
+      "close": 0.989,
+      "volume": 61900.0
+    },
+    {
+      "time": 1788155160,
+      "open": 0.989,
+      "high": 0.989,
+      "low": 0.988,
+      "close": 0.988,
+      "volume": 115000.0
+    },
+    {
+      "time": 1788155220,
+      "open": 0.988,
+      "high": 0.988,
+      "low": 0.988,
+      "close": 0.988,
+      "volume": 5.877471754111438e-39
+    },
+    {
+      "time": 1788155280,
+      "open": 0.988,
+      "high": 0.988,
+      "low": 0.988,
+      "close": 0.988,
+      "volume": 5000.0
+    },
+    {
+      "time": 1788155340,
+      "open": 0.988,
+      "high": 0.988,
+      "low": 0.988,
+      "close": 0.988,
+      "volume": 1500.0
+    },
+    {
+      "time": 1788155400,
+      "open": 0.988,
+      "high": 0.988,
+      "low": 0.988,
+      "close": 0.988,
+      "volume": 5.877471754111438e-39
+    },
+    {
+      "time": 1788155460,
+      "open": 0.988,
+      "high": 0.988,
+      "low": 0.988,
+      "close": 0.988,
+      "volume": 5.877471754111438e-39
+    },
+    {
+      "time": 1788155520,
+      "open": 0.987,
+      "high": 0.988,
+      "low": 0.987,
+      "close": 0.988,
+      "volume": 15000.0
+    },
+    {
+      "time": 1788155580,
+      "open": 0.987,
+      "high": 0.987,
+      "low": 0.987,
+      "close": 0.987,
+      "volume": 12700.0
+    },
+    {
+      "time": 1788155640,
+      "open": 0.987,
+      "high": 0.987,
+      "low": 0.987,
+      "close": 0.987,
+      "volume": 5.877471754111438e-39
+    },
+    {
+      "time": 1788155700,
+      "open": 0.987,
+      "high": 0.987,
+      "low": 0.986,
+      "close": 0.986,
+      "volume": 1400.0
+    },
+    {
+      "time": 1788155760,
+      "open": 0.988,
+      "high": 0.988,
+      "low": 0.988,
+      "close": 0.988,
+      "volume": 4300.0
+    },
+    {
+      "time": 1788155820,
+      "open": 0.988,
+      "high": 0.988,
+      "low": 0.988,
+      "close": 0.988,
+      "volume": 1200.0
+    },
+    {
+      "time": 1788155880,
+      "open": 0.988,
+      "high": 0.988,
+      "low": 0.988,
+      "close": 0.988,
+      "volume": 5.877471754111438e-39
+    },
+    {
+      "time": 1788155940,
+      "open": 0.988,
+      "high": 0.988,
+      "low": 0.988,
+      "close": 0.988,
+      "volume": 419400.0
+    },
+    {
+      "time": 1788156000,
+      "open": 0.989,
+      "high": 0.989,
+      "low": 0.989,
+      "close": 0.989,
+      "volume": 252100.0
+    },
+    {
+      "time": 1788156060,
+      "open": 0.99,
+      "high": 0.99,
+      "low": 0.99,
+      "close": 0.99,
+      "volume": 70300.0
+    },
+    {
+      "time": 1788156120,
+      "open": 0.99,
+      "high": 0.99,
+      "low": 0.99,
+      "close": 0.99,
+      "volume": 20000.0
+    },
+    {
+      "time": 1788156180,
+      "open": 0.989,
+      "high": 0.989,
+      "low": 0.989,
+      "close": 0.989,
+      "volume": 36000.0
+    },
+    {
+      "time": 1788156240,
+      "open": 0.989,
+      "high": 0.989,
+      "low": 0.989,
+      "close": 0.989,
+      "volume": 276200.0
+    },
+    {
+      "time": 1788156300,
+      "open": 0.989,
+      "high": 0.989,
+      "low": 0.989,
+      "close": 0.989,
+      "volume": 250000.0
+    },
+    {
+      "time": 1788156360,
+      "open": 0.989,
+      "high": 0.989,
+      "low": 0.989,
+      "close": 0.989,
+      "volume": 304000.0
+    },
+    {
+      "time": 1788156420,
+      "open": 0.989,
+      "high": 0.989,
+      "low": 0.989,
+      "close": 0.989,
+      "volume": 252000.0
+    },
+    {
+      "time": 1788156480,
+      "open": 0.989,
+      "high": 0.989,
+      "low": 0.989,
+      "close": 0.989,
+      "volume": 101200.0
+    },
+    {
+      "time": 1788156540,
+      "open": 0.99,
+      "high": 0.99,
+      "low": 0.99,
+      "close": 0.99,
+      "volume": 40400.0
+    },
+    {
+      "time": 1788156600,
+      "open": 0.99,
+      "high": 0.99,
+      "low": 0.99,
+      "close": 0.99,
+      "volume": 5.877471754111438e-39
+    },
+    {
+      "time": 1788156660,
+      "open": 0.99,
+      "high": 0.99,
+      "low": 0.99,
+      "close": 0.99,
+      "volume": 43600.0
+    },
+    {
+      "time": 1788156720,
+      "open": 0.99,
+      "high": 0.991,
+      "low": 0.989,
+      "close": 0.991,
+      "volume": 439700.0
+    },
+    {
+      "time": 1788156780,
+      "open": 0.991,
+      "high": 0.991,
+      "low": 0.991,
+      "close": 0.991,
+      "volume": 10000.0
+    },
+    {
+      "time": 1788156840,
+      "open": 0.991,
+      "high": 0.991,
+      "low": 0.99,
+      "close": 0.99,
+      "volume": 30800.0
+    },
+    {
+      "time": 1788156900,
+      "open": 0.991,
+      "high": 0.991,
+      "low": 0.991,
+      "close": 0.991,
+      "volume": 222000.0
+    },
+    {
+      "time": 1788156960,
+      "open": 0.991,
+      "high": 0.991,
+      "low": 0.991,
+      "close": 0.991,
+      "volume": 11000.0
+    },
+    {
+      "time": 1788157020,
+      "open": 0.991,
+      "high": 0.992,
+      "low": 0.991,
+      "close": 0.991,
+      "volume": 175400.0
+    },
+    {
+      "time": 1788157080,
+      "open": 0.992,
+      "high": 0.992,
+      "low": 0.992,
+      "close": 0.992,
+      "volume": 335000.0
+    },
+    {
+      "time": 1788157140,
+      "open": 0.992,
+      "high": 0.993,
+      "low": 0.992,
+      "close": 0.993,
+      "volume": 25500.0
+    },
+    {
+      "time": 1788157200,
+      "open": 0.993,
+      "high": 0.993,
+      "low": 0.993,
+      "close": 0.993,
+      "volume": 289000.0
+    },
+    {
+      "time": 1788157260,
+      "open": 0.993,
+      "high": 0.994,
+      "low": 0.993,
+      "close": 0.994,
+      "volume": 14000.0
+    },
+    {
+      "time": 1788157320,
+      "open": 0.994,
+      "high": 0.994,
+      "low": 0.994,
+      "close": 0.994,
+      "volume": 50500.0
+    },
+    {
+      "time": 1788157380,
+      "open": 0.994,
+      "high": 0.994,
+      "low": 0.994,
+      "close": 0.994,
+      "volume": 5000.0
+    },
+    {
+      "time": 1788157440,
+      "open": 0.993,
+      "high": 0.993,
+      "low": 0.993,
+      "close": 0.993,
+      "volume": 56200.0
+    },
+    {
+      "time": 1788157500,
+      "open": 0.994,
+      "high": 0.994,
+      "low": 0.994,
+      "close": 0.994,
+      "volume": 100.0
+    },
+    {
+      "time": 1788157560,
+      "open": 0.994,
+      "high": 0.994,
+      "low": 0.994,
+      "close": 0.994,
+      "volume": 500.0
+    },
+    {
+      "time": 1788157620,
+      "open": 0.994,
+      "high": 0.994,
+      "low": 0.994,
+      "close": 0.994,
+      "volume": 70300.0
+    },
+    {
+      "time": 1788157680,
+      "open": 0.993,
+      "high": 0.993,
+      "low": 0.993,
+      "close": 0.993,
+      "volume": 12600.0
+    },
+    {
+      "time": 1788157740,
+      "open": 0.994,
+      "high": 0.994,
+      "low": 0.993,
+      "close": 0.993,
+      "volume": 15400.0
+    },
+    {
+      "time": 1788157800,
+      "open": 0.993,
+      "high": 0.993,
+      "low": 0.993,
+      "close": 0.993,
+      "volume": 1100.0
+    },
+    {
+      "time": 1788157860,
+      "open": 0.994,
+      "high": 0.994,
+      "low": 0.993,
+      "close": 0.993,
+      "volume": 9500.0
+    },
+    {
+      "time": 1788157920,
+      "open": 0.994,
+      "high": 0.994,
+      "low": 0.994,
+      "close": 0.994,
+      "volume": 202300.0
+    },
+    {
+      "time": 1788157980,
+      "open": 0.995,
+      "high": 0.995,
+      "low": 0.995,
+      "close": 0.995,
+      "volume": 361700.0
+    },
+    {
+      "time": 1788158040,
+      "open": 0.996,
+      "high": 0.997,
+      "low": 0.996,
+      "close": 0.997,
+      "volume": 67000.0
+    },
+    {
+      "time": 1788158100,
+      "open": 0.996,
+      "high": 0.996,
+      "low": 0.996,
+      "close": 0.996,
+      "volume": 386200.0
+    },
+    {
+      "time": 1788158160,
+      "open": 0.995,
+      "high": 0.997,
+      "low": 0.995,
+      "close": 0.997,
+      "volume": 4200.0
+    },
+    {
+      "time": 1788158220,
+      "open": 0.996,
+      "high": 0.996,
+      "low": 0.995,
+      "close": 0.995,
+      "volume": 156400.0
+    },
+    {
+      "time": 1788158280,
+      "open": 0.995,
+      "high": 0.995,
+      "low": 0.995,
+      "close": 0.995,
+      "volume": 33200.0
+    },
+    {
+      "time": 1788158340,
+      "open": 0.995,
+      "high": 0.995,
+      "low": 0.995,
+      "close": 0.995,
+      "volume": 260900.0
+    },
+    {
+      "time": 1788158400,
+      "open": 0.995,
+      "high": 0.995,
+      "low": 0.995,
+      "close": 0.995,
+      "volume": 11300.0
+    },
+    {
+      "time": 1788158460,
+      "open": 0.994,
+      "high": 0.995,
+      "low": 0.994,
+      "close": 0.995,
+      "volume": 12000.0
+    },
+    {
+      "time": 1788158520,
+      "open": 0.995,
+      "high": 0.995,
+      "low": 0.995,
+      "close": 0.995,
+      "volume": 1100.0
+    },
+    {
+      "time": 1788158580,
+      "open": 0.995,
+      "high": 0.995,
+      "low": 0.995,
+      "close": 0.995,
+      "volume": 24200.0
+    },
+    {
+      "time": 1788158640,
+      "open": 0.995,
+      "high": 0.995,
+      "low": 0.995,
+      "close": 0.995,
+      "volume": 200.0
+    },
+    {
+      "time": 1788158700,
+      "open": 0.995,
+      "high": 0.996,
+      "low": 0.994,
+      "close": 0.995,
+      "volume": 157800.0
+    },
+    {
+      "time": 1788158760,
+      "open": 0.995,
+      "high": 0.995,
+      "low": 0.995,
+      "close": 0.995,
+      "volume": 1500.0
+    },
+    {
+      "time": 1788158820,
+      "open": 0.995,
+      "high": 0.995,
+      "low": 0.994,
+      "close": 0.995,
+      "volume": 812800.0
+    },
+    {
+      "time": 1788158880,
+      "open": 0.995,
+      "high": 0.995,
+      "low": 0.995,
+      "close": 0.995,
+      "volume": 2200.0
+    },
+    {
+      "time": 1788158940,
+      "open": 0.994,
+      "high": 0.994,
+      "low": 0.994,
+      "close": 0.994,
+      "volume": 2148600.0
+    },
+    {
+      "time": 1788159000,
+      "open": 0.994,
+      "high": 0.994,
+      "low": 0.994,
+      "close": 0.994,
+      "volume": 800.0
+    },
+    {
+      "time": 1788159060,
+      "open": 0.995,
+      "high": 0.995,
+      "low": 0.994,
+      "close": 0.994,
+      "volume": 8100.0
+    },
+    {
+      "time": 1788159120,
+      "open": 0.995,
+      "high": 0.995,
+      "low": 0.995,
+      "close": 0.995,
+      "volume": 30000.0
+    },
+    {
+      "time": 1788159180,
+      "open": 0.995,
+      "high": 0.995,
+      "low": 0.995,
+      "close": 0.995,
+      "volume": 17000.0
+    },
+    {
+      "time": 1788159240,
+      "open": 0.995,
+      "high": 0.995,
+      "low": 0.995,
+      "close": 0.995,
+      "volume": 22400.0
+    },
+    {
+      "time": 1788159300,
+      "open": 0.995,
+      "high": 0.995,
+      "low": 0.994,
+      "close": 0.994,
+      "volume": 63400.0
+    },
+    {
+      "time": 1788159360,
+      "open": 0.994,
+      "high": 0.995,
+      "low": 0.994,
+      "close": 0.994,
+      "volume": 25200.0
+    },
+    {
+      "time": 1788159420,
+      "open": 0.994,
+      "high": 0.995,
+      "low": 0.994,
+      "close": 0.994,
+      "volume": 31800.0
+    },
+    {
+      "time": 1788159480,
+      "open": 0.994,
+      "high": 0.994,
+      "low": 0.994,
+      "close": 0.994,
+      "volume": 5.877471754111438e-39
+    },
+    {
+      "time": 1788159540,
+      "open": 0.994,
+      "high": 0.994,
+      "low": 0.994,
+      "close": 0.994,
+      "volume": 5.877471754111438e-39
+    },
+    {
+      "time": 1788159600,
+      "open": 0.994,
+      "high": 0.994,
+      "low": 0.994,
+      "close": 0.994,
+      "volume": 23800.0
     }
   ]
 }
