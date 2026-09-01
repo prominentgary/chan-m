@@ -156,8 +156,8 @@ let _view = null;
 export function sliceSegmentBars(bars, seg) {
   if (!bars || !bars.length || !seg || !seg.start || !seg.end) return [];
   const s = seg.start.time;
-  // 盯盘段：终点之后到当前 K 线（剩余未分段部分）一并纳入，便于实时观察
-  const e = seg._isWatch ? bars[bars.length - 1].time : seg.end.time;
+  // 盯盘段/追踪段：终点之后到当前 K 线（剩余未分段部分）一并纳入，便于实时观察
+  const e = (seg._isWatch || seg._isTrack) ? bars[bars.length - 1].time : seg.end.time;
   // 包含起点前一根 bar，使落在两根 bar 之间的段端点（如 60m 图上的 30m 段）
   // 能通过 timeToX 时间插值精确定位，而非被截断到首根 bar。
   const startIdx = Math.max(0, bars.findIndex((b) => b.time >= s) - 1);

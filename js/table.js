@@ -88,7 +88,15 @@ function segCard(seg, idx, ctx, readonly, extraClass = '', reversed = false) {
         <circle cx="12" cy="12" r="3"/>
       </svg>
     </div>
-  ` : '';
+  ` : (seg._isTrack ? `
+    <div class="track-badge" aria-label="追踪">
+      <svg viewBox="0 0 24 24" width="14" height="14" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="2"/>
+        <path d="M12 2 L12 6 M12 18 L12 22 M2 12 L6 12 M18 12 L22 12"/>
+        <circle cx="12" cy="12" r="8" stroke-dasharray="3 3"/>
+      </svg>
+    </div>
+  ` : '');
   const durInfo = segDurationInfo(seg, ctx.bars, ctx.period);
   const dur = durInfo ? durInfo.text : '';
   const tw = durInfo ? Math.max(4, Math.min(100, (durInfo.totalMin / (ctx.maxDurationMin || 1)) * 100)) : 0;
@@ -110,9 +118,25 @@ function segCard(seg, idx, ctx, readonly, extraClass = '', reversed = false) {
         </svg>
         <span class="watch-ring-dur${isFull ? ' is-full' : ''}">${ringText}</span>
       </div>`;
+  } else if (seg._isTrack && durInfo && ctx.maxDurationMin > 0) {
+    const ringInfo = watchRingDurationInfo(seg, ctx.bars, ctx.period);
+    const ringTotal = ringInfo ? ringInfo.totalMin : durInfo.totalMin;
+    const ringText = ringInfo ? ringInfo.text : durInfo.text;
+    const r = 12;
+    const circ = 2 * Math.PI * r;
+    const ratio = Math.min(1, ringTotal / ctx.maxDurationMin);
+    const isFull = ringTotal >= ctx.maxDurationMin;
+    watchRing = `
+      <div class="watch-ring">
+        <svg viewBox="0 0 32 32">
+          <circle class="watch-ring-track" cx="16" cy="16" r="${r}"/>
+          <circle class="track-ring-fill" cx="16" cy="16" r="${r}" stroke-dasharray="${(circ * ratio).toFixed(2)} ${circ.toFixed(2)}"/>
+        </svg>
+        <span class="watch-ring-dur${isFull ? ' is-full' : ''}">${ringText}</span>
+      </div>`;
   }
   return `
-  <div class="card ${extraClass}${seg._isWatch ? ' watch-card' : ''}" data-id="${seg.id}">
+  <div class="card ${extraClass}${seg._isWatch ? ' watch-card' : ''}${seg._isTrack ? ' track-card' : ''}" data-id="${seg.id}">
     ${watchBadge}
     <div class="card-avatar-wrap">
       <div class="card-avatar" style="background:${avatarBg};color:${avatarTxt}">${idx}</div>

@@ -88,7 +88,7 @@ function computeHideBefore(higherSegments, higherPeriod, curSegments) {
   if (!higherPeriod || !higherSegments || !higherSegments.length) return null;
   // 盯盘段终点为「当前最新价」，若把它当作更高周期的最后一段来算 hideBefore，
   // 会把低周期段几乎全部隐藏（例如 5m 盯盘导致 1m 只显示盯盘段之后）。各周期盯盘段需排除。
-  const realHigher = higherSegments.filter((s) => !s._isWatch);
+  const realHigher = higherSegments.filter((s) => !s._isWatch && !s._isTrack);
   if (!realHigher.length) return null;
   let lastEnd = 0, maxStart = 0;
   for (const s of realHigher) {
@@ -328,6 +328,7 @@ async function loadAllDrawings() {
     // 收集所有「证券 × 周期」任务，用 Promise.all 并行拉取，避免串行 await 造成的慢加载
     const securities = list.map((s) => ({
       code: s.code, name: s.name || null, periods: s.periods, drawings: {},
+      _a0Period: s.a0Period || '30m', // 桌面版默认 A0 为 30m
     }));
     // 存储方案信息
     list.forEach((s) => {
@@ -356,9 +357,18 @@ async function loadAllDrawings() {
           activePreset: data.activePreset || null,
           presetName: data.presetName || null,
         };
+        // 从导出的数据中读取 A0 级别（优先使用数据文件中的值覆盖 manifest 默认值）
+        if (data.a0Period) {
+          byCode[code]._a0Period = data.a0Period;
+        }
       } else {
         errors.push(`${code}_${p}.json`);
       }
+    }
+    // DEBUG: 打印各证券的 A0 级别
+    for (const sec of securities) {
+      const a0 = sec._a0Period;
+      console.log(`DEBUG A0: ${sec.code} -> ${a0} (${a0 === '30m' ? 'DEFAULT' : 'from data'})`);
     }
     // 合并本地编辑（与静态数据取较新者）
     for (const s of list) {
@@ -392,7 +402,7 @@ async function loadAllDrawings() {
     // 合并本地「手动添加」的证券（来自行情页搜索添加）
     for (const ex of loadWatchlistExtras()) {
       if (!byCode[ex.code]) {
-        const sec = { code: ex.code, name: ex.name, periods: ['day', '30m', '5m'], drawings: {}, _extra: true };
+        const sec = { code: ex.code, name: ex.name, periods: ['day', '30m', '5m'], drawings: {}, _extra: true, _a0Period: '30m' };
         securities.push(sec);
         byCode[ex.code] = sec;
       }
@@ -694,10 +704,11 @@ function renderPeriodList(code, { keepHeader = false } = {}) {
 
   const rows = sec.periods.map((p) => {
     const { segCount, zsCount } = countVisible(sec, p);
+    const isA0 = p === sec._a0Period;
     return `
     <div class="period-row" data-period="${p}">
       <div class="period-row-info">
-        <div class="period-row-name">${periodLabel(p)}</div>
+        <div class="period-row-name">${periodLabel(p)}${isA0 ? `<span class="period-row-tag a0">A0</span>` : ''}</div>
         <div class="period-row-meta">${segCount} 段 · ${zsCount} 中枢</div>
       </div>
       <span class="sec-arrow">▸</span>
@@ -715,7 +726,7 @@ function renderPeriodList(code, { keepHeader = false } = {}) {
         <div class="sec-head">
           <div class="sec-info">
             <div class="sec-name" data-name="${code}">${name}</div>
-            <div class="sec-meta">${displayCode}</div>
+            <div class="sec-meta">${displayCode} · A0=${sec._a0Period}</div>
           </div>
           <div class="sec-right">
             <div class="sec-quote" data-rt="${code}">
@@ -1584,6 +1595,7 @@ function paintKline(diag) {
       start: visibleSegs[startIdx].start,
       end: visibleSegs[endIdx].end,
       _isWatch: visibleSegs[endIdx]._isWatch,
+      _isTrack: visibleSegs[endIdx]._isTrack,
     };
     viewSegItems = visibleSegs.slice(startIdx, endIdx + 1).map((s) => ({ seg: s, no: realIdx[s.id] }));
   }
@@ -1747,18 +1759,20 @@ function showCardOverlay(card, code, period) {
   const idx = sorted.findIndex((s) => s.id === segId);
   const targetSeg = sorted[idx];
   const isWatch = targetSeg?._isWatch || false;
-  const isLatest = !isWatch && targetSeg && sorted[sorted.length - 1]?.id === segId;
+  const isTrack = targetSeg?._isTrack || false;
+  const isLatest = !isWatch && !isTrack && targetSeg && sorted[sorted.length - 1]?.id === segId;
+  const isA0 = period === sec?._a0Period;
   // 段终点未衔接下一段（下一段起点时间 ≠ 本段终点时间，或本段就是最后一段）时允许「增加段」
   const nextSeg = idx >= 0 ? sorted[idx + 1] : null;
   const connectsNext = !!(nextSeg && targetSeg && nextSeg.start?.time === targetSeg.end?.time);
-  const canAdd = !isWatch && !!targetSeg && !connectsNext;
+  const canAdd = !isWatch && !isTrack && !!targetSeg && !connectsNext;
   const bars = state._currentBars?.bars || [];
   const detected = idx >= 0 ? detectZhongshu(sorted, idx, bars) : null;
   const otherZsIds = new Set();
   (d?.zhongshus || []).forEach((z) => {
     (z.segmentIds || []).forEach((id) => otherZsIds.add(id));
   });
-  const canDetect = !isWatch && detected && detected.segmentIds.every((id) => !otherZsIds.has(id));
+  const canDetect = !isWatch && !isTrack && detected && detected.segmentIds.every((id) => !otherZsIds.has(id));
 
   const detectBtn = canDetect ? `
     <button class="overlay-btn icon accent" data-act="detect" aria-label="中枢识别">
@@ -1769,18 +1783,27 @@ function showCardOverlay(card, code, period) {
     </button>
   ` : '';
 
-  const watchBtn = isLatest ? `
+  // A0 级别显示「盯盘」按钮，非 A0 级别显示「追踪」按钮
+  const watchBtn = isLatest ? (isA0 ? `
     <button class="overlay-btn icon" data-act="watch" aria-label="盯盘">
       <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
         <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
         <circle cx="12" cy="12" r="3"/>
       </svg>
     </button>
-  ` : '';
+  ` : `
+    <button class="overlay-btn icon" data-act="track" aria-label="追踪">
+      <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="2"/>
+        <path d="M12 2 L12 6 M12 18 L12 22 M2 12 L6 12 M18 12 L22 12"/>
+        <circle cx="12" cy="12" r="8" stroke-dasharray="3 3"/>
+      </svg>
+    </button>
+  `) : '';
 
   const overlay = document.createElement('div');
   overlay.className = 'card-overlay';
-  overlay.innerHTML = isWatch ? `
+  overlay.innerHTML = (isWatch || isTrack) ? `
     <button class="overlay-btn icon danger" data-act="del" aria-label="删除">
       <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round">
         <line x1="18" y1="6" x2="6" y2="18"/>
@@ -2250,6 +2273,9 @@ async function handleSegmentAction(act, segId, code, period) {
   } else if (act === 'watch') {
     if (!targetSeg) return;
     addWatchSegment(code, period, segId);
+  } else if (act === 'track') {
+    if (!targetSeg) return;
+    addTrackSegment(code, period, segId);
   } else if (act === 'detect') {
     if (!targetSeg) return;
     const sorted = [...(d.segments || [])].sort((a, b) => a.start.time - b.start.time);
@@ -2275,6 +2301,7 @@ async function handleSegmentAction(act, segId, code, period) {
   } else if (act === 'edit') {
     if (!targetSeg) return;
     const wasWatch = targetSeg._isWatch;
+    const wasTrack = targetSeg._isTrack;
     // 盯盘段编辑过程中暂停实时自动延伸，避免被行情拉回
     if (wasWatch) targetSeg._watchManualEnd = true;
     const sorted = [...(d.segments || [])].sort((a, b) => a.start.time - b.start.time);
@@ -2297,12 +2324,19 @@ async function handleSegmentAction(act, segId, code, period) {
       targetSeg.end.time = newEnd;
       targetSeg.end.price = endpointPrice(eBar, false, direction) ?? targetSeg.end.price;
       targetSeg.direction = direction;
-      // 编辑完成：恢复自动延伸；且盯盘段编辑后变为普通段，并基于新的终点自动生成新的盯盘段
+      // 编辑完成：恢复自动延伸；且盯盘段/追踪段编辑后变为普通段，并基于新的终点自动生成新的盯盘/追踪段
       delete targetSeg._watchManualEnd;
       if (wasWatch) {
         delete targetSeg._isWatch;
         delete targetSeg._watchMaxSpan;
         createWatchFromSource(targetSeg, bars, d.segments || [], period);
+      } else if (wasTrack) {
+        delete targetSeg._isTrack;
+        delete targetSeg._trackDirection;
+        const made = createTrackFromSource(targetSeg, bars, period);
+        if (made.created) {
+          (d.segments || []).push(made.seg);
+        }
       }
       saveLocalEdits(code, sec.drawings);
       refreshPeriodDetailWithoutFetch(code, period);
@@ -2311,6 +2345,34 @@ async function handleSegmentAction(act, segId, code, period) {
       if (targetSeg) delete targetSeg._watchManualEnd;
     });
   } else if (act === 'commit') {
+    // 盯盘段/追踪段经 ✓ 确认：
+    //   A0 盯盘段 → 对齐桌面版「持续生成」逻辑（含修复链）
+    //   非 A0 追踪段 → 冻结为普通段，基于最新行情创建下一段追踪
+    if (!targetSeg || (!targetSeg._isWatch && !targetSeg._isTrack)) return;
+    if (targetSeg._isTrack) {
+      // 追踪段确认：冻结为普通段，基于最新行情起点创建下一段追踪
+      let bars;
+      try {
+        bars = await ensureBars(code, period);
+      } catch {
+        alert('行情数据加载失败，请检查网络后重试');
+        return;
+      }
+      const segs = d.segments || [];
+      degradeTrack(targetSeg);
+      const made = createTrackFromSource(targetSeg, bars, period);
+      if (made.created) {
+        segs.push(made.seg);
+        toast('已确认追踪段，继续追踪下一段');
+      } else {
+        // 无足够行情数据时，保持追踪段
+        targetSeg._isTrack = true;
+        toast('行情不足，保持当前追踪段');
+      }
+      saveLocalEdits(code, sec.drawings);
+      refreshPeriodDetailWithoutFetch(code, period);
+      return;
+    }
     // 盯盘段经 ✓ 确认：对齐桌面版「持续生成」逻辑。
     // 修复链：能续接 → 冻结为普通段并自动生成下一段盯盘；
     // 已是最后一段(already_done) → 保持动态盯盘，提示；
@@ -2472,25 +2534,35 @@ function startDetailRealtime() {
     const sec = state.securities.find((s) => s.code === code);
     if (!sec) return;
     const d = sec.drawings[period];
-    if (isWatchScope && (!d || !(d.segments || []).some((s) => s._isWatch))) return;
+    if (isWatchScope && (!d || !(d.segments || []).some((s) => s._isWatch || s._isTrack))) return;
     state._lastWatchFetch = now;
     try {
       const res = await fetchBars(code, period, 800);
       const bars = res.bars || [];
       state._currentBars = { code, period, bars };
       computeMACD(bars);
-      // 只要该(证券,周期)存在盯盘段即更新（对齐桌面每帧逻辑），不限 detail 盯盘 tab
+      // 更新盯盘段（A0 级别使用复杂算法）和追踪段（非 A0 级别使用简化算法）
       const hasWatch = !!(d && (d.segments || []).some((s) => s._isWatch));
+      const hasTrack = !!(d && (d.segments || []).some((s) => s._isTrack));
       if (isWatchScope) {
         if (hasWatch) {
           const u = updateWatchSegments(code, period, bars, false);
           if (u.changed || u.structural) refreshPeriodDetailWithoutFetch(code, period);
+        } else if (hasTrack) {
+          const u = updateTrackSegments(code, period, bars);
+          if (u.changed) refreshPeriodDetailWithoutFetch(code, period);
         } else {
           refreshPeriodDetailWithoutFetch(code, period);
         }
-      } else if (hasWatch && sheetOpen) {
-        const u = updateWatchSegments(code, period, bars, false);
-        if (u.changed || u.structural) refreshKlineSheet();
+      } else if ((hasWatch || hasTrack) && sheetOpen) {
+        if (hasWatch) {
+          const u = updateWatchSegments(code, period, bars, false);
+          if (u.changed || u.structural) refreshKlineSheet();
+        }
+        if (hasTrack) {
+          const u = updateTrackSegments(code, period, bars);
+          if (u.changed) refreshKlineSheet();
+        }
       }
       if (sheetOpen) refreshKlineSheet();
     } catch {}
@@ -2850,6 +2922,100 @@ async function addWatchSegment(code, period, sourceSegId) {
   } else if (made.reason === 'narrow') {
     toast('已收紧前段，继续盯盘');
   }
+}
+
+// ===== 追踪段：非 A0 级别的简化盯盘逻辑 =====
+
+// 降级追踪段为普通段（清除追踪标记，保留为普通段）
+function degradeTrack(seg) {
+  delete seg._isTrack;
+  delete seg._trackDirection;
+}
+
+// 从源段 sourceSeg 的终点创建追踪段（非 A0 简化版）。
+// 追踪段起点连接源段终点，终点 = 当前行情最低点(向下段)或最高点(向上段)。
+// 返回 { created, seg }。
+function createTrackFromSource(sourceSeg, bars, period) {
+  const right = segRight(sourceSeg);
+  if (!right) return { created: false };
+  const startIdx = findBarIdxByTime(bars, right.time);
+  if (startIdx < 0 || startIdx >= bars.length - 1) return { created: false };
+  const direction = oppositeDir(sourceSeg.direction || segDirection(sourceSeg));
+  const lastBar = bars[bars.length - 1];
+  // 终点 = 向下段取最低价，向上段取最高价
+  const endPrice = direction === 'down' ? lastBar.low : lastBar.high;
+  const seg = {
+    id: 't_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6),
+    kind: 'segment',
+    period,
+    direction,
+    start: { time: Math.floor(right.time), price: right.price },
+    end: { time: Math.floor(lastBar.time), price: endPrice },
+    _isTrack: true,
+    _trackSourceId: sourceSeg.id,
+  };
+  return { created: true, seg };
+}
+
+// 追踪按钮入口：从某最近段创建追踪段
+async function addTrackSegment(code, period, sourceSegId) {
+  const sec = state.securities.find((s) => s.code === code);
+  if (!sec) return;
+  let bars;
+  try {
+    bars = await ensureBars(code, period);
+  } catch (e) {
+    alert('行情数据加载失败，请检查网络后重试');
+    return;
+  }
+  const d = sec.drawings[period] || { segments: [], zhongshus: [] };
+  const segs = d.segments || [];
+  const sourceSeg = segs.find((s) => s.id === sourceSegId);
+  if (!sourceSeg) return;
+  if (segRight(sourceSeg) && findBarIdxByTime(bars, segRight(sourceSeg).time) < 0) {
+    toast('未找到起点对应K线');
+    return;
+  }
+  // 同一源段只能有一个追踪段，先移除旧的
+  for (let i = segs.length - 1; i >= 0; i--) {
+    const s = segs[i];
+    if (s !== sourceSeg && s._isTrack && s._trackSourceId === sourceSeg.id) segs.splice(i, 1);
+  }
+  const made = createTrackFromSource(sourceSeg, bars, period);
+  if (made.created) {
+    segs.push(made.seg);
+  }
+  sec.drawings[period] = d;
+  saveLocalEdits(code, sec.drawings);
+  refreshPeriodDetailWithoutFetch(code, period);
+  if (!made.created) {
+    toast('行情不足，暂不生成追踪段');
+  }
+}
+
+// 更新非 A0 周期追踪段终点（简单取当前行情最高/最低价）
+function updateTrackSegments(code, period, bars) {
+  const sec = state.securities.find((s) => s.code === code);
+  if (!sec) return { changed: false };
+  const d = sec.drawings[period];
+  if (!d) return { changed: false };
+  if (!bars || !bars.length) return { changed: false };
+  const segs = d.segments || [];
+  let changed = false;
+  for (const s of segs) {
+    if (!s._isTrack) continue;
+    const lastBar = bars[bars.length - 1];
+    const direction = s.direction || segDirection(s);
+    const newEndPrice = direction === 'down' ? lastBar.low : lastBar.high;
+    if (s.end.price !== newEndPrice || s.end.time !== Math.floor(lastBar.time)) {
+      s.end = { time: Math.floor(lastBar.time), price: newEndPrice };
+      changed = true;
+    }
+  }
+  if (changed) {
+    d.segments = segs;
+  }
+  return { changed };
 }
 
 // ========== 底部 tabbar 视口适配（修复小米等安卓机页面切换时 tabbar 被遮挡/裁切） ==========

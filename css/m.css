@@ -391,6 +391,7 @@ body.search-header-fixed .search-edge-guard { display: block; }
 
 /* 盯盘段卡片标记 */
 .watch-card { position: relative; }
+.track-card { position: relative; }
 .watch-badge {
   position: absolute;
   top: 8px;
@@ -405,6 +406,20 @@ body.search-header-fixed .search-edge-guard { display: block; }
   pointer-events: none;
 }
 .watch-badge svg { display: block; }
+.track-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  color: var(--wx-blue);
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+  pointer-events: none;
+}
+.track-badge svg { display: block; }
 
 .card-avatar-wrap {
   display: flex;
@@ -443,6 +458,12 @@ body.search-header-fixed .search-edge-guard { display: block; }
 .watch-ring-fill {
   fill: none;
   stroke: var(--wx-accent);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+.track-ring-fill {
+  fill: none;
+  stroke: var(--wx-blue);
   stroke-width: 3;
   stroke-linecap: round;
 }
@@ -926,6 +947,18 @@ body.search-header-fixed .search-edge-guard { display: block; }
 .period-row-info { display: flex; flex-direction: column; gap: 2px; }
 .period-row-name { font-size: 16px; font-weight: 600; color: var(--wx-txt); }
 .period-row-meta { font-size: 13px; color: var(--wx-muted); }
+.period-row-tag {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 4px;
+  margin-left: 6px;
+  vertical-align: middle;
+  line-height: 1.4;
+}
+.period-row-tag.a0 { color: #fff; background: var(--wx-accent); }
+.period-row-tag.track { color: var(--wx-blue); background: #eef2ff; border: 1px solid var(--wx-blue); }
 
 /* 周期详情：外层无大卡片，内部用 margin 控制卡片间距 */
 #period-detail {

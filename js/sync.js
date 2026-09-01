@@ -64,6 +64,10 @@ async function tryLoadOne(code, period) {
         zhongshus: json.zhongshus || [],
         exportedAt: json.exportedAt || 0,
       };
+      // 包含 A0 级别（桌面端导出时附带的证券 A0 级别）
+      if (json.a0Period) {
+        result.a0Period = json.a0Period;
+      }
       // 包含多方案信息
       if (json.presets && Array.isArray(json.presets) && json.presets.length > 0) {
         result.presets = json.presets;

@@ -84,6 +84,11 @@ export function fromDrawings(drawings) {
         seg._isWatch = true;
         watchSegs.push(seg);
       }
+      // 追踪段（非 A0 简化盯盘）：保留标记
+      if (d._isTrack) {
+        seg._isTrack = true;
+        seg._trackSourceId = d._trackSourceId || seg.id;
+      }
       segments.push(seg);
       segById[seg.id] = seg;
       endToId[`${seg.end.time}|${seg.end.price}`] = seg.id;
@@ -152,6 +157,11 @@ export function toDrawings(segments, zhongshus) {
     if (s._isWatch) {
       segOut._isWatch = true;
       if (s._watchSourceId) segOut._watchSourceId = s._watchSourceId;
+    }
+    // 保留追踪段标记
+    if (s._isTrack) {
+      segOut._isTrack = true;
+      segOut._trackSourceId = s._trackSourceId || segOut.id;
     }
     out.push(segOut);
   }
