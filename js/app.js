@@ -2,8 +2,8 @@
 // 注意：所有 import 路径均带版本号，每次发布新版本时请同步修改 html/js/sw 中的版本号
 import { fetchBars, fetchRealtimeMulti, formatTime, formatPrice, isETF, resolveCode } from './fetcher.js?v=20260725i';
 import { computeMACD } from './macd.js?v=20260725f';
-import { segmentStrength, detectStrengthIndicators, detectOneBuySell, detectTwoAndThreeBuySell, computeZhongshuStrength, detectZhongshu } from './algo.js?v=20260725f';
-import { renderSegments } from './table.js?v=20260725v';
+import { segmentStrength, detectStrengthIndicators, detectOneBuySell, detectTwoAndThreeBuySell, computeZhongshuStrength, detectZhongshu } from './algo.js?v=20260902b';
+import { renderSegments } from './table.js?v=20260902a';
 import { renderKlineChart, sliceSegmentBars, renderIntradayChart } from './klinechart.js?v=20260814b';
 import { loadStaticData } from './sync.js?v=20260725g';
 import { openEditor } from './editor.js?v=20260830b';
@@ -180,11 +180,69 @@ function syncPresetsToStorage(drawings) {
   }
 }
 
+// 落盘瘦身：导出数据里每个周期附带的最多 800 根 bars 从未被读取（画图/MACD 一律用实时拉取的
+// state._currentBars），却让单次存档体积膨胀 2~3 倍并逼近 localStorage 5MB 配额。
+// 仅在序列化时剔除，内存中的 drawings 保持不变（刷新后仍由 mergeDrawings 从静态数据补回）。
+function stripBarsForStorage(drawings) {
+  if (!drawings || typeof drawings !== 'object') return drawings;
+  const out = {};
+  for (const p of Object.keys(drawings)) {
+    const d = drawings[p];
+    if (!d || typeof d !== 'object' || !('bars' in d)) { out[p] = d; continue; }
+    const copy = { ...d };
+    delete copy.bars;
+    out[p] = copy;
+  }
+  return out;
+}
+
+// 存档失败提示节流：同一会话内最多 60s 提示一次，避免自动存档连续刷屏
+let _saveFailToastAt = 0;
+
 function saveLocalEdits(code, drawings) {
   try {
     syncPresetsToStorage(drawings);
-    localStorage.setItem(secStoreKey(code), JSON.stringify({ drawings, savedAt: Date.now() }));
-  } catch {}
+    localStorage.setItem(secStoreKey(code), JSON.stringify({
+      drawings: stripBarsForStorage(drawings),
+      savedAt: Date.now(),
+    }));
+    return true;
+  } catch (e) {
+    // 常见为 QuotaExceededError：此前被静默吞掉，表现为「盯盘段刷新即丢」且毫无提示
+    console.warn('[chan-m] 本地存档失败', code, e);
+    const now = Date.now();
+    if (now - _saveFailToastAt > 60000) {
+      _saveFailToastAt = now;
+      try { toast('本地存档失败（存储空间不足？），最新画线可能不会被保存'); } catch (_) {}
+    }
+    return false;
+  }
+}
+
+// ===== 自动存档 =====
+// 盯盘段/追踪段由程序自动生成，此前全程只改内存，刷新即丢失（必须最后一次手动操作才顺带落盘）。
+// 生成是逐段串行推进的，一次续接/回修内可能连续多次变更，用 1s 防抖合并成一次写盘；
+// 页面切后台/卸载时由 flushAutoSave() 立即补写，避免防抖窗口内的改动丢失。
+const AUTO_SAVE_DEBOUNCE_MS = 1000;
+const _autoSaveTimers = Object.create(null);
+
+function scheduleAutoSave(code) {
+  if (!code) return;
+  if (_autoSaveTimers[code]) clearTimeout(_autoSaveTimers[code]);
+  _autoSaveTimers[code] = setTimeout(() => flushAutoSave(code), AUTO_SAVE_DEBOUNCE_MS);
+}
+
+// 立即写盘：code 为空则补写所有待写证券
+function flushAutoSave(code) {
+  const codes = code ? [code] : Object.keys(_autoSaveTimers);
+  for (const c of codes) {
+    if (_autoSaveTimers[c]) {
+      clearTimeout(_autoSaveTimers[c]);
+      delete _autoSaveTimers[c];
+    }
+    const sec = state.securities.find((s) => s.code === c);
+    if (sec) saveLocalEdits(c, sec.drawings);
+  }
 }
 
 function loadAlerts() {
@@ -282,7 +340,12 @@ function mergeDrawings(staticData, code) {
     if (!sd) { result[p] = ld; continue; }
     if (!ld) { result[p] = sd; continue; }
     const sdTime = sd.exportedAt || 0;
-    const ldTime = local.savedAt || 0;
+    // 本地快照基于的「导出基线」= ld.exportedAt（落盘时原样带过来的静态导出时间戳）。
+    // 注意不能再用 local.savedAt 比大小：盯盘段会自动存档，savedAt 会被不断刷新，
+    // 那样 PC 端重新导出（exportedAt 变新）将永远盖不过手机端的本地快照，新导出就显示不出来。
+    // 正确语义：本地编辑是叠加在某次导出基线上的补丁，只有基线换了（更新的导出）补丁才作废。
+    // 老存档可能没带基线时间，此时退回旧的 savedAt 判断，宁可保留本地编辑也不静默丢弃。
+    const ldTime = ld.exportedAt || local.savedAt || 0;
     // 本地编辑优先，但 bars（来自导出）只存在于静态数据，需保留以计算 MACD 力度
     // 同时保留方案信息（presets）来自静态数据
     result[p] = ldTime >= sdTime
@@ -1058,6 +1121,10 @@ function switchPreset(code, dir) {
 }
 
 // ========== 长按周期行 → K 线图 底部抽屉（左右滑切换周期） ==========
+// 当前打开的周期弹窗视图：{ code, periods, idx, renderPage, updateTitle }
+// 供 15s 轮询定位「正在看的周期」，并在段数据变化后重画（周期列表页本身没有任何刷新入口）。
+let _miniView = null;
+
 async function openMiniSheet(code, period) {
   const sec = state.securities.find((s) => s.code === code);
   if (!sec) return;
@@ -1065,6 +1132,7 @@ async function openMiniSheet(code, period) {
   const name = sec.name || rt?.name || code;
   const periods = sec.periods || [];
   const currentIdx = Math.max(0, periods.indexOf(period));
+  _miniView = { code, periods, idx: currentIdx, renderPage: null, updateTitle: null };
 
   let backdrop = document.getElementById('mini-sheet-backdrop');
   if (!backdrop) {
@@ -1130,19 +1198,22 @@ async function openMiniSheet(code, period) {
     if (!p || !page || page.dataset.rendered) return;
     page.dataset.rendered = '1';
 
+    // 辅助周期（15m/60m）的段是主周期（5m/30m）刻度，取数必须回落主周期，
+    // 否则段端点 time 在 15m/60m bars 里定位不准（与段卡片 K 线弹窗保持一致）。
+    const fetchPeriod = AUX_TO_MAIN[p] || p;
     let bars = [];
     const cb = state._currentBars;
-    if (cb && cb.code === code && cb.period === p && cb.bars && cb.bars.length) {
+    if (cb && cb.code === code && cb.period === fetchPeriod && cb.bars && cb.bars.length) {
       bars = cb.bars;
     } else {
       try {
-        const res = await fetchBars(code, p, 800);
+        const res = await fetchBars(code, fetchPeriod, 800);
         bars = res.bars || [];
         computeMACD(bars);
         // 仅当全局缓存仍是本周期时才写入，避免预渲染相邻周期（如 1m）覆盖正在使用的其它周期数据，
         // 否则会污染详情页 K 线弹层所依赖的全局 _currentBars。
-        if (!state._currentBars || state._currentBars.period === p) {
-          state._currentBars = { code, period: p, bars };
+        if (!state._currentBars || state._currentBars.period === fetchPeriod) {
+          state._currentBars = { code, period: fetchPeriod, bars };
         }
       } catch {
         bars = [];
@@ -1207,6 +1278,7 @@ async function openMiniSheet(code, period) {
       if (!pages) return;
       const pageWidth = pages.clientWidth || 1;
       const idx = Math.max(0, Math.min(periods.length - 1, Math.round(pages.scrollLeft / pageWidth)));
+      if (_miniView) _miniView.idx = idx;
       updateTitle(idx);
       renderPage(idx);
       if (idx > 0) renderPage(idx - 1);
@@ -1224,6 +1296,11 @@ async function openMiniSheet(code, period) {
   sheet.classList.add('show');
   document.body.style.overflow = 'hidden';
 
+  if (_miniView) {
+    _miniView.renderPage = renderPage;
+    _miniView.updateTitle = updateTitle;
+  }
+
   // 显示后直接定位到当前周期（禁用平滑滚动，避免从最低级别滑过来晃眼睛）
   requestAnimationFrame(() => {
     const pageWidth = pages.clientWidth || 1;
@@ -1238,6 +1315,20 @@ async function openMiniSheet(code, period) {
       if (currentIdx < periods.length - 1) renderPage(currentIdx + 1);
     });
   });
+
+  // 打开时先按最新 K 线重算一次当前周期的盯盘段/追踪段终点：
+  // 周期列表页没有任何刷新入口（15s 轮询在 view==='periods' 时原本直接 return），
+  // 不补这一步，弹窗画的一直是 App 启动或上次进详情页那一刻的段快照。
+  // 先按内存里的旧数据秒开，取数完成后若段有变化再重画。
+  refreshSegmentsForPeriod(code, period).then((changed) => {
+    if (!changed || !_miniView || _miniView.code !== code) return;
+    _miniView.updateTitle?.(_miniView.idx);
+    repaintMiniSheet();
+    // 段数/中枢数可能已变，同步刷新弹窗背后的周期列表
+    if (state.view === 'periods' && state.selectedCode === code) {
+      renderPeriodList(code, { keepHeader: true });
+    }
+  });
 }
 
 function closeMiniSheet() {
@@ -1246,8 +1337,63 @@ function closeMiniSheet() {
   if (backdrop) { backdrop.classList.remove('show'); backdrop.style.opacity = ''; backdrop.style.transition = ''; }
   if (sheet) { sheet.classList.remove('show'); sheet.style.transform = ''; sheet.style.transition = ''; }
   document.body.style.overflow = '';
+  _miniView = null;
 }
 window.closeMiniSheet = closeMiniSheet;
+
+// 按最新 K 线重算某周期的盯盘段（_isWatch）与追踪段（_isTrack）终点，返回是否有数据变化。
+// 辅助周期回落主周期取数，保证段端点 time 能在 bars 中精确定位（否则盯盘段会被误判为
+// 「起点不在 bars 中」而降级成普通段）。
+async function refreshSegmentsForPeriod(code, period) {
+  const sec = state.securities.find((s) => s.code === code);
+  const d = sec?.drawings?.[period];
+  if (!d) return false;
+  const segs = d.segments || [];
+  const hasWatch = segs.some((s) => s._isWatch);
+  const hasTrack = segs.some((s) => s._isTrack);
+  if (!hasWatch && !hasTrack) return false;
+  const fetchPeriod = AUX_TO_MAIN[period] || period;
+  try {
+    const res = await fetchBars(code, fetchPeriod, 800);
+    const bars = res.bars || [];
+    if (!bars.length) return false;
+    computeMACD(bars);
+    if (!state._currentBars || state._currentBars.period === fetchPeriod) {
+      state._currentBars = { code, period: fetchPeriod, bars };
+    }
+    let changed = false;
+    if (hasWatch) {
+      const u = updateWatchSegments(code, period, bars, false);
+      changed = !!(u.changed || u.structural);
+    }
+    if (hasTrack) {
+      const u = updateTrackSegments(code, period, bars);
+      changed = changed || !!u.changed;
+    }
+    return changed;
+  } catch {
+    return false;
+  }
+}
+
+// 周期 K 线弹窗：段数据变化后重画当前页，并让相邻页下次滚动到时重新渲染（避免停留在旧快照）
+function repaintMiniSheet() {
+  if (!_miniView) return;
+  const sheet = document.getElementById('mini-sheet');
+  if (!sheet || !sheet.classList.contains('show')) return;
+  const pages = document.getElementById('period-sheet-pages');
+  if (!pages) return;
+  // 用户正在看十字坐标时不重画，避免打断当前读数
+  if (pages.classList.contains('cross-lock')) return;
+  [_miniView.idx, _miniView.idx - 1, _miniView.idx + 1].forEach((i) => {
+    const p = _miniView.periods[i];
+    if (!p) return;
+    const el = pages.querySelector(`.period-sheet-page[data-period="${p}"]`);
+    if (el) delete el.dataset.rendered;
+  });
+  _miniView.renderPage?.(_miniView.idx);
+}
+window.repaintMiniSheet = repaintMiniSheet;
 
 // 长按周期行：按住 480ms 直接下拉出宽简图；移动超过 10px 视为滑动/滚动，取消
 function attachPeriodRowLongPress(row, code, period) {
@@ -1338,14 +1484,19 @@ async function loadAndRenderPeriodDetail(code, period) {
   // 更高周期最新一段终点：用于在低级别周期隐藏过早的段卡片（聚焦到最新一段覆盖的交易日）
   const higherPeriod = getHigherPeriod(period, sec.periods || []);
   const higherSegments = (higherPeriod && sec.drawings[higherPeriod]?.segments) || [];
+  // 辅助周期（15m/60m）的段是主周期（5m/30m）刻度，取数必须回落主周期：
+  // 否则段起点 time 在 15m/60m bars 里找不到，updateWatchSegments 会把盯盘段误判为
+  // 「起点不在 bars 中」而降级成普通段，并被 scheduleAutoSave 落盘成永久改动。
+  const fetchPeriod = AUX_TO_MAIN[period] || period;
 
   try {
-    const curRes = await fetchBars(code, period, 800);
+    const curRes = await fetchBars(code, fetchPeriod, 800);
     const bars = curRes.bars || [];
-    state._currentBars = { code, period, bars };
+    state._currentBars = { code, period: fetchPeriod, bars };
     computeMACD(bars);
-    // 先根据最新 K 线更新盯盘段终点（所有周期的最后一段均支持盯盘），再重新构建渲染分组
+    // 先根据最新 K 线更新盯盘段终点（A0 级别）与追踪段终点（非 A0 级别），再重新构建渲染分组
     updateWatchSegments(code, period, bars, false);
+    updateTrackSegments(code, period, bars);
     const d = sec.drawings[period] || { segments: [], zhongshus: [] };
     const group = { period, label: periodLabel(period), segments: [...d.segments], zhongshus: [...d.zhongshus], loaded: false, error: null };
     computeStrengths(bars, group.segments, group.zhongshus);
@@ -2503,68 +2654,75 @@ function watchInterval(period) {
   return (period === 'day' || period === 'week') ? 60000 : 15000;
 }
 
-// 详情页：定时拉取最新 K 线并更新盯盘段终点（所有周期），仅在盯盘段发生变化时重绘。
+// 盯盘实时刷新：定时拉取最新 K 线并更新盯盘段/追踪段终点，仅在数据变化时重绘。
 // 定时器固定 15s 触发，但按当前周期做时间戳节流：日/周线实际约 60s 才真正发请求。
 function startDetailRealtime() {
   if (state.rtTimers._detail) return;
   state.rtTimers._detail = setInterval(async () => {
     if (document.hidden) return;
-    // 两种场景触发刷新：
-    //  1) 详情页盯盘 tab（需有盯盘段才更新段终点）
-    //  2) 周期列表页/详情页长按弹出的 K 线窗口（_klineView 存在且已展开）
+    // 三种场景触发刷新：
+    //  1) 详情页盯盘 tab（段卡片页，需有盯盘段/追踪段才更新段终点）
+    //  2) 段卡片页长按弹出的 K 线窗口（_klineView 存在且已展开）
+    //  3) 周期列表页长按弹出的周期 K 线窗口（_miniView 存在且已展开）
     // 周期列表页的 state.view 为 'periods'，原本的硬门槛会让弹窗在交易时段完全不刷新，
     // 只有离开再进 detail 才更新，故在此解耦弹窗刷新与 detail 视图。
-    const sheetOpen = !!_klineView && document.getElementById('kline-sheet-backdrop')?.classList.contains('show');
+    const klineOpen = !!_klineView && document.getElementById('kline-sheet-backdrop')?.classList.contains('show');
+    const miniOpen = !!_miniView
+      && !!document.getElementById('mini-sheet')?.classList.contains('show')
+      && !!document.getElementById('mini-sheet-backdrop')?.classList.contains('show');
     let code, period, isWatchScope = false;
     if (state.view === 'detail' && state.activeTab === 'dingpan') {
       code = state.selectedCode;
       period = state.selectedPeriod;
       isWatchScope = true;
-    } else if (sheetOpen) {
+    } else if (klineOpen) {
       code = _klineView.code;
-      period = _klineView.period; // 用于 drawings[period] 找 watch 段
-      // 取数用主周期（辅助周期回落），保证段 time 与 K 线 time 对齐
-      if (_klineView.fetchPeriod) period = _klineView.fetchPeriod;
+      period = _klineView.period; // 段数据键：辅助周期保留自己的 drawings 副本
+    } else if (miniOpen) {
+      code = _miniView.code;
+      period = _miniView.periods[_miniView.idx]; // 正在看的那一页对应的周期
+      if (!period) return;
     } else {
       return;
     }
+    // 取数周期：辅助周期（15m/60m）回落主周期（5m/30m），保证段 time 与 K 线 time 对齐
+    const fetchPeriod = AUX_TO_MAIN[period] || period;
     const now = Date.now();
     // 按周期节流：未到该周期的刷新间隔则跳过本次网络请求
-    if (now - (state._lastWatchFetch || 0) < watchInterval(period) - 200) return;
+    if (now - (state._lastWatchFetch || 0) < watchInterval(fetchPeriod) - 200) return;
     const sec = state.securities.find((s) => s.code === code);
     if (!sec) return;
     const d = sec.drawings[period];
-    if (isWatchScope && (!d || !(d.segments || []).some((s) => s._isWatch || s._isTrack))) return;
+    // 更新盯盘段（A0 级别使用复杂算法）和追踪段（非 A0 级别使用简化算法）
+    const hasWatch = !!(d && (d.segments || []).some((s) => s._isWatch));
+    const hasTrack = !!(d && (d.segments || []).some((s) => s._isTrack));
+    if (!hasWatch && !hasTrack) {
+      // 段弹窗仍要拉最新 K 线让蜡烛图跟上行情；详情页仍要用新 bars 重算力度展示。
+      // 只有周期弹窗在没有盯盘段/追踪段时本次无需请求。
+      if (!klineOpen && !isWatchScope) return;
+    }
     state._lastWatchFetch = now;
     try {
-      const res = await fetchBars(code, period, 800);
+      const res = await fetchBars(code, fetchPeriod, 800);
       const bars = res.bars || [];
-      state._currentBars = { code, period, bars };
+      state._currentBars = { code, period: fetchPeriod, bars };
       computeMACD(bars);
-      // 更新盯盘段（A0 级别使用复杂算法）和追踪段（非 A0 级别使用简化算法）
-      const hasWatch = !!(d && (d.segments || []).some((s) => s._isWatch));
-      const hasTrack = !!(d && (d.segments || []).some((s) => s._isTrack));
-      if (isWatchScope) {
-        if (hasWatch) {
-          const u = updateWatchSegments(code, period, bars, false);
-          if (u.changed || u.structural) refreshPeriodDetailWithoutFetch(code, period);
-        } else if (hasTrack) {
-          const u = updateTrackSegments(code, period, bars);
-          if (u.changed) refreshPeriodDetailWithoutFetch(code, period);
-        } else {
-          refreshPeriodDetailWithoutFetch(code, period);
-        }
-      } else if ((hasWatch || hasTrack) && sheetOpen) {
-        if (hasWatch) {
-          const u = updateWatchSegments(code, period, bars, false);
-          if (u.changed || u.structural) refreshKlineSheet();
-        }
-        if (hasTrack) {
-          const u = updateTrackSegments(code, period, bars);
-          if (u.changed) refreshKlineSheet();
-        }
+      let changed = false;
+      if (hasWatch) {
+        const u = updateWatchSegments(code, period, bars, false);
+        changed = !!(u.changed || u.structural);
       }
-      if (sheetOpen) refreshKlineSheet();
+      if (hasTrack) {
+        const u = updateTrackSegments(code, period, bars);
+        changed = changed || !!u.changed;
+      }
+      // 详情页：段数据变化、或没有盯盘段/追踪段（需用新 bars 重算力度展示）时才重绘
+      if (isWatchScope && (changed || (!hasWatch && !hasTrack))) refreshPeriodDetailWithoutFetch(code, period);
+      if (klineOpen) refreshKlineSheet();
+      if (miniOpen && changed) {
+        _miniView.updateTitle?.(_miniView.idx);
+        repaintMiniSheet();
+      }
     } catch {}
   }, 15000);
 }
@@ -2802,6 +2960,8 @@ function updateWatchSegments(code, period, bars, refresh = true) {
       d.segments = segs;
       if (refresh) refreshPeriodDetailWithoutFetch(code, period);
     }
+    // 盯盘段被降级为普通段也是数据变更，需落盘，否则刷新后回到「仍是盯盘段」的旧快照
+    if (changed || structural) scheduleAutoSave(code);
     return { changed: changed, structural: structural };
   }
   // 3) 手动接管（编辑中）暂停自动延伸
@@ -2810,6 +2970,7 @@ function updateWatchSegments(code, period, bars, refresh = true) {
       d.segments = segs;
       if (refresh) refreshPeriodDetailWithoutFetch(code, period);
     }
+    if (changed || structural) scheduleAutoSave(code);
     return { changed: changed, structural: structural };
   }
   const startIdx = findBarIdxByTime(bars, activeWatch.start.time);
@@ -2891,6 +3052,8 @@ function updateWatchSegments(code, period, bars, refresh = true) {
     d.segments = segs;
     if (refresh) refreshPeriodDetailWithoutFetch(code, period);
   }
+  // 终点延伸 / 自动续接 / 自回修产生的段一律自动落盘（此前只改内存，刷新即丢）
+  if (changed || structural) scheduleAutoSave(code);
   return { changed: changed || structural, structural: structural };
 }
 
@@ -2932,8 +3095,28 @@ function degradeTrack(seg) {
   delete seg._trackDirection;
 }
 
+// 追踪段终点：取 [起点K线, 最新K线] 区间内的极值（向下段取最低价，向上段取最高价）。
+// 多根 K 线同价时取最早出现的那根，避免终点在等价点之间左右跳动。
+// 返回 { time, price } 或 null。
+function trackExtremeEnd(bars, startIdx, direction) {
+  if (!bars || !bars.length) return null;
+  const from = Math.max(0, Math.min(startIdx || 0, bars.length - 1));
+  let bestIdx = -1;
+  let bestPrice = NaN;
+  for (let i = from; i < bars.length; i++) {
+    const p = direction === 'down' ? bars[i].low : bars[i].high;
+    if (!Number.isFinite(p)) continue;
+    if (bestIdx < 0 || (direction === 'down' ? p < bestPrice : p > bestPrice)) {
+      bestIdx = i;
+      bestPrice = p;
+    }
+  }
+  if (bestIdx < 0) return null;
+  return { time: Math.floor(bars[bestIdx].time), price: bestPrice };
+}
+
 // 从源段 sourceSeg 的终点创建追踪段（非 A0 简化版）。
-// 追踪段起点连接源段终点，终点 = 当前行情最低点(向下段)或最高点(向上段)。
+// 追踪段起点连接源段终点，终点 = [起点K线, 最新K线] 区间极值(向下段最低价/向上段最高价)。
 // 返回 { created, seg }。
 function createTrackFromSource(sourceSeg, bars, period) {
   const right = segRight(sourceSeg);
@@ -2941,16 +3124,15 @@ function createTrackFromSource(sourceSeg, bars, period) {
   const startIdx = findBarIdxByTime(bars, right.time);
   if (startIdx < 0 || startIdx >= bars.length - 1) return { created: false };
   const direction = oppositeDir(sourceSeg.direction || segDirection(sourceSeg));
-  const lastBar = bars[bars.length - 1];
-  // 终点 = 向下段取最低价，向上段取最高价
-  const endPrice = direction === 'down' ? lastBar.low : lastBar.high;
+  const end = trackExtremeEnd(bars, startIdx, direction);
+  if (!end) return { created: false };
   const seg = {
     id: 't_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6),
     kind: 'segment',
     period,
     direction,
     start: { time: Math.floor(right.time), price: right.price },
-    end: { time: Math.floor(lastBar.time), price: endPrice },
+    end,
     _isTrack: true,
     _trackSourceId: sourceSeg.id,
   };
@@ -2993,7 +3175,7 @@ async function addTrackSegment(code, period, sourceSegId) {
   }
 }
 
-// 更新非 A0 周期追踪段终点（简单取当前行情最高/最低价）
+// 更新非 A0 周期追踪段终点（取 [起点K线, 最新K线] 区间的极值，回撤不再缩短已追踪到的极值）
 function updateTrackSegments(code, period, bars) {
   const sec = state.securities.find((s) => s.code === code);
   if (!sec) return { changed: false };
@@ -3004,16 +3186,19 @@ function updateTrackSegments(code, period, bars) {
   let changed = false;
   for (const s of segs) {
     if (!s._isTrack) continue;
-    const lastBar = bars[bars.length - 1];
     const direction = s.direction || segDirection(s);
-    const newEndPrice = direction === 'down' ? lastBar.low : lastBar.high;
-    if (s.end.price !== newEndPrice || s.end.time !== Math.floor(lastBar.time)) {
-      s.end = { time: Math.floor(lastBar.time), price: newEndPrice };
+    let startIdx = s.start ? findBarIdxByTime(bars, s.start.time) : -1;
+    if (startIdx < 0) startIdx = 0; // 起点 K 线已被挤出窗口时退化为整段区间
+    const end = trackExtremeEnd(bars, startIdx, direction);
+    if (!end) continue;
+    if (s.end.price !== end.price || s.end.time !== end.time) {
+      s.end = { time: end.time, price: end.price };
       changed = true;
     }
   }
   if (changed) {
     d.segments = segs;
+    scheduleAutoSave(code); // 追踪段终点同样由程序自动延伸，需落盘
   }
   return { changed };
 }
@@ -4553,6 +4738,10 @@ function init() {
     }
   }, { passive: false });
   document.addEventListener('touchend', () => { _swipeOn = false; }, { passive: true });
+
+  // 自动存档有 1s 防抖窗口：切后台/关闭页面时立即补写，避免最后一次盯盘续接结果丢失
+  window.addEventListener('pagehide', () => flushAutoSave());
+  document.addEventListener('visibilitychange', () => { if (document.hidden) flushAutoSave(); });
 
   window.__CHANM_LOADED__ = true;
 }

@@ -161,7 +161,7 @@ export function detectStrengthIndicators(segments, zhongshus) {
 
   const aStr = a._strength || { macdArea: 0 };
   const isWeaker = Math.abs(bStr.macdArea) < Math.abs(aStr.macdArea);
-  b._strengthIndicator = isWeaker ? '力度减弱' : '力度增强';
+  b._strengthIndicator = isWeaker ? '减弱' : '增强';
 }
 
 // 中枢进出段力度比较
@@ -295,12 +295,12 @@ export function detectOneBuySell(segments, zhongshus) {
     if (weakerLeave) {
       if (leaveSeg.direction === 'down') {
         leaveSeg._buySell = '1B';
-        leaveSeg._bsLabel = '一类买点';
+        leaveSeg._bsLabel = '一买';
         leaveSeg._bsColor = '#07c160';
         leaveSeg._bsZsId = zs.id;
       } else if (leaveSeg.direction === 'up') {
         leaveSeg._buySell = '1S';
-        leaveSeg._bsLabel = '一类卖点';
+        leaveSeg._bsLabel = '一卖';
         leaveSeg._bsColor = '#fa5151';
         leaveSeg._bsZsId = zs.id;
       }
@@ -463,10 +463,10 @@ export function detectTwoAndThreeBuySell(segments, zhongshus) {
   });
 
   const labelMap = {
-    '1B': '一类买点', '1S': '一类卖点',
-    '2B': '二类买点', '2S': '二类卖点',
-    '3B': '三类买点', '3S': '三类卖点',
-    '2B/3B': '二类+三类买点', '2S/3S': '二类+三类卖点',
+    '1B': '一买', '1S': '一卖',
+    '2B': '二买', '2S': '二卖',
+    '3B': '三买', '3S': '三卖',
+    '2B/3B': '二买+三买', '2S/3S': '二卖+三卖',
   };
   for (const m of markers.values()) {
     const seg = segMap[m.segId];

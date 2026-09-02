@@ -66,8 +66,8 @@ function segCard(seg, idx, ctx, readonly, extraClass = '', reversed = false) {
   const avatarBg = dirUp ? 'var(--wx-red-soft)' : 'var(--wx-green-soft)';
   const avatarTxt = dirUp ? 'var(--wx-red)' : 'var(--wx-green)';
   const si = seg._strengthIndicator;
-  const siColor = si === '力度减弱' ? 'var(--wx-green)' : 'var(--wx-red)';
-  const siSoft = si === '力度减弱' ? 'var(--wx-green-soft)' : 'var(--wx-red-soft)';
+  const siColor = si === '减弱' ? 'var(--wx-green)' : 'var(--wx-red)';
+  const siSoft = si === '减弱' ? 'var(--wx-green-soft)' : 'var(--wx-red-soft)';
   const siHtml = si
     ? `<span class="badge" style="background:${siSoft};color:${siColor};border:1px solid ${siColor}">${si}</span>`
     : '';

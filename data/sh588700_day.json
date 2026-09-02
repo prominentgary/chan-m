@@ -1,75 +1,15 @@
 {
   "code": "sh588700",
   "period": "day",
-  "exportedAt": 1788280469440,
+  "exportedAt": 1788365616657,
   "segments": [],
-  "zhongshus": [
-    {
-      "id": "s_s7427tah",
-      "kind": "zhongshu",
-      "segmentIds": [
-        "s_uioptsm5",
-        "s_bk3h0wyz",
-        "s_qp58wh4j",
-        "s_g4ror8bx",
-        "s_mtdzga0e",
-        "s_1w55f7qx",
-        "s_bvvnnpx0",
-        "s_op5dp3v8",
-        "s_0w585ijp"
-      ],
-      "startTime": 1783267200,
-      "endTime": 1785686400,
-      "low": 0.979,
-      "high": 1.054,
-      "points": [
-        {
-          "time": 1783267200,
-          "price": 1.054
-        },
-        {
-          "time": 1785686400,
-          "price": 0.979
-        }
-      ]
-    }
-  ],
+  "zhongshus": [],
   "presets": [
     {
       "id": "default",
       "name": "",
       "segments": [],
-      "zhongshus": [
-        {
-          "id": "s_s7427tah",
-          "kind": "zhongshu",
-          "segmentIds": [
-            "s_uioptsm5",
-            "s_bk3h0wyz",
-            "s_qp58wh4j",
-            "s_g4ror8bx",
-            "s_mtdzga0e",
-            "s_1w55f7qx",
-            "s_bvvnnpx0",
-            "s_op5dp3v8",
-            "s_0w585ijp"
-          ],
-          "startTime": 1783267200,
-          "endTime": 1785686400,
-          "low": 0.979,
-          "high": 1.054,
-          "points": [
-            {
-              "time": 1783267200,
-              "price": 1.054
-            },
-            {
-              "time": 1785686400,
-              "price": 0.979
-            }
-          ]
-        }
-      ]
+      "zhongshus": []
     },
     {
       "id": "preset_ondd450u",
@@ -5255,6 +5195,14 @@
       "low": 0.984,
       "close": 0.989,
       "volume": 382307.0
+    },
+    {
+      "time": "2026-09-02",
+      "open": 0.993,
+      "high": 0.993,
+      "low": 0.975,
+      "close": 0.98,
+      "volume": 508990.0
     }
   ]
 }

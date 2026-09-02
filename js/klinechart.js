@@ -46,6 +46,17 @@ function fmtAxis(t, period) {
   return `${p2(d.getHours())}:${p2(d.getMinutes())}`;
 }
 
+// 十字光标读数：始终带日期（MM-DD），日/周/月级别也补齐两位，避免跨日误读
+function fmtCrossTime(t, period) {
+  if (!t) return '';
+  const d = new Date(t * 1000);
+  const p2 = (x) => String(x).padStart(2, '0');
+  if (period === 'day' || period === 'week' || period === 'month') {
+    return `${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+  }
+  return `${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
+}
+
 function drawLine(ctx, bars, get, xOf, yOf, color) {
   ctx.strokeStyle = color;
   ctx.lineWidth = 1.2;
@@ -489,7 +500,7 @@ function bindCrosshair(view, main, opts = {}) {
     ctx.fill();
     ctx.fillStyle = '#fff';
     ctx.fillText(priceTxt, px, py);
-    const timeTxt = fmtAxis(b.time, v.period);
+    const timeTxt = fmtCrossTime(b.time, v.period);
     ctx.textAlign = 'center';
     const timeW = ctx.measureText(timeTxt).width;
     const tx = Math.max(padL + 4 + timeW / 2, Math.min(padL + plotW - 4 - timeW / 2, cx));
@@ -502,7 +513,7 @@ function bindCrosshair(view, main, opts = {}) {
     const up = b.close >= b.open;
     const col = up ? colors.red : colors.green;
     const txt =
-      `${fmtAxis(b.time, v.period)}  开${b.open.toFixed(digits)} 高${b.high.toFixed(digits)} ` +
+      `${fmtCrossTime(b.time, v.period)}  开${b.open.toFixed(digits)} 高${b.high.toFixed(digits)} ` +
       `低${b.low.toFixed(digits)} 收${b.close.toFixed(digits)} 量${fmtVol(b.volume || 0)}`;
     ctx.font = '10px sans-serif';
     ctx.textBaseline = 'top';
@@ -709,7 +720,7 @@ function drawMainCross(meta, cross, colors, digits, period) {
   ctx.fillText(priceTxt, px, py);
 
   // 底部时间标签（主题色底 + 白字）
-  const timeTxt = fmtAxis(b.time, period);
+  const timeTxt = fmtCrossTime(b.time, period);
   ctx.textAlign = 'center';
   const timeW = ctx.measureText(timeTxt).width;
   const tx = Math.max(padL + 4 + timeW / 2, Math.min(padL + plotW - 4 - timeW / 2, cx));
@@ -724,7 +735,7 @@ function drawMainCross(meta, cross, colors, digits, period) {
   const up = b.close >= b.open;
   const col = up ? colors.red : colors.green;
   const txt =
-    `${fmtAxis(b.time, period)}  开${b.open.toFixed(digits)} 高${b.high.toFixed(digits)} ` +
+    `${fmtCrossTime(b.time, period)}  开${b.open.toFixed(digits)} 高${b.high.toFixed(digits)} ` +
     `低${b.low.toFixed(digits)} 收${b.close.toFixed(digits)} 量${fmtVol(b.volume || 0)}`;
   ctx.font = '10px sans-serif';
   ctx.textBaseline = 'top';
