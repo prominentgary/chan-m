@@ -97,9 +97,9 @@ function timeToX(bars, time, xOf) {
   return xOf(bars.length - 1);
 }
 
-// 中枢矩形（点线/实线由 themeLines 决定，位于 K 线之上、段连线之下）
+// 中枢矩形（颜色与中枢第一段相反：第一段跌→红，第一段涨→绿）
 function drawZhongshuRect(ctx, meta, zs, colors) {
-  const { bars, xOf, yOf, themeLines } = meta;
+  const { bars, xOf, yOf } = meta;
   if (!bars || !bars.length) return;
   const x1 = timeToX(bars, zs.startTime, xOf);
   const x2 = timeToX(bars, zs.endTime, xOf);
@@ -107,40 +107,38 @@ function drawZhongshuRect(ctx, meta, zs, colors) {
   const y1 = yOf(zs.high);
   const y2 = yOf(zs.low);
   ctx.save();
-  ctx.strokeStyle = colors.accent;
+  ctx.strokeStyle = zs.firstDir === 'up' ? colors.green : colors.red;
   ctx.lineWidth = 1.4;
-  if (!themeLines) ctx.setLineDash([3, 3]);
+  ctx.setLineDash([5, 3]);
   ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
   ctx.restore();
 }
 
-// 段起点→终点连线（点线/实线由 themeLines 决定，端点圆点同理），no 为可选段号
+// 段起点→终点连线（红涨绿跌，线型统一为虚线 + 端点圆点），no 为可选段号
 function drawSegConnector(ctx, meta, seg, colors, no) {
-  const { bars, xOf, yOf, themeLines } = meta;
+  const { bars, xOf, yOf } = meta;
   if (!bars || !bars.length) return;
   const x1 = timeToX(bars, seg.start.time, xOf);
   const x2 = timeToX(bars, seg.end.time, xOf);
   if (x1 < 0 || x2 < 0) return;
   const y1 = yOf(seg.start.price);
   const y2 = yOf(seg.end.price);
-  const col = themeLines ? colors.accent : (seg.direction === 'up' ? colors.red : colors.green);
+  const col = seg.direction === 'up' ? colors.red : colors.green;
   ctx.save();
   ctx.strokeStyle = col;
   ctx.lineWidth = 1.4;
-  if (!themeLines) ctx.setLineDash([2, 3]);
+  ctx.setLineDash([5, 3]);
   ctx.beginPath();
   ctx.moveTo(x1, y1);
   ctx.lineTo(x2, y2);
   ctx.stroke();
-  if (!themeLines) {
-    ctx.fillStyle = col;
-    ctx.beginPath();
-    ctx.arc(x1, y1, 2.6, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(x2, y2, 2.6, 0, Math.PI * 2);
-    ctx.fill();
-  }
+  ctx.fillStyle = col;
+  ctx.beginPath();
+  ctx.arc(x1, y1, 2.6, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(x2, y2, 2.6, 0, Math.PI * 2);
+  ctx.fill();
   // 段号标签：中点上方，方向色底 + 白字
   if (no) {
     const mx = (x1 + x2) / 2;
@@ -187,7 +185,6 @@ export function renderKlineChart(main, sub, bars, opts = {}) {
     segs: opts.segs || (opts.seg ? [{ seg: opts.seg, no: opts.segNo || '' }] : []),
     zhongshus: opts.zhongshus || [],
     subType: opts.sub === 'vol' ? 'vol' : 'macd',
-    themeLines: !!opts.themeLines,
     solidMacd: !!opts.solidMacd,
     period,
     colors,
@@ -227,8 +224,8 @@ function bindSubToggle(sub) {
 function repaintMain(cross) {
   if (!_view) return;
   console.log('[repaintMain]', { period: _view.period, nBars: _view.bars?.length, nSegs: _view.segs?.length, cross: !!cross });
-  const { main, bars, segs, zhongshus, colors, period, digits, themeLines } = _view;
-  _view.mainMeta = drawMainCanvas(main, bars, segs, zhongshus, colors, period, digits, themeLines);
+  const { main, bars, segs, zhongshus, colors, period, digits } = _view;
+  _view.mainMeta = drawMainCanvas(main, bars, segs, zhongshus, colors, period, digits);
   if (cross) drawMainCross(_view.mainMeta, cross, colors, digits, period);
 }
 
@@ -238,7 +235,7 @@ function repaintSub() {
   _view.subMeta = drawSubCanvas(sub, bars, subType, colors, period, subH, solidMacd);
 }
 
-function drawMainCanvas(canvas, bars, segs, zhongshus, colors, period, digits, themeLines) {
+function drawMainCanvas(canvas, bars, segs, zhongshus, colors, period, digits) {
   const { ctx, w, h } = setupCanvas(canvas, 220);
   ctx.clearRect(0, 0, w, h);
   if (!bars.length) {
@@ -323,9 +320,9 @@ function drawMainCanvas(canvas, bars, segs, zhongshus, colors, period, digits, t
       ctx.fillRect(x - cw / 2, top, cw, bh);
     }
   }
-  // 中枢矩形 + 段连线：使用局部参数 themeLines（不再依赖全局 _view），
-  // 避免多页周期弹窗并发渲染覆盖 _view 时，画线读取到错误的主题配置。
-  const meta = { bars, xOf, yOf, themeLines };
+  // 中枢矩形 + 段连线：使用局部 meta（不再依赖全局 _view），
+  // 避免多页周期弹窗并发渲染覆盖 _view 时，画线读取到错误配置。
+  const meta = { bars, xOf, yOf };
   // 中枢点线矩形
   if (zhongshus && zhongshus.length) {
     for (const zs of zhongshus) {
@@ -369,22 +366,23 @@ function drawSubCanvas(canvas, bars, subType, colors, period, subH, solidMacd) {
     ctx.moveTo(padL, yOf(0));
     ctx.lineTo(padL + plotW, yOf(0));
     ctx.stroke();
-    // 柱：红柱镂空（背景色填充 + 描边），绿柱实心
+    // 柱：收窄成细垂直线。红柱镂空（背景色填充 + 描边），绿柱实心
+    const mw = Math.min(2, Math.max(1, step * 0.15)); // MACD 柱宽：细线，最多 2px
     for (let i = 0; i < n; i++) {
       const b = bars[i];
       const y0 = yOf(0), y1 = yOf(b.macd);
-      const x = xOf(i) - cw / 2;
+      const x = xOf(i) - mw / 2;
       const y = Math.min(y0, y1);
       const bh = Math.max(1, Math.abs(y0 - y1));
       if (b.macd >= 0) {
         ctx.fillStyle = solidMacd ? colors.red : colors.card;
-        ctx.fillRect(x, y, cw, bh);
+        ctx.fillRect(x, y, mw, bh);
         ctx.strokeStyle = colors.red;
         ctx.lineWidth = 1;
-        ctx.strokeRect(x, y, cw, bh);
+        ctx.strokeRect(x, y, mw, bh);
       } else {
         ctx.fillStyle = colors.green;
-        ctx.fillRect(x, y, cw, bh);
+        ctx.fillRect(x, y, mw, bh);
       }
     }
     drawLine(ctx, bars, (b) => b.dif, xOf, yOf, colors.accent);
@@ -455,11 +453,11 @@ function bindCrosshair(view, main, opts = {}) {
   const repaintLocal = (cross) => {
     const v = getView();
     if (!v) return;
-    const { bars, segs, zhongshus, colors, period, digits, themeLines } = v;
+    const { bars, segs, zhongshus, colors, period, digits } = v;
     if (!bars || !bars.length) return;
     if (!main.isConnected) return;
     if (!main.clientWidth || !main.clientHeight) return;
-    const newMeta = drawMainCanvas(main, bars, segs, zhongshus, colors, period, digits, themeLines);
+    const newMeta = drawMainCanvas(main, bars, segs, zhongshus, colors, period, digits);
     if (!newMeta || !newMeta.n) return;
     v.mainMeta = newMeta;
     if (cross) drawMainCrossLocal(cross);

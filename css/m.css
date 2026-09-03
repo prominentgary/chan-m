@@ -848,6 +848,21 @@ body.search-header-fixed .search-edge-guard { display: block; }
   opacity: 1;
 }
 
+/* 详情页证券卡片展开：该周期 K 线图（主图 + 副图，替代分时图） */
+.sec-intraday.sec-kline {
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+}
+.sec-intraday.sec-kline.expanded {
+  height: 340px;
+}
+.sec-intraday.sec-kline canvas { height: auto; }
+.sec-intraday.sec-kline canvas:nth-child(1) { height: 220px; }
+.sec-intraday.sec-kline canvas:nth-child(2) { height: 96px; }
+/* 十字态下锁定触摸，避免拖动十字时页面滚动 */
+.sec-kline.kline-cross-lock canvas { touch-action: none; }
+
 /* 详情页顶部证券卡片：吸顶；下滚后折叠为单行 */
 .sec-card--detail {
   position: sticky;

@@ -4,7 +4,7 @@ import { fetchBars, fetchRealtimeMulti, formatTime, formatPrice, isETF, resolveC
 import { computeMACD } from './macd.js?v=20260725f';
 import { segmentStrength, detectStrengthIndicators, detectOneBuySell, detectTwoAndThreeBuySell, computeZhongshuStrength, detectZhongshu } from './algo.js?v=20260902b';
 import { renderSegments } from './table.js?v=20260902a';
-import { renderKlineChart, sliceSegmentBars, renderIntradayChart } from './klinechart.js?v=20260814b';
+import { renderKlineChart, sliceSegmentBars, renderIntradayChart } from './klinechart.js?v=20260904a';
 import { loadStaticData } from './sync.js?v=20260725g';
 import { openEditor } from './editor.js?v=20260830b';
 import { makeZhongshu } from './model.js?v=20260725f';
@@ -988,6 +988,95 @@ function toggleSecIntraday(card, code) {
   }
 }
 
+// 长按详情页证券卡片展开/收起该周期 K 线图（默认收起）
+function attachSecKlineLongPress(card, code, period) {
+  let timer = null;
+  let sx = 0, sy = 0;
+  const LONG_MS = 480;
+  const start = (x, y) => {
+    sx = x; sy = y;
+    timer = setTimeout(() => {
+      timer = null;
+      toggleSecKline(card, code, period);
+    }, LONG_MS);
+  };
+  const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  card.addEventListener('pointerdown', (e) => {
+    // K 线图区域的长按交给十字光标处理，不触发展开/收起，避免 480ms 与 350ms 长按冲突
+    if (e.target.closest('.sec-kline')) return;
+    start(e.clientX, e.clientY);
+  });
+  card.addEventListener('pointermove', (e) => {
+    if (Math.abs(e.clientX - sx) > 10 || Math.abs(e.clientY - sy) > 10) cancel();
+  });
+  card.addEventListener('pointerup', cancel);
+  card.addEventListener('pointercancel', cancel);
+  card.addEventListener('contextmenu', (e) => e.preventDefault());
+}
+
+async function toggleSecKline(card, code, period) {
+  const wrap = card.querySelector('.sec-kline');
+  if (!wrap) return;
+  const expanded = wrap.classList.toggle('expanded');
+  card.classList.toggle('intraday-expanded', expanded);
+  if (expanded) {
+    try { navigator.vibrate?.(10); } catch {}
+    await loadAndRenderSecKline(code, period, wrap);
+  }
+}
+
+// 加载并渲染详情页证券卡片内的该周期 K 线图（主图 + 副图 + 十字 + 画线），
+// 数据/切片/可见段逻辑与周期卡片长按弹窗保持一致
+async function loadAndRenderSecKline(code, period, wrap) {
+  const sec = state.securities.find((s) => s.code === code);
+  if (!sec) return;
+  const main = wrap.querySelector('#detail-kline-main');
+  const sub = wrap.querySelector('#detail-kline-sub');
+  if (!main || !sub) return;
+  // 辅助周期（15m/60m）回落主周期取数，与弹窗保持一致
+  const fetchPeriod = AUX_TO_MAIN[period] || period;
+  let bars = [];
+  const cb = state._currentBars;
+  if (cb && cb.code === code && cb.period === fetchPeriod && cb.bars && cb.bars.length) {
+    bars = cb.bars;
+  } else {
+    try {
+      const res = await fetchBars(code, fetchPeriod, 800);
+      bars = res.bars || [];
+      computeMACD(bars);
+    } catch { bars = []; }
+  }
+  // 可见段 / 可见中枢（剔除被更高级别周期遮挡的部分），与周期弹窗 periodStats 一致
+  const higherPeriod = getHigherPeriod(period, sec.periods || []);
+  const higherSegments = (higherPeriod && sec.drawings[higherPeriod]?.segments) || [];
+  const allSegs = sec.drawings[period]?.segments || [];
+  const hideBefore = computeHideBefore(higherSegments, higherPeriod, allSegs);
+  let segs = [...allSegs];
+  if (hideBefore != null) segs = segs.filter((s) => (s.start?.time ?? s.end?.time ?? 0) >= hideBefore);
+  const visibleIds = new Set(segs.map((s) => s.id));
+  const zss = (sec.drawings[period]?.zhongshus || []).filter((z) => (z.segmentIds || []).some((id) => visibleIds.has(id)));
+  const zhongshuRects = buildZhongshuRects(zss, segs);
+  const visibleSegs = getVisibleSegsForPeriod(code, period);
+  const digits = isETF(code) ? 3 : 2;
+  const commonOpts = {
+    sub: 'macd', period, digits, subH: 96,
+    noSwipe: true, subToggle: true, solidMacd: true, crosshairOnly: true,
+    // 十字态锁定 touch，避免拖动十字时页面跟着滚动
+    onCrossChange: (active) => wrap.classList.toggle('kline-cross-lock', active),
+  };
+  if (!bars.length || !visibleSegs.length) {
+    renderKlineChart(main, sub, [], { segs: [], zhongshus: zhongshuRects, ...commonOpts });
+    return;
+  }
+  const viewSegItems = visibleSegs.map((s, k) => ({ seg: s, no: k + 1 }));
+  const startTime = visibleSegs[0].start.time;
+  const endTime = bars[bars.length - 1].time;
+  // 包含 startTime 前一根 bar，使落在两根 bar 之间的段端点能通过 timeToX 时间插值精确定位
+  const startIdx = Math.max(0, bars.findIndex((b) => b.time >= startTime) - 1);
+  const sliced = bars.slice(startIdx).filter((b) => b.time <= endTime);
+  renderKlineChart(main, sub, sliced, { segs: viewSegItems, zhongshus: zhongshuRects, ...commonOpts });
+}
+
 // 周期列表页左/右滑切换方案：在内容区（非边缘）向左/右滑动切换方案
 function attachPresetSwipe(container, code) {
   const presets = state._presets[code] || [];
@@ -1244,7 +1333,7 @@ async function openMiniSheet(code, period) {
     };
 
     if (bars.length && visibleSegs.length) {
-      const viewSegItems = visibleSegs.map((s) => ({ seg: s, no: '' }));
+      const viewSegItems = visibleSegs.map((s, k) => ({ seg: s, no: k + 1 }));
       const startTime = visibleSegs[0].start.time;
       const endTime = bars[bars.length - 1].time;
       // 包含 startTime 前一根 bar，使落在两根 bar 之间的段端点（如 60m 图上的 30m 段）
@@ -1253,7 +1342,7 @@ async function openMiniSheet(code, period) {
       const sliced = bars.slice(startIdx).filter((b) => b.time <= endTime);
       renderKlineChart(main, sub, sliced, {
         segs: viewSegItems, zhongshus: zhongshuRects, sub: 'macd', period: p, digits, subH: 96,
-        noSwipe: true, subToggle: true, themeLines: true, solidMacd: true, crosshairOnly: true,
+        noSwipe: true, subToggle: true, solidMacd: true, crosshairOnly: true,
         subSwipe: true,
         onCrossChange: toggleCrossLock,
         onSwipe: switchPeriodPage,
@@ -1261,7 +1350,7 @@ async function openMiniSheet(code, period) {
     } else {
       renderKlineChart(main, sub, [], {
         segs: [], zhongshus: zhongshuRects, sub: 'macd', period: p, digits, subH: 96,
-        noSwipe: true, subToggle: true, themeLines: true, solidMacd: true, crosshairOnly: true,
+        noSwipe: true, subToggle: true, solidMacd: true, crosshairOnly: true,
         subSwipe: true,
         onCrossChange: toggleCrossLock,
         onSwipe: switchPeriodPage,
@@ -1464,14 +1553,15 @@ async function renderPeriodDetail(code, period) {
           </div>
         </div>
       </div>
-      <div class="sec-intraday">
-        <canvas id="detail-intraday-chart"></canvas>
+      <div class="sec-intraday sec-kline">
+        <canvas id="detail-kline-main"></canvas>
+        <canvas id="detail-kline-sub"></canvas>
       </div>
     </div>
     <div id="period-detail"><div class="empty">加载中…</div></div>
   `;
   const card = box.querySelector('.sec-card--detail');
-  attachSecIntradayLongPress(card, code);
+  attachSecKlineLongPress(card, code, period);
   await loadAndRenderPeriodDetail(code, period);
   staggerEnter(box, '.sec-card');
 }
@@ -1495,7 +1585,8 @@ async function loadAndRenderPeriodDetail(code, period) {
     state._currentBars = { code, period: fetchPeriod, bars };
     computeMACD(bars);
     // 先根据最新 K 线更新盯盘段终点（A0 级别）与追踪段终点（非 A0 级别），再重新构建渲染分组
-    updateWatchSegments(code, period, bars, false);
+    // A0 盯盘：进入时先用全量历史K线连续回放补齐中间段（对齐桌面版「打开即画完」）
+    catchUpWatchSegments(code, period, bars);
     updateTrackSegments(code, period, bars);
     const d = sec.drawings[period] || { segments: [], zhongshus: [] };
     const group = { period, label: periodLabel(period), segments: [...d.segments], zhongshus: [...d.zhongshus], loaded: false, error: null };
@@ -1690,6 +1781,7 @@ function buildZhongshuRects(zss, segs) {
         endTime: last.end.time,
         high: overlapHigh,
         low: overlapLow,
+        firstDir: first.direction, // 中枢第一段方向，供矩形取相反色（第一段跌→红）
       };
     })
     .filter(Boolean);
@@ -1770,7 +1862,7 @@ function paintKline(diag) {
     segs: viewSegItems, sub: _klineSub, period, digits, subH: 96,
     // 与周期列表弹窗一致：noSwipe + crosshairOnly 让主图单独接管手势，避免 bindSubSwipe 双层
     // 绑定导致横滑切换被吞；onSwipe 保留 K 线弹窗内左右滑切换段的能力。
-    noSwipe: true, crosshairOnly: true, onSwipe: switchKlineSegment,
+    noSwipe: true, crosshairOnly: true, solidMacd: true, onSwipe: switchKlineSegment,
   });
 }
 
@@ -3055,6 +3147,20 @@ function updateWatchSegments(code, period, bars, refresh = true) {
   // 终点延伸 / 自动续接 / 自回修产生的段一律自动落盘（此前只改内存，刷新即丢）
   if (changed || structural) scheduleAutoSave(code);
   return { changed: changed || structural, structural: structural };
+}
+
+// 打开进入详情页时，用全量历史K线连续回放，把从上次保存段到当前走势前沿的中间段
+// 一次补齐（对齐桌面版「打开即画完」）：反复调用 updateWatchSegments，每轮最多续接一段，
+// 直到无结构性变化（已到最新走势前沿，或当前盯盘段仍在长/等待）为止。
+// 仅复用 A0 盯盘段的既有算法，不触碰非 A0「追踪段」与卡片级联隐藏逻辑。
+function catchUpWatchSegments(code, period, bars) {
+  let u = { changed: false, structural: false };
+  let guard = 0;
+  do {
+    u = updateWatchSegments(code, period, bars, false);
+    guard += 1;
+  } while (u.structural && guard < 200);
+  return u;
 }
 
 // watch 按钮入口：从某最近画线源段创建盯盘段
