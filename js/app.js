@@ -3,8 +3,8 @@
 import { fetchBars, fetchRealtimeMulti, formatTime, formatPrice, isETF, resolveCode } from './fetcher.js?v=20260725i';
 import { computeMACD } from './macd.js?v=20260725f';
 import { segmentStrength, detectStrengthIndicators, detectOneBuySell, detectTwoAndThreeBuySell, computeZhongshuStrength, detectZhongshu } from './algo.js?v=20260902b';
-import { renderSegments } from './table.js?v=20260902a';
-import { renderKlineChart, sliceSegmentBars, renderIntradayChart } from './klinechart.js?v=20260904a';
+import { renderSegments } from './table.js?v=20260904b';
+import { renderKlineChart, sliceSegmentBars, renderIntradayChart, repaintView } from './klinechart.js?v=20260905a';
 import { loadStaticData } from './sync.js?v=20260725g';
 import { openEditor } from './editor.js?v=20260830b';
 import { makeZhongshu } from './model.js?v=20260725f';
@@ -27,6 +27,8 @@ const periodLabel = (p) => (PERIODS.find((x) => x[0] === p) || [p, p])[1];
 
 let longPressFired = false; // 周期行长按触发简图后，吞掉随后冒泡的 click，避免误进段详情
 let presetSwipeFired = false; // 周期列表页左右滑切换方案后，吞掉随后冒泡的 click，避免误进段详情
+let secKlineView = null;      // 详情页证券卡片内展开的该周期 K 线视图，主题切换时按它精确重绘
+let secKlineExpanded = false; // 详情页证券卡片 K 线的「用户意图展开态」：吸顶折叠时隐藏，回到顶部恢复
 
 // 辅助周期（15m 完全复刻 5m、60m 完全复刻 30m）不是真实级别，
 // 不参与隐藏规则的级别联立判断：既不能作为更高周期去隐藏低级别段，
@@ -437,6 +439,15 @@ async function loadAllDrawings() {
     for (const s of list) {
       byCode[s.code].drawings = mergeDrawings(byCode[s.code].drawings, s.code);
     }
+    // 辅助周期（15m 完全复刻 5m、60m 完全复刻 30m）加载后直接把画线对象指向主周期，
+    // 使运行期对主周期的任何改动（盯盘段/追踪段、编辑、增删、中枢）即时同步到辅助周期，
+    // 而非仅在数据加载时复刻一次、运行期各改各的导致两边不一致（如 5m 新增追踪段后 15m 不显示）。
+    // 两个键若各存有本地编辑，以主周期内容为准，与「完全复刻」语义一致。
+    for (const sec of securities) {
+      for (const [aux, main] of Object.entries(AUX_TO_MAIN)) {
+        if (sec.drawings[aux] && sec.drawings[main]) sec.drawings[aux] = sec.drawings[main];
+      }
+    }
     let segTotal = 0;
     for (const sec of securities) {
       for (const p of Object.keys(sec.drawings)) {
@@ -770,11 +781,17 @@ function renderPeriodList(code, { keepHeader = false } = {}) {
     const isA0 = p === sec._a0Period;
     return `
     <div class="period-row" data-period="${p}">
-      <div class="period-row-info">
-        <div class="period-row-name">${periodLabel(p)}${isA0 ? `<span class="period-row-tag a0">A0</span>` : ''}</div>
-        <div class="period-row-meta">${segCount} 段 · ${zsCount} 中枢</div>
+      <div class="period-row-head">
+        <div class="period-row-info">
+          <div class="period-row-name">${periodLabel(p)}${isA0 ? `<span class="period-row-tag a0">A0</span>` : ''}</div>
+          <div class="period-row-meta">${segCount} 段 · ${zsCount} 中枢</div>
+        </div>
+        <span class="sec-arrow">▸</span>
       </div>
-      <span class="sec-arrow">▸</span>
+      <div class="period-row-kline">
+        <canvas class="period-kline-main"></canvas>
+        <canvas class="period-kline-sub"></canvas>
+      </div>
     </div>`;
   }).join('');
 
@@ -785,11 +802,11 @@ function renderPeriodList(code, { keepHeader = false } = {}) {
     const change = fmtIndexChange(rt?.price, rt?.prevClose);
     const priceText = rt?.price ? formatPrice(code, rt.price) : '';
     box.innerHTML = `
-      <div class="sec-card" data-code="${code}">
+      <div class="sec-card sec-card--periods" data-code="${code}">
         <div class="sec-head">
           <div class="sec-info">
             <div class="sec-name" data-name="${code}">${name}</div>
-            <div class="sec-meta">${displayCode} · A0=${sec._a0Period}</div>
+            <div class="sec-meta">${displayCode}</div>
           </div>
           <div class="sec-right">
             <div class="sec-quote" data-rt="${code}">
@@ -815,14 +832,28 @@ function renderPeriodList(code, { keepHeader = false } = {}) {
     }
   }
 
+  if (!keepHeader) {
+    // 首次进入周期页：重置行内 K 线展开记录（保持展开状态仅在同一证券内跨刷新生效）
+    state._periodExpanded = new Set();
+  }
+
   box.querySelectorAll('.period-row').forEach((row) => {
     const p = row.dataset.period;
-    row.addEventListener('click', () => {
+    row.addEventListener('click', (e) => {
+      // K 线区域内的点击（如副图 MACD/成交量切换）不导航、不收放
+      if (e.target.closest('.period-row-kline')) return;
       if (longPressFired) { longPressFired = false; return; } // 长按已触发简图，吞掉随后的 click
       if (presetSwipeFired) { presetSwipeFired = false; return; } // 左右滑切换方案后，吞掉随后的 click
+      // 已展开的行：点头部收起，不再进入段详情
+      if (row.classList.contains('expanded')) { togglePeriodRowKline(code, p, row); return; }
       pushView('detail', code, p);
     });
     attachPeriodRowLongPress(row, code, p);
+    // 保持展开状态：preset 切换/数据刷新重建列表后自动恢复已展开的行内 K 线
+    if (state._periodExpanded && state._periodExpanded.has(p)) {
+      row.classList.add('expanded');
+      renderPeriodRowKline(code, p, row);
+    }
   });
   // 在周期列表页绑定左/右滑切换方案手势
   attachPresetSwipe(box, code);
@@ -1015,14 +1046,25 @@ function attachSecKlineLongPress(card, code, period) {
 }
 
 async function toggleSecKline(card, code, period) {
+  secKlineExpanded = !secKlineExpanded;
+  syncSecKlineVisible(card);
+  if (secKlineExpanded) {
+    try { navigator.vibrate?.(10); } catch {}
+    const wrap = card.querySelector('.sec-kline');
+    if (wrap) await loadAndRenderSecKline(code, period, wrap);
+  }
+}
+
+// 详情页证券卡片 K 线的实际显隐 = 用户意图展开态 && 卡片未被吸顶折叠
+// （吸顶折叠时隐藏 K 线使卡片显示为一行；回到顶部自动恢复展开）
+function syncSecKlineVisible(card) {
+  card = card || document.querySelector('.sec-card--detail');
+  if (!card) return;
   const wrap = card.querySelector('.sec-kline');
   if (!wrap) return;
-  const expanded = wrap.classList.toggle('expanded');
-  card.classList.toggle('intraday-expanded', expanded);
-  if (expanded) {
-    try { navigator.vibrate?.(10); } catch {}
-    await loadAndRenderSecKline(code, period, wrap);
-  }
+  const show = secKlineExpanded && !card.classList.contains('sec-card--collapsed');
+  wrap.classList.toggle('expanded', show);
+  card.classList.toggle('intraday-expanded', show);
 }
 
 // 加载并渲染详情页证券卡片内的该周期 K 线图（主图 + 副图 + 十字 + 画线），
@@ -1065,7 +1107,7 @@ async function loadAndRenderSecKline(code, period, wrap) {
     onCrossChange: (active) => wrap.classList.toggle('kline-cross-lock', active),
   };
   if (!bars.length || !visibleSegs.length) {
-    renderKlineChart(main, sub, [], { segs: [], zhongshus: zhongshuRects, ...commonOpts });
+    secKlineView = renderKlineChart(main, sub, [], { segs: [], zhongshus: zhongshuRects, ...commonOpts });
     return;
   }
   const viewSegItems = visibleSegs.map((s, k) => ({ seg: s, no: k + 1 }));
@@ -1074,7 +1116,7 @@ async function loadAndRenderSecKline(code, period, wrap) {
   // 包含 startTime 前一根 bar，使落在两根 bar 之间的段端点能通过 timeToX 时间插值精确定位
   const startIdx = Math.max(0, bars.findIndex((b) => b.time >= startTime) - 1);
   const sliced = bars.slice(startIdx).filter((b) => b.time <= endTime);
-  renderKlineChart(main, sub, sliced, { segs: viewSegItems, zhongshus: zhongshuRects, ...commonOpts });
+  secKlineView = renderKlineChart(main, sub, sliced, { segs: viewSegItems, zhongshus: zhongshuRects, ...commonOpts });
 }
 
 // 周期列表页左/右滑切换方案：在内容区（非边缘）向左/右滑动切换方案
@@ -1097,9 +1139,8 @@ function attachPresetSwipe(container, code) {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     // 边缘区域交给 gesture.js 处理返回
     if (e.clientX <= EDGE || e.clientX >= window.innerWidth - EDGE) return;
-    // 弹窗打开时不处理，避免滑动穿透
-    if (document.getElementById('mini-sheet')?.classList.contains('show')) return;
-    if (document.getElementById('kline-sheet')?.classList.contains('show')) return;
+    // 展开的 K 线区域内滑动交给十字光标，不触发方案切换
+    if (e.target.closest('.period-row-kline')) return;
     presetSwipeFired = false; // 每次新触摸重置方案滑动标志
     startX = e.clientX;
     startY = e.clientY;
@@ -1209,226 +1250,123 @@ function switchPreset(code, dir) {
   renderPeriodList(code, { keepHeader: true });
 }
 
-// ========== 长按周期行 → K 线图 底部抽屉（左右滑切换周期） ==========
-// 当前打开的周期弹窗视图：{ code, periods, idx, renderPage, updateTitle }
-// 供 15s 轮询定位「正在看的周期」，并在段数据变化后重画（周期列表页本身没有任何刷新入口）。
-let _miniView = null;
+// ========== 长按周期行 → 行内展开 K 线（可多行同时展开，替代旧底部抽屉弹窗） ==========
+// 每个展开行持有独立闭包视图（ownView），互不干扰；展开记录存于 state._periodExpanded，
+// preset 切换/数据刷新重建列表后自动恢复已展开行。
+function togglePeriodRowKline(code, period, row) {
+  const expanding = !row.classList.contains('expanded');
+  row.classList.toggle('expanded', expanding);
+  if (expanding) {
+    state._periodExpanded.add(period);
+    try { navigator.vibrate?.(10); } catch {}
+    renderPeriodRowKline(code, period, row);
+    // 展开后后台按最新 K 线重算盯盘段/追踪段终点，数据有变化则重绘该行并刷新行头统计
+    refreshSegmentsForPeriod(code, period).then((changed) => {
+      if (changed && row.isConnected && row.classList.contains('expanded')) {
+        renderPeriodRowKline(code, period, row);
+        if (state.view === 'periods' && state.selectedCode === code) {
+          renderPeriodList(code, { keepHeader: true });
+        }
+      }
+    });
+  } else {
+    state._periodExpanded.delete(period);
+    const kline = row.querySelector('.period-row-kline');
+    if (kline) kline.classList.remove('cross-lock');
+  }
+}
 
-async function openMiniSheet(code, period) {
+// 构建某周期行内 K 线的切片数据（可见段/中枢、取数范围），与旧弹窗 periodStats 一致
+function buildPeriodRowSlice(code, period, bars) {
+  const sec = state.securities.find((s) => s.code === code);
+  if (!sec) return null;
+  const higherPeriod = getHigherPeriod(period, sec.periods || []);
+  const higherSegments = (higherPeriod && sec.drawings[higherPeriod]?.segments) || [];
+  const allSegs = sec.drawings[period]?.segments || [];
+  const hideBefore = computeHideBefore(higherSegments, higherPeriod, allSegs);
+  let segs = [...allSegs];
+  if (hideBefore != null) segs = segs.filter((s) => (s.start?.time ?? s.end?.time ?? 0) >= hideBefore);
+  const visibleIds = new Set(segs.map((s) => s.id));
+  const zss = (sec.drawings[period]?.zhongshus || []).filter((z) => (z.segmentIds || []).some((id) => visibleIds.has(id)));
+  const zhongshuRects = buildZhongshuRects(zss, segs);
+  const visibleSegs = getVisibleSegsForPeriod(code, period);
+  const digits = isETF(code) ? 3 : 2;
+  if (!bars.length || !visibleSegs.length) {
+    return { bars: [], segs: [], zhongshus: zhongshuRects, digits };
+  }
+  const viewSegItems = visibleSegs.map((s, k) => ({ seg: s, no: k + 1 }));
+  const startTime = visibleSegs[0].start.time;
+  const endTime = bars[bars.length - 1].time;
+  // 包含 startTime 前一根 bar，使落在两根 bar 之间的段端点能通过 timeToX 时间插值精确定位
+  const startIdx = Math.max(0, bars.findIndex((b) => b.time >= startTime) - 1);
+  const sliced = bars.slice(startIdx).filter((b) => b.time <= endTime);
+  return { bars: sliced, segs: viewSegItems, zhongshus: zhongshuRects, digits };
+}
+
+// 渲染/刷新某周期行的行内 K 线（主图 + 副图 + 十字 + 中枢/段标注）。
+// 已渲染过的行复用绑定的闭包视图，仅更新数据重绘，避免重复绑定十字光标。
+async function renderPeriodRowKline(code, period, row) {
   const sec = state.securities.find((s) => s.code === code);
   if (!sec) return;
-  const rt = state._rtPrices?.[code];
-  const name = sec.name || rt?.name || code;
-  const periods = sec.periods || [];
-  const currentIdx = Math.max(0, periods.indexOf(period));
-  _miniView = { code, periods, idx: currentIdx, renderPage: null, updateTitle: null };
-
-  let backdrop = document.getElementById('mini-sheet-backdrop');
-  if (!backdrop) {
-    backdrop = document.createElement('div');
-    backdrop.id = 'mini-sheet-backdrop';
-    backdrop.className = 'mini-sheet-backdrop';
-    backdrop.addEventListener('click', closeMiniSheet);
-    document.body.appendChild(backdrop);
-
-    const sheet = document.createElement('div');
-    sheet.id = 'mini-sheet';
-    sheet.className = 'mini-sheet';
-    sheet.innerHTML = `
-      <div class="mini-sheet-head">
-        <span class="mini-sheet-title" id="mini-sheet-title"></span>
-        <button class="mini-sheet-close" id="mini-sheet-close" type="button" aria-label="关闭">✕</button>
-      </div>
-      <div class="mini-sheet-body" id="mini-sheet-body"></div>`;
-    document.body.appendChild(sheet);
-    document.getElementById('mini-sheet-close').addEventListener('click', closeMiniSheet);
-  }
-
-  const body = document.getElementById('mini-sheet-body');
-  body.className = 'mini-sheet-body period-sheet-body';
-  body.innerHTML = `
-    <div class="period-sheet-pages" id="period-sheet-pages">
-      ${periods.map((p, idx) => `
-        <div class="period-sheet-page" data-period="${p}" data-idx="${idx}">
-          <canvas id="period-sheet-main-${idx}" class="kline-canvas"></canvas>
-          <canvas id="period-sheet-sub-${idx}" class="kline-canvas"></canvas>
-        </div>
-      `).join('')}
-    </div>`;
-
-  const titleEl = document.getElementById('mini-sheet-title');
-  const pages = document.getElementById('period-sheet-pages');
-  const digits = isETF(code) ? 3 : 2;
-
-  // 计算某周期的可见段/中枢统计，用于标题
-  function periodStats(p) {
-    const d = sec.drawings[p] || { segments: [], zhongshus: [] };
-    const higherPeriod = getHigherPeriod(p, sec.periods || []);
-    const higherSegments = (higherPeriod && sec.drawings[higherPeriod]?.segments) || [];
-    const hideBefore = computeHideBefore(higherSegments, higherPeriod, d.segments);
-    let segs = [...(d.segments || [])];
-    if (hideBefore != null) segs = segs.filter((s) => (s.start?.time ?? s.end?.time ?? 0) >= hideBefore);
-    const visibleIds = new Set(segs.map((s) => s.id));
-    const zss = (d.zhongshus || []).filter((z) => (z.segmentIds || []).some((id) => visibleIds.has(id)));
-    return { segs, zss };
-  }
-
-  function updateTitle(idx) {
-    const p = periods[idx];
-    if (!p) return;
-    const { segs, zss } = periodStats(p);
-    titleEl.textContent = `${name} · ${periodLabel(p)} · ${segs.length} 段 · ${zss.length} 中枢`;
-  }
-
-  // 渲染指定周期的 K 线图（懒加载）
-  async function renderPage(idx) {
-    const p = periods[idx];
-    const page = pages.querySelector(`.period-sheet-page[data-period="${p}"]`);
-    if (!p || !page || page.dataset.rendered) return;
-    page.dataset.rendered = '1';
-
-    // 辅助周期（15m/60m）的段是主周期（5m/30m）刻度，取数必须回落主周期，
-    // 否则段端点 time 在 15m/60m bars 里定位不准（与段卡片 K 线弹窗保持一致）。
-    const fetchPeriod = AUX_TO_MAIN[p] || p;
-    let bars = [];
-    const cb = state._currentBars;
-    if (cb && cb.code === code && cb.period === fetchPeriod && cb.bars && cb.bars.length) {
-      bars = cb.bars;
-    } else {
-      try {
-        const res = await fetchBars(code, fetchPeriod, 800);
-        bars = res.bars || [];
-        computeMACD(bars);
-        // 仅当全局缓存仍是本周期时才写入，避免预渲染相邻周期（如 1m）覆盖正在使用的其它周期数据，
-        // 否则会污染详情页 K 线弹层所依赖的全局 _currentBars。
-        if (!state._currentBars || state._currentBars.period === fetchPeriod) {
-          state._currentBars = { code, period: fetchPeriod, bars };
-        }
-      } catch {
-        bars = [];
+  const kline = row.querySelector('.period-row-kline');
+  if (!kline) return;
+  const main = kline.querySelector('.period-kline-main');
+  const sub = kline.querySelector('.period-kline-sub');
+  if (!main || !sub) return;
+  // 辅助周期（15m/60m）的段是主周期刻度，取数必须回落主周期
+  const fetchPeriod = AUX_TO_MAIN[period] || period;
+  let bars;
+  const cb = state._currentBars;
+  if (cb && cb.code === code && cb.period === fetchPeriod && cb.bars && cb.bars.length) {
+    bars = cb.bars;
+  } else {
+    try {
+      const res = await fetchBars(code, fetchPeriod, 800);
+      bars = res.bars || [];
+      computeMACD(bars);
+      if (!state._currentBars || state._currentBars.period === fetchPeriod) {
+        state._currentBars = { code, period: fetchPeriod, bars };
       }
-    }
-
-    const { segs, zss } = periodStats(p);
-    const zhongshuRects = buildZhongshuRects(zss, segs);
-    const visibleSegs = getVisibleSegsForPeriod(code, p);
-    const main = document.getElementById(`period-sheet-main-${idx}`);
-    const sub = document.getElementById(`period-sheet-sub-${idx}`);
-
-    const toggleCrossLock = (active) => {
-      if (pages) pages.classList.toggle('cross-lock', active);
-    };
-    const switchPeriodPage = (dir) => {
-      const pageWidth = pages.clientWidth || 1;
-      const curIdx = Math.max(0, Math.min(periods.length - 1, Math.round(pages.scrollLeft / pageWidth)));
-      const targetIdx = dir === 'next'
-        ? Math.min(periods.length - 1, curIdx + 1)
-        : Math.max(0, curIdx - 1);
-      if (targetIdx === curIdx) return;
-      pages.style.scrollBehavior = 'smooth';
-      pages.scrollLeft = targetIdx * pageWidth;
-      const restore = () => { pages.style.scrollBehavior = ''; };
-      pages.addEventListener('scrollend', restore, { once: true });
-      setTimeout(restore, 400);
-    };
-
-    if (bars.length && visibleSegs.length) {
-      const viewSegItems = visibleSegs.map((s, k) => ({ seg: s, no: k + 1 }));
-      const startTime = visibleSegs[0].start.time;
-      const endTime = bars[bars.length - 1].time;
-      // 包含 startTime 前一根 bar，使落在两根 bar 之间的段端点（如 60m 图上的 30m 段）
-      // 能通过 timeToX 时间插值精确定位，而非被截断到首根 bar。
-      const startIdx = Math.max(0, bars.findIndex((b) => b.time >= startTime) - 1);
-      const sliced = bars.slice(startIdx).filter((b) => b.time <= endTime);
-      renderKlineChart(main, sub, sliced, {
-        segs: viewSegItems, zhongshus: zhongshuRects, sub: 'macd', period: p, digits, subH: 96,
-        noSwipe: true, subToggle: true, solidMacd: true, crosshairOnly: true,
-        subSwipe: true,
-        onCrossChange: toggleCrossLock,
-        onSwipe: switchPeriodPage,
-      });
-    } else {
-      renderKlineChart(main, sub, [], {
-        segs: [], zhongshus: zhongshuRects, sub: 'macd', period: p, digits, subH: 96,
-        noSwipe: true, subToggle: true, solidMacd: true, crosshairOnly: true,
-        subSwipe: true,
-        onCrossChange: toggleCrossLock,
-        onSwipe: switchPeriodPage,
-      });
-    }
+    } catch { bars = []; }
   }
-
-  // 根据滚动位置更新标题，并预渲染相邻页
-  let scrollRaf = 0;
-  function onPagesScroll() {
-    if (scrollRaf) return;
-    scrollRaf = requestAnimationFrame(() => {
-      scrollRaf = 0;
-      if (!pages) return;
-      const pageWidth = pages.clientWidth || 1;
-      const idx = Math.max(0, Math.min(periods.length - 1, Math.round(pages.scrollLeft / pageWidth)));
-      if (_miniView) _miniView.idx = idx;
-      updateTitle(idx);
-      renderPage(idx);
-      if (idx > 0) renderPage(idx - 1);
-      if (idx < periods.length - 1) renderPage(idx + 1);
-    });
+  const data = buildPeriodRowSlice(code, period, bars);
+  if (!data) return;
+  if (row._klView) {
+    const v = row._klView;
+    v.bars = data.bars; v.segs = data.segs; v.zhongshus = data.zhongshus;
+    repaintView(v);
+    return;
   }
-  pages.addEventListener('scroll', onPagesScroll, { passive: true });
-
-  // 周期页的左右滑切换不再单独绑定手势：由 renderKlineChart 的 bindCrosshair 通过
-  // onSwipe: switchPeriodPage 统一处理（与段卡片弹窗长按 K 线一致），避免两套手势冲突
-  // 导致长按出不了十字、横滑也失效。
-
-  const sheet = document.getElementById('mini-sheet');
-  backdrop.classList.add('show');
-  sheet.classList.add('show');
-  document.body.style.overflow = 'hidden';
-
-  if (_miniView) {
-    _miniView.renderPage = renderPage;
-    _miniView.updateTitle = updateTitle;
-  }
-
-  // 显示后直接定位到当前周期（禁用平滑滚动，避免从最低级别滑过来晃眼睛）
-  requestAnimationFrame(() => {
-    const pageWidth = pages.clientWidth || 1;
-    pages.style.scrollBehavior = 'auto';
-    pages.scrollLeft = currentIdx * pageWidth;
-    // 下一帧恢复平滑滚动，后续用户手势切换仍有顺滑效果
-    requestAnimationFrame(() => { pages.style.scrollBehavior = ''; });
-    updateTitle(currentIdx);
-    renderPage(currentIdx).then(() => {
-      // 当前页渲染完成后再预加载相邻周期，避免并行请求拖慢首屏
-      if (currentIdx > 0) renderPage(currentIdx - 1);
-      if (currentIdx < periods.length - 1) renderPage(currentIdx + 1);
-    });
-  });
-
-  // 打开时先按最新 K 线重算一次当前周期的盯盘段/追踪段终点：
-  // 周期列表页没有任何刷新入口（15s 轮询在 view==='periods' 时原本直接 return），
-  // 不补这一步，弹窗画的一直是 App 启动或上次进详情页那一刻的段快照。
-  // 先按内存里的旧数据秒开，取数完成后若段有变化再重画。
-  refreshSegmentsForPeriod(code, period).then((changed) => {
-    if (!changed || !_miniView || _miniView.code !== code) return;
-    _miniView.updateTitle?.(_miniView.idx);
-    repaintMiniSheet();
-    // 段数/中枢数可能已变，同步刷新弹窗背后的周期列表
-    if (state.view === 'periods' && state.selectedCode === code) {
-      renderPeriodList(code, { keepHeader: true });
-    }
+  row._klView = renderKlineChart(main, sub, data.bars, {
+    segs: data.segs, zhongshus: data.zhongshus, sub: 'macd', period, digits: data.digits, subH: 96,
+    noSwipe: true, subToggle: true, solidMacd: true, crosshairOnly: true,
+    ownView: true, // 多行同时展开时各行用闭包视图，避免共享全局 _view 相互覆盖
+    onCrossChange: (active) => kline.classList.toggle('cross-lock', active),
   });
 }
 
-function closeMiniSheet() {
-  const backdrop = document.getElementById('mini-sheet-backdrop');
-  const sheet = document.getElementById('mini-sheet');
-  if (backdrop) { backdrop.classList.remove('show'); backdrop.style.opacity = ''; backdrop.style.transition = ''; }
-  if (sheet) { sheet.classList.remove('show'); sheet.style.transform = ''; sheet.style.transition = ''; }
-  document.body.style.overflow = '';
-  _miniView = null;
+// 轮询刷新后同步所有展开行的行内 K 线：本轮取到数据的行用最新 bars 重绘，其余跳过
+function refreshPeriodRowsKline(code) {
+  document.querySelectorAll('.period-row.expanded').forEach((row) => {
+    const v = row._klView;
+    if (!v) return;
+    const p = row.dataset.period;
+    const fetchPeriod = AUX_TO_MAIN[p] || p;
+    const cb = state._currentBars;
+    if (!cb || cb.code !== code || cb.period !== fetchPeriod) return;
+    const data = buildPeriodRowSlice(code, p, cb.bars);
+    if (!data) return;
+    v.bars = data.bars; v.segs = data.segs; v.zhongshus = data.zhongshus;
+    repaintView(v);
+  });
 }
-window.closeMiniSheet = closeMiniSheet;
+
+// 主题切换后同步所有展开行的行内 K 线（repaintView 内部重读 CSS 变量主题色）
+function repaintPeriodRowsKline() {
+  document.querySelectorAll('.period-row.expanded').forEach((row) => {
+    if (row._klView) repaintView(row._klView);
+  });
+}
 
 // 按最新 K 线重算某周期的盯盘段（_isWatch）与追踪段（_isTrack）终点，返回是否有数据变化。
 // 辅助周期回落主周期取数，保证段端点 time 能在 bars 中精确定位（否则盯盘段会被误判为
@@ -1465,26 +1403,7 @@ async function refreshSegmentsForPeriod(code, period) {
   }
 }
 
-// 周期 K 线弹窗：段数据变化后重画当前页，并让相邻页下次滚动到时重新渲染（避免停留在旧快照）
-function repaintMiniSheet() {
-  if (!_miniView) return;
-  const sheet = document.getElementById('mini-sheet');
-  if (!sheet || !sheet.classList.contains('show')) return;
-  const pages = document.getElementById('period-sheet-pages');
-  if (!pages) return;
-  // 用户正在看十字坐标时不重画，避免打断当前读数
-  if (pages.classList.contains('cross-lock')) return;
-  [_miniView.idx, _miniView.idx - 1, _miniView.idx + 1].forEach((i) => {
-    const p = _miniView.periods[i];
-    if (!p) return;
-    const el = pages.querySelector(`.period-sheet-page[data-period="${p}"]`);
-    if (el) delete el.dataset.rendered;
-  });
-  _miniView.renderPage?.(_miniView.idx);
-}
-window.repaintMiniSheet = repaintMiniSheet;
-
-// 长按周期行：按住 480ms 直接下拉出宽简图；移动超过 10px 视为滑动/滚动，取消
+// 长按周期行：按住 480ms 展开/收起行内 K 线；移动超过 10px 视为滑动/滚动，取消
 function attachPeriodRowLongPress(row, code, period) {
   let timer = null;
   let sx = 0, sy = 0;
@@ -1494,11 +1413,15 @@ function attachPeriodRowLongPress(row, code, period) {
     sx = x; sy = y;
     timer = setTimeout(() => {
       longPressFired = true;
-      openMiniSheet(code, period);
+      togglePeriodRowKline(code, period, row);
     }, LONG_MS);
   };
   const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
-  row.addEventListener('pointerdown', (e) => { start(e.clientX, e.clientY); });
+  row.addEventListener('pointerdown', (e) => {
+    // 展开的 K 线区域内的长按交给十字光标，不触发行收起
+    if (e.target.closest('.period-row-kline')) return;
+    start(e.clientX, e.clientY);
+  });
   row.addEventListener('pointermove', (e) => {
     if (Math.abs(e.clientX - sx) > 10 || Math.abs(e.clientY - sy) > 10) cancel();
   });
@@ -1517,7 +1440,8 @@ function onDetailScroll() {
   if (_detailScrollRaf) return;
   _detailScrollRaf = requestAnimationFrame(() => {
     _detailScrollRaf = 0;
-    const card = document.querySelector('.sec-card--detail');
+    // 详情页（K 线）与周期列表页（分时图）顶部证券卡片共用同一套吸顶折叠逻辑
+    const card = document.querySelector('.sec-card--detail') || document.querySelector('.sec-card--periods');
     if (!card) return;
     const header = document.querySelector('.wx-header');
     const stickyTop = (header ? header.offsetHeight : 48) + 1; // 卡片吸顶时的视口 top
@@ -1525,7 +1449,25 @@ function onDetailScroll() {
     const collapsed = card.classList.contains('sec-card--collapsed');
     // 已折叠时多给 4px 滞回，防止在阈值边缘来回弹
     const shouldCollapse = collapsed ? (top <= stickyTop + 4) : (top <= stickyTop);
-    if (shouldCollapse !== collapsed) card.classList.toggle('sec-card--collapsed', shouldCollapse);
+    if (shouldCollapse !== collapsed) {
+      card.classList.toggle('sec-card--collapsed', shouldCollapse);
+      if (shouldCollapse) {
+        // 吸顶折叠时隐藏展开的图表（卡片显示为一行）；
+        // 上滑回顶不自动恢复，需手动长按重新展开，避免图表抢占下方内容视野
+        if (card.classList.contains('sec-card--detail')) {
+          if (secKlineExpanded) {
+            secKlineExpanded = false;
+            syncSecKlineVisible(card);
+          }
+        } else {
+          const wrap = card.querySelector('.sec-intraday');
+          if (wrap && wrap.classList.contains('expanded')) {
+            wrap.classList.remove('expanded');
+            card.classList.remove('intraday-expanded');
+          }
+        }
+      }
+    }
   });
 }
 
@@ -1534,6 +1476,11 @@ async function renderPeriodDetail(code, period) {
   const box = $('#sec-list');
   const sec = state.securities.find((s) => s.code === code);
   if (!sec) { navigate('list'); return; }
+  // 每次进入详情页都是全新卡片，重置 K 线展开意图与视图引用
+  secKlineExpanded = false;
+  secKlineView = null;
+  _klineView = null;
+  _klineSub = 'macd';
   const rt = state._rtPrices?.[code];
   const name = sec.name || rt?.name || code;
   const displayCode = sec.code.toUpperCase();
@@ -1624,9 +1571,24 @@ function renderSinglePeriodDetail(detail, code, g, hideBefore = null, animate = 
   if (g.loaded || g.error) {
     renderSegments(detail, g.segments || [], g.zhongshus || [], (t) => fmt(t, g.period), code, false, hideBefore, g.period, state._currentBars?.bars || []);
     attachSegmentCardActions(code, g.period);
+    attachSegmentKlineSubToggle(detail);
+    // 重渲染（实时刷新/编辑）后恢复已展开的段 K 线到新卡片上
+    restoreSegmentKlineExpansion(code, g.period);
     attachZhongshuEditActions(code, g.period);
   }
   if (animate) staggerEnter(detail, '.period-title, .plain-card, .zs-block, .empty');
+}
+
+// 副图点击切换 MACD/成交量（事件委托，段卡片重渲染后依然有效）
+function attachSegmentKlineSubToggle(container) {
+  if (container._subToggleBound) return;
+  container._subToggleBound = true;
+  container.addEventListener('click', (e) => {
+    if (!e.target.classList?.contains('card-kline-sub')) return;
+    if (!_klineView) return;
+    _klineSub = _klineSub === 'macd' ? 'vol' : 'macd';
+    paintKline();
+  });
 }
 
 // 中枢编辑/本地修改后，不重新拉取行情，直接用缓存 bars 重新计算并渲染
@@ -1664,18 +1626,24 @@ function attachSegmentCardActions(code, period) {
   });
 }
 
-// ========== 长按段号 → K 线弹层（自写 Canvas，零图表库依赖） ==========
-let _klineView = null;   // { code, period, fetchPeriod, segId, bars, visibleSegs }
+// ========== 长按段号 → 段卡片内联展开 K 线（自写 Canvas，零图表库依赖） ==========
+let _klineView = null;   // { code, period, fetchPeriod, anchorSegId, segId, bars, visibleSegs, card }
 let _klineSub = 'macd';  // 'macd' | 'vol'
+// 长按动作触发后抑制紧随其后的 click（部分浏览器长按松手会补发 click），
+// 避免「长按段号展开」后立刻又被「单击收起」逻辑误收
+let _klineClickSuppress = 0;
 
-// 长按段号：弹出 K 线弹层；stopPropagation 阻止冒泡到卡片级长按（避免同时弹出操作蒙板）
+// 长按段号：展开/收起该段卡片内的 K 线；stopPropagation 阻止冒泡到卡片级长按（避免同时弹出操作蒙板）
 function attachSegmentAvatarLongPress(card, avatar, code, period) {
   let timer = null;
   let sx = 0, sy = 0;
   const LONG_MS = 480;
   const start = (x, y) => {
     sx = x; sy = y;
-    timer = setTimeout(() => { openKlineSheet(code, period, card.dataset.id); }, LONG_MS);
+    timer = setTimeout(() => {
+      toggleSegmentKline(card, code, period);
+      _klineClickSuppress = Date.now() + 350;
+    }, LONG_MS);
   };
   const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
   avatar.addEventListener('pointerdown', (e) => { e.stopPropagation(); start(e.clientX, e.clientY); });
@@ -1687,50 +1655,78 @@ function attachSegmentAvatarLongPress(card, avatar, code, period) {
   avatar.addEventListener('contextmenu', (e) => e.preventDefault());
 }
 
-function ensureKlineSheet() {
-  let backdrop = document.getElementById('kline-sheet-backdrop');
-  if (backdrop) return;
-  backdrop = document.createElement('div');
-  backdrop.id = 'kline-sheet-backdrop';
-  backdrop.className = 'kline-sheet-backdrop';
-  backdrop.addEventListener('click', closeKlineSheet);
-  document.body.appendChild(backdrop);
-
-  const sheet = document.createElement('div');
-  sheet.id = 'kline-sheet';
-  sheet.className = 'kline-sheet';
-  sheet.innerHTML = `
-    <div class="kline-sheet-head">
-      <div class="kline-sheet-title" id="kline-sheet-title"></div>
-      <button class="kline-sheet-close" id="kline-sheet-close" type="button" aria-label="关闭">✕</button>
-    </div>
-    <canvas id="kline-main" class="kline-canvas"></canvas>
-    <canvas id="kline-sub" class="kline-canvas"></canvas>`;
-  document.body.appendChild(sheet);
-  document.getElementById('kline-sheet-close').addEventListener('click', closeKlineSheet);
-
-  // 点击副图：在 MACD 与成交量之间切换
-  document.getElementById('kline-sub').addEventListener('click', () => {
-    _klineSub = _klineSub === 'macd' ? 'vol' : 'macd';
-    paintKline();
-  });
-  // Esc 关闭
-  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeKlineSheet(); });
-  // 尺寸变化时重绘（弹层开启时）
-  window.addEventListener('resize', () => {
-    if (document.getElementById('kline-sheet-backdrop')?.classList.contains('show')) paintKline();
-  });
+// 段卡片 K 线是否处于展开状态（卡片仍在文档中且带 kline-expanded）
+function isSegmentKlineOpen() {
+  return !!(_klineView && _klineView.card && _klineView.card.isConnected
+    && _klineView.card.classList.contains('kline-expanded'));
 }
 
-function closeKlineSheet() {
-  const backdrop = document.getElementById('kline-sheet-backdrop');
-  const sheet = document.getElementById('kline-sheet');
-  if (backdrop) { backdrop.classList.remove('show'); backdrop.style.opacity = ''; backdrop.style.transition = ''; }
-  if (sheet) { sheet.classList.remove('show'); sheet.style.transform = ''; sheet.style.transition = ''; }
-  document.body.style.overflow = '';
+// 长按段号：同一卡片再次长按收起；否则收起其它已展开卡片后展开本卡片
+function toggleSegmentKline(card, code, period) {
+  if (_klineView && _klineView.card === card) {
+    collapseSegmentKline();
+    return;
+  }
+  expandSegmentKline(card, code, period);
+}
+
+function collapseSegmentKline() {
+  if (_klineView && _klineView.card) {
+    _klineView.card.classList.remove('kline-expanded');
+    _klineView.card.classList.remove('kline-cross-lock');
+  }
   _klineView = null;
 }
-window.closeKlineSheet = closeKlineSheet;
+
+async function expandSegmentKline(card, code, period) {
+  const segId = card.dataset.id;
+  const sec = state.securities.find((s) => s.code === code);
+  if (!sec) return;
+  const d = sec.drawings[period];
+  const seg = (d?.segments || []).find((s) => s.id === segId);
+  if (!seg) return;
+  // 收起其它已展开的卡片，同一时刻仅一张展开
+  if (_klineView && _klineView.card !== card) collapseSegmentKline();
+
+  // 辅助周期（15m/60m）的段实际是主周期（5m/30m）刻度，K 线必须用主周期取数，
+  // 否则段 start/end 的 time 与 15m/60m K 线 time 不对齐，drawSegConnector 找不到匹配 K 线而整段画不出来。
+  const fetchPeriod = AUX_TO_MAIN[period] || period;
+  // 优先用详情页已缓存的本周期数据；否则重新取数
+  let bars = null;
+  const cb = state._currentBars;
+  if (cb && cb.code === code && cb.period === fetchPeriod && cb.bars && cb.bars.length) {
+    bars = cb.bars;
+  } else {
+    try { bars = await ensureBars(code, fetchPeriod); computeMACD(bars); } catch { bars = []; }
+  }
+  // 把该周期数据锚定在 _klineView 上，避免被全局 _currentBars（可能被其它周期/弹窗覆盖）污染；
+  // 同时锚定 visibleSegs 快照，避免后台实时刷新重排段后窗口偏离当前段。
+  _klineView = {
+    code, period, fetchPeriod,
+    anchorSegId: segId, // 卡片归属段（重渲染后据此找回卡片）
+    segId,              // 当前聚焦段（左右滑切换窗口后更新）
+    bars: bars || [],
+    visibleSegs: getVisibleSegsForPeriod(code, period),
+    card,
+  };
+  card.classList.add('kline-expanded');
+  try { navigator.vibrate?.(10); } catch {}
+  paintKline(true);
+  // 卡片尺寸确定后再绘制一次，修正 canvas 物理像素尺寸
+  requestAnimationFrame(() => paintKline());
+}
+
+// 详情页重渲染（实时刷新/编辑）后，若仍有展开的段 K 线则恢复到新卡片上
+function restoreSegmentKlineExpansion(code, period) {
+  if (!_klineView || _klineView.code !== code || _klineView.period !== period) return;
+  const card = document.querySelector(`.card[data-id="${_klineView.anchorSegId}"]`);
+  if (!card) { collapseSegmentKline(); return; }
+  _klineView.card = card;
+  card.classList.add('kline-expanded');
+  paintKline(true);
+  requestAnimationFrame(() => paintKline());
+}
+
 // 提醒弹窗（action sheet）的关闭入口，供边缘手势退出调用
 window.closeAlertSheet = function () {
   const el = document.getElementById('alert-sheet');
@@ -1790,8 +1786,12 @@ function buildZhongshuRects(zss, segs) {
 // 取数 + 切片 + 渲染（弹层已存在时仅重绘）
 function paintKline(diag) {
   if (!_klineView) return;
-  const { code, period, fetchPeriod, segId } = _klineView;
+  const { code, period, fetchPeriod, segId, card } = _klineView;
   if (diag) console.log('[paintKline]', { code, period, fetchPeriod, segId, hasBars: !!(_klineView.bars && _klineView.bars.length), visLen: _klineView.visibleSegs?.length, diag });
+  if (!card || !card.isConnected) return;
+  const main = card.querySelector('.card-kline-main');
+  const sub = card.querySelector('.card-kline-sub');
+  if (!main || !sub) return;
   const sec = state.securities.find((s) => s.code === code);
   const d = sec?.drawings?.[period];
   const seg = (d?.segments || []).find((s) => s.id === segId);
@@ -1844,25 +1844,13 @@ function paintKline(diag) {
   }
   const sliced = sliceSegmentBars(bars, viewSeg);
   const digits = isETF(code) ? 3 : 2;
-  const title = document.getElementById('kline-sheet-title');
-  if (title) {
-    const dirUp = seg.direction === 'up';
-    const avatarBg = dirUp ? 'var(--wx-red-soft)' : 'var(--wx-green-soft)';
-    const avatarTxt = dirUp ? 'var(--wx-red)' : 'var(--wx-green)';
-    const st = seg.start, en = seg.end;
-    const cardEl = document.querySelector(`.card[data-id="${segId}"]`);
-    const segNo = (cardEl?.querySelector('.card-avatar')?.textContent || '').trim() || segId;
-    title.innerHTML =
-      `<span class="kline-seg-no" style="background:${avatarBg};color:${avatarTxt}">${segNo}</span> ` +
-      `<span class="kline-seg-range">${fmtNoYear(st.time, period)} ${formatPrice(code, st.price)} → ${fmtNoYear(en.time, period)} ${formatPrice(code, en.price)}</span>`;
-  }
-  const main = document.getElementById('kline-main');
-  const sub = document.getElementById('kline-sub');
   renderKlineChart(main, sub, sliced, {
     segs: viewSegItems, sub: _klineSub, period, digits, subH: 96,
     // 与周期列表弹窗一致：noSwipe + crosshairOnly 让主图单独接管手势，避免 bindSubSwipe 双层
     // 绑定导致横滑切换被吞；onSwipe 保留 K 线弹窗内左右滑切换段的能力。
     noSwipe: true, crosshairOnly: true, solidMacd: true, onSwipe: switchKlineSegment,
+    // 十字态锁定触摸，避免拖动十字时页面跟着滚动
+    onCrossChange: (active) => card.classList.toggle('kline-cross-lock', active),
   });
 }
 
@@ -1887,8 +1875,9 @@ export function switchKlineSegment(dir) {
   const newSegId = visibleSegs[newSegIdx].id;
 
   _klineSwitching = true;
-  const main = document.getElementById('kline-main');
-  const sub = document.getElementById('kline-sub');
+  if (!_klineView.card) { _klineSwitching = false; return; }
+  const main = _klineView.card.querySelector('.card-kline-main');
+  const sub = _klineView.card.querySelector('.card-kline-sub');
   const dur = '.18s';
   const setBoth = (op, tx, withTransition) => {
     [main, sub].forEach((el) => {
@@ -1918,47 +1907,9 @@ export function switchKlineSegment(dir) {
 }
 window.switchKlineSegment = switchKlineSegment;
 
-async function openKlineSheet(code, period, segId) {
-  const sec = state.securities.find((s) => s.code === code);
-  if (!sec) return;
-  const d = sec.drawings[period];
-  const seg = (d?.segments || []).find((s) => s.id === segId);
-  if (!seg) return;
-
-  // 辅助周期（15m/60m）的段实际是主周期（5m/30m）刻度，K 线必须用主周期取数，
-  // 否则段 start/end 的 time 与 15m/60m K 线 time 不对齐，drawSegConnector 找不到匹配 K 线而整段画不出来。
-  const fetchPeriod = AUX_TO_MAIN[period] || period;
-
-  ensureKlineSheet();
-
-  const cb = state._currentBars;
-  let bars;
-  if (cb && cb.code === code && cb.period === fetchPeriod && cb.bars && cb.bars.length) {
-    bars = cb.bars;
-  } else {
-    try { bars = await ensureBars(code, fetchPeriod); computeMACD(bars); }
-    catch { bars = []; }
-  }
-  // 把该周期数据锚定在 _klineView 上，避免后续被全局 _currentBars（可能被其它周期/弹窗覆盖）污染，
-  // 否则长按 K 线出现十字时重绘可能拿到错误周期的 K 线（如变成 1 分钟周期）。
-  // 同时锚定 visibleSegs 快照：后台实时刷新可能重排段或改变 hideBefore，导致 getVisibleSegsForPeriod
-  // 返回的可见段变少（如只剩 3 段），窗口计算 Math.min(idx-1, len-3) 在 len<=3 时强制 startIdx=0，
-  // 于是长按出十字后的重绘会「固定显示前 3 段（1、2、3）」，而非停留在当前段。锚定后窗口稳定。
-  // fetchPeriod 用于取数/匹配 _currentBars；period 用于段数据查找与标题显示。
-  _klineView = { code, period, fetchPeriod, segId, bars, visibleSegs: getVisibleSegsForPeriod(code, period) };
-  paintKline(true);
-  const backdrop = document.getElementById('kline-sheet-backdrop');
-  const sheet = document.getElementById('kline-sheet');
-  backdrop.classList.add('show');
-  sheet.classList.add('show');
-  document.body.style.overflow = 'hidden';
-  // 弹层首次展示后尺寸已确定，再绘制一次以修正 canvas 物理像素尺寸
-  requestAnimationFrame(() => paintKline());
-}
-
-// 详情页实时刷新：K 线弹层打开且匹配当前周期时，重切并重绘（盯盘段专用）
+// 详情页实时刷新：段卡片 K 线处于展开态且匹配当前周期时，重切并重绘（盯盘段专用）
 function refreshKlineSheet() {
-  if (!_klineView) return;
+  if (!isSegmentKlineOpen()) return;
   const { code, fetchPeriod } = _klineView;
   const cb = state._currentBars;
   if (!cb || cb.code !== code || cb.period !== fetchPeriod) {
@@ -1967,7 +1918,7 @@ function refreshKlineSheet() {
   }
   // 用最新周期数据刷新锚定的 bars，确保重绘仍是正确周期
   if (cb.bars && cb.bars.length) _klineView.bars = cb.bars;
-  if (document.getElementById('kline-sheet-backdrop')?.classList.contains('show')) paintKline(true);
+  paintKline(true);
 }
 window.refreshKlineSheet = refreshKlineSheet;
 
@@ -1976,24 +1927,41 @@ let activeCardOverlay = null;
 function attachSegmentLongPress(card, code, period) {
   let timer = null;
   let sx = 0, sy = 0;
+  let targetEl = null;
   const LONG_MS = 480;
   const start = (x, y) => {
     sx = x; sy = y;
     timer = setTimeout(() => {
+      _klineClickSuppress = Date.now() + 350;
+      // K 线展开态：长按顶部内容区（非 K 线画布）→ 收起 K 线；长按画布交给十字光标；
+      // 两种情况都不弹出段操作菜单。
+      if (card.classList.contains('kline-expanded')) {
+        if (targetEl && !targetEl.closest('.card-kline')) collapseSegmentKline();
+        return;
+      }
       showCardOverlay(card, code, period);
     }, LONG_MS);
   };
   const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
-  card.addEventListener('pointerdown', (e) => { start(e.clientX, e.clientY); });
+  card.addEventListener('pointerdown', (e) => { targetEl = e.target; start(e.clientX, e.clientY); });
   card.addEventListener('pointermove', (e) => {
     if (Math.abs(e.clientX - sx) > 10 || Math.abs(e.clientY - sy) > 10) cancel();
   });
   card.addEventListener('pointerup', cancel);
   card.addEventListener('pointercancel', cancel);
   card.addEventListener('contextmenu', (e) => e.preventDefault());
+  // 展开态：单击顶部内容区（非 K 线画布）即收起 K 线；画布点击交给十字光标
+  card.addEventListener('click', (e) => {
+    if (Date.now() < _klineClickSuppress) return;
+    if (!card.classList.contains('kline-expanded')) return;
+    if (e.target.closest('.card-kline')) return;
+    collapseSegmentKline();
+  });
 }
 
 function showCardOverlay(card, code, period) {
+  // 展开 K 线时禁止长按弹出段操作菜单（长按留给十字光标 / 段号收起）
+  if (card.classList.contains('kline-expanded')) return;
   hideCardOverlay();
   const segId = card.dataset.id;
   const sec = state.securities.find((s) => s.code === code);
@@ -2754,14 +2722,11 @@ function startDetailRealtime() {
     if (document.hidden) return;
     // 三种场景触发刷新：
     //  1) 详情页盯盘 tab（段卡片页，需有盯盘段/追踪段才更新段终点）
-    //  2) 段卡片页长按弹出的 K 线窗口（_klineView 存在且已展开）
-    //  3) 周期列表页长按弹出的周期 K 线窗口（_miniView 存在且已展开）
-    // 周期列表页的 state.view 为 'periods'，原本的硬门槛会让弹窗在交易时段完全不刷新，
-    // 只有离开再进 detail 才更新，故在此解耦弹窗刷新与 detail 视图。
-    const klineOpen = !!_klineView && document.getElementById('kline-sheet-backdrop')?.classList.contains('show');
-    const miniOpen = !!_miniView
-      && !!document.getElementById('mini-sheet')?.classList.contains('show')
-      && !!document.getElementById('mini-sheet-backdrop')?.classList.contains('show');
+    //  2) 段卡片页长按段号展开的 K 线（_klineView 存在且已展开）
+    //  3) 周期列表页长按展开的行内 K 线（至少一行 .expanded）
+    // 周期列表页的 state.view 为 'periods'，原本的硬门槛会让行内图在交易时段完全不刷新，
+    // 只有离开再进 detail 才更新，故在此解耦行内图刷新与 detail 视图。
+    const klineOpen = isSegmentKlineOpen();
     let code, period, isWatchScope = false;
     if (state.view === 'detail' && state.activeTab === 'dingpan') {
       code = state.selectedCode;
@@ -2769,10 +2734,13 @@ function startDetailRealtime() {
       isWatchScope = true;
     } else if (klineOpen) {
       code = _klineView.code;
-      period = _klineView.period; // 段数据键：辅助周期保留自己的 drawings 副本
-    } else if (miniOpen) {
-      code = _miniView.code;
-      period = _miniView.periods[_miniView.idx]; // 正在看的那一页对应的周期
+      period = _klineView.period; // 段数据键：辅助周期已别名到主周期，读取的即是主周期的盯盘/追踪段
+    } else if (state.view === 'periods') {
+      // 取第一个展开行作为本轮取数/节流目标；刷新后统一重画所有展开行
+      const openRow = document.querySelector('.period-row.expanded');
+      if (!openRow) return;
+      code = state.selectedCode;
+      period = openRow.dataset.period;
       if (!period) return;
     } else {
       return;
@@ -2790,7 +2758,7 @@ function startDetailRealtime() {
     const hasTrack = !!(d && (d.segments || []).some((s) => s._isTrack));
     if (!hasWatch && !hasTrack) {
       // 段弹窗仍要拉最新 K 线让蜡烛图跟上行情；详情页仍要用新 bars 重算力度展示。
-      // 只有周期弹窗在没有盯盘段/追踪段时本次无需请求。
+      // 只有周期行内图在没有盯盘段/追踪段时本次无需请求。
       if (!klineOpen && !isWatchScope) return;
     }
     state._lastWatchFetch = now;
@@ -2811,10 +2779,8 @@ function startDetailRealtime() {
       // 详情页：段数据变化、或没有盯盘段/追踪段（需用新 bars 重算力度展示）时才重绘
       if (isWatchScope && (changed || (!hasWatch && !hasTrack))) refreshPeriodDetailWithoutFetch(code, period);
       if (klineOpen) refreshKlineSheet();
-      if (miniOpen && changed) {
-        _miniView.updateTitle?.(_miniView.idx);
-        repaintMiniSheet();
-      }
+      // 周期列表页：用本轮最新 bars 同步重绘所有展开的行内 K 线
+      if (state.view === 'periods' && state.selectedCode === code) refreshPeriodRowsKline(code);
     } catch {}
   }, 15000);
 }
@@ -4733,9 +4699,14 @@ function init() {
     // CLR. 文本：黑白态→黑字（代表黑白设置），彩色态→红字（代表彩色设置）
     if (themeClr) themeClr.style.color = mono ? '#111111' : '#fa5151';
     if (themeBtn) themeBtn.setAttribute('aria-label', mono ? '点击切换为彩色' : '点击切换为黑白');
-    // 主题变化后重绘已展开的分时图，使红/绿线跟随主题色更新。
+    // 主题变化后重绘已展开的分时图与详情页 K 线图，使红/绿颜色跟随主题色更新。
     // requestAnimationFrame 确保浏览器先完成 CSS 变量计算，避免读到旧颜色。
-    requestAnimationFrame(() => repaintIntradayCharts());
+    requestAnimationFrame(() => {
+      repaintIntradayCharts();
+      repaintView(secKlineView);
+      if (isSegmentKlineOpen()) paintKline();
+      repaintPeriodRowsKline();
+    });
   };
   const saved = localStorage.getItem(THEME_KEY);
   applyTheme(saved ? saved === 'mono' : true); // 无记录时默认黑白

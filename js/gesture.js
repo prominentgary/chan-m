@@ -11,14 +11,6 @@
   let active = false, decided = false, edge = null, pointerId = null;
 
   const box = () => document.getElementById('sec-list');
-  const miniEl = () => document.getElementById('mini-sheet');
-  const miniBackdrop = () => document.getElementById('mini-sheet-backdrop');
-
-  // 简图（底部抽屉）是否打开
-  function isMiniSheetOpen() {
-    const b = miniBackdrop();
-    return !!(b && b.classList.contains('show'));
-  }
 
   // 仅当「盯盘」子视图中存在返回按钮时，才允许手势返回
   function canBack() {
@@ -27,20 +19,13 @@
     return !!b.querySelector('.nav-back-bottom');
   }
 
-  // 当前打开、可被边缘滑动退出的弹窗（优先级：简图 → 提醒 → K线）
+  // 当前打开、可被边缘滑动退出的弹窗（优先级：提醒 → K线）
   // 任一弹窗打开时，边缘左/右滑优先触发退出该弹窗
   function activePopup() {
-    if (isMiniSheetOpen()) {
-      return { el: miniEl(), backdrop: miniBackdrop(), closeFn: () => window.closeMiniSheet && window.closeMiniSheet() };
-    }
     const alertSheet = document.getElementById('alert-sheet');
     if (alertSheet && alertSheet.classList.contains('show')) {
       const sheet = alertSheet.querySelector('.action-sheet') || alertSheet;
       return { el: sheet, backdrop: alertSheet, closeFn: () => window.closeAlertSheet && window.closeAlertSheet() };
-    }
-    const klineBd = document.getElementById('kline-sheet-backdrop');
-    if (klineBd && klineBd.classList.contains('show')) {
-      return { el: document.getElementById('kline-sheet'), backdrop: klineBd, closeFn: () => window.closeKlineSheet && window.closeKlineSheet() };
     }
     // 标题栏搜索框（长按盯盘/行情弹出）：边缘左/右滑应退出搜索框，而非触发系统返回退出程序。
     // 等价于其它弹窗：gesture.js 拦截并关闭，配合 search-edge-guard 的 touch-action:none 屏蔽系统手势。

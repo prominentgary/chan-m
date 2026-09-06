@@ -168,6 +168,10 @@ function segCard(seg, idx, ctx, readonly, extraClass = '', reversed = false) {
         </div>
       </div>
     </div>
+    <div class="card-kline">
+      <canvas class="card-kline-main"></canvas>
+      <canvas class="card-kline-sub"></canvas>
+    </div>
   </div>`;
 }
 

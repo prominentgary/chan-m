@@ -196,28 +196,32 @@ export function renderKlineChart(main, sub, bars, opts = {}) {
   _view = view;
   repaintMain();
   repaintSub();
-  if (opts.subToggle) bindSubToggle(sub);
+  if (opts.subToggle) bindSubToggle(sub, opts.ownView ? view : null);
   if (!opts.noSwipe) {
     bindCrosshair(view, main, {});
-    bindSubSwipe(sub, window.switchKlineSegment);
+    bindSubSwipe(sub, window.switchKlineSegment, view);
   } else if (opts.crosshairOnly) {
     // useGlobalView: 段卡片弹窗（无 subSwipe）同一 canvas 复用，需用全局 _view 获取最新数据；
     // 周期卡片弹窗（有 subSwipe）每页独立 canvas，必须用闭包 view 避免被其他页覆盖。
-    bindCrosshair(view, main, { noSwitch: true, useGlobalView: !opts.subSwipe, onSwipe: opts.onSwipe });
+    // ownView: 周期页多行同时展开时，每行都用闭包 view，避免共享全局 _view 相互覆盖。
+    bindCrosshair(view, main, { noSwitch: true, useGlobalView: opts.ownView ? false : !opts.subSwipe, onSwipe: opts.onSwipe });
     // 仅当显式要求副图横滑切换时才绑定（周期弹窗切页需要）。
     // 段卡片 K 线弹层(noSwipe)本就锁定显示该段，禁止任何横滑切换，否则长按出十字后
     // 手指在副图微动会误触发 switchKlineSegment，把 K 线换成相邻段（如 2、3、4 段）。
-    if (opts.subSwipe) bindSubSwipe(sub, opts.onSwipe);
+    if (opts.subSwipe) bindSubSwipe(sub, opts.onSwipe, view);
   }
+  return view;
 }
 
-function bindSubToggle(sub) {
+function bindSubToggle(sub, viewRef) {
   if (!sub || sub._chanmSubToggleBound) return;
   sub._chanmSubToggleBound = true;
   sub.addEventListener('click', () => {
-    if (!_view) return;
-    _view.subType = _view.subType === 'macd' ? 'vol' : 'macd';
-    repaintSub();
+    // ownView（周期页多行展开）时用闭包 view，避免切换副图时改到其它行的图
+    const v = viewRef || _view;
+    if (!v) return;
+    v.subType = v.subType === 'macd' ? 'vol' : 'macd';
+    repaintSub(v);
   });
 }
 
@@ -229,10 +233,20 @@ function repaintMain(cross) {
   if (cross) drawMainCross(_view.mainMeta, cross, colors, digits, period);
 }
 
-function repaintSub() {
-  if (!_view) return;
-  const { sub, bars, subType, colors, period, subH, solidMacd } = _view;
-  _view.subMeta = drawSubCanvas(sub, bars, subType, colors, period, subH, solidMacd);
+function repaintSub(v) {
+  v = v || _view;
+  if (!v) return;
+  const { sub, bars, subType, colors, period, subH, solidMacd } = v;
+  v.subMeta = drawSubCanvas(sub, bars, subType, colors, period, subH, solidMacd);
+}
+
+// 主题切换等场景：按传入 view 重绘主图 + 副图（重新读取当前主题色）。
+// 不依赖全局 _view，可精确重绘指定 canvas（如详情页证券卡片内展开的 K 线图）。
+export function repaintView(view) {
+  if (!view) return;
+  view.colors = resolveColors();
+  view.mainMeta = drawMainCanvas(view.main, view.bars, view.segs, view.zhongshus, view.colors, view.period, view.digits);
+  view.subMeta = drawSubCanvas(view.sub, view.bars, view.subType, view.colors, view.period, view.subH, view.solidMacd);
 }
 
 function drawMainCanvas(canvas, bars, segs, zhongshus, colors, period, digits) {
@@ -340,7 +354,7 @@ function drawMainCanvas(canvas, bars, segs, zhongshus, colors, period, digits) {
 function drawSubCanvas(canvas, bars, subType, colors, period, subH, solidMacd) {
   const { ctx, w, h } = setupCanvas(canvas, subH);
   ctx.clearRect(0, 0, w, h);
-  if (!bars.length) return { n: 0 };
+  if (!bars.length) return { n: 0, subType };
 
   const padR = 46, padL = 8;
   const plotW = w - padR - padL;
@@ -349,9 +363,9 @@ function drawSubCanvas(canvas, bars, subType, colors, period, subH, solidMacd) {
   const step = plotW / n;
   const cw = Math.max(1, step * 0.62);
   const xOf = (i) => padL + (i + 0.5) * step;
+  let mn = 0, mx = 0, maxV = 0;
 
   if (subType === 'macd') {
-    let mn = 0, mx = 0;
     for (const b of bars) {
       mn = Math.min(mn, b.macd, b.dif, b.dea);
       mx = Math.max(mx, b.macd, b.dif, b.dea);
@@ -400,7 +414,6 @@ function drawSubCanvas(canvas, bars, subType, colors, period, subH, solidMacd) {
     ctx.fillStyle = colors.blue;
     ctx.fillText('DEA', padL + 34, 8);
   } else {
-    let maxV = 0;
     for (const b of bars) maxV = Math.max(maxV, b.volume || 0);
     if (maxV <= 0) maxV = 1;
     const yOf = (v) => plotH - (v / maxV) * plotH;
@@ -417,7 +430,7 @@ function drawSubCanvas(canvas, bars, subType, colors, period, subH, solidMacd) {
     ctx.fillStyle = colors.muted;
     ctx.fillText(fmtVol(maxV), padL + plotW + 4, Math.max(5, yOf(maxV)));
   }
-  return { n };
+  return { ctx, w, h, n, plotW, plotH, padL, subType, mn, mx, maxV };
 }
 
 // 主图十字光标 + OHLC 读数 + 左右滑切换段
@@ -425,10 +438,13 @@ function drawSubCanvas(canvas, bars, subType, colors, period, subH, solidMacd) {
 //       未进入十字态时主图左右滑切换上/下段。
 // 重要：bindCrosshair 接收 view + main 参数（而非从全局 _view 读取），
 //       避免多页周期弹窗中并发 renderKlineChart 覆盖全局 _view 导致拿到错误的 canvas。
+// 十字可移到副图：垂直虚线贯通主/副图；水平线与读数跟随手指所在区域
+//   （主图显示价格，副图显示 MACD 值或成交量）。
 function bindCrosshair(view, main, opts = {}) {
   if (!view || !main) { console.warn('[十字] bindCrosshair skip: no view or main'); return; }
   if (main._klBound) return;
   main._klBound = true;
+  const sub = view.sub || null;
   const noSwitch = opts.noSwitch;
   // noSwitch 为真（如段卡片 K 线弹层）时禁用横滑切段/切页，否则长按出十字后手指微动会误触发切段
   const swipeFn = noSwitch ? null : (opts.onSwipe || window.switchKlineSegment);
@@ -460,18 +476,50 @@ function bindCrosshair(view, main, opts = {}) {
     const newMeta = drawMainCanvas(main, bars, segs, zhongshus, colors, period, digits);
     if (!newMeta || !newMeta.n) return;
     v.mainMeta = newMeta;
-    if (cross) drawMainCrossLocal(cross);
+    // 副图同样重绘，以清除上一帧的十字线
+    if (v.sub) v.subMeta = drawSubCanvas(v.sub, bars, v.subType, colors, period, v.subH, v.solidMacd);
+    if (cross) drawCrossLocal(cross);
   };
-  const drawMainCrossLocal = (cross) => {
+  // 右侧读数徽标（价格/MACD/量）
+  const drawReadoutBadge = (ctx, text, x, y, colors) => {
+    ctx.save();
+    ctx.font = '10px sans-serif';
+    ctx.textBaseline = 'middle';
+    ctx.textAlign = 'center';
+    const w = ctx.measureText(text).width;
+    ctx.fillStyle = colors.accent;
+    roundRect(ctx, x - w / 2 - 4, y - 8, w + 8, 16, 3);
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.fillText(text, x, y);
+    ctx.restore();
+  };
+  // 底部时间徽标
+  const drawTimeBadge = (ctx, text, cx, plotW, padL, ty, colors) => {
+    ctx.save();
+    ctx.font = '10px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const w = ctx.measureText(text).width;
+    const tx = Math.max(padL + 4 + w / 2, Math.min(padL + plotW - 4 - w / 2, cx));
+    ctx.fillStyle = colors.accent;
+    roundRect(ctx, tx - w / 2 - 4, ty - 7, w + 8, 14, 3);
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.fillText(text, tx, ty);
+    ctx.restore();
+  };
+  const drawCrossLocal = (cross) => {
     const v = getView();
     if (!v) return;
     const meta = v.mainMeta;
     if (!meta) return;
     const colors = v.colors;
-    const { ctx, padL, plotW, plotH, min, max } = meta;
+    const { ctx, padL, plotW, plotH } = meta;
     const b = cross.bar;
     const cx = cross.x;
-    const cy = Math.min(plotH, Math.max(0, cross.y));
+    const digits = v.digits;
+    // 主图垂直虚线
     ctx.save();
     ctx.strokeStyle = colors.muted;
     ctx.lineWidth = 1;
@@ -480,39 +528,30 @@ function bindCrosshair(view, main, opts = {}) {
     ctx.moveTo(cx, 0);
     ctx.lineTo(cx, plotH);
     ctx.stroke();
-    ctx.beginPath();
-    ctx.moveTo(padL, cy);
-    ctx.lineTo(padL + plotW, cy);
-    ctx.stroke();
     ctx.setLineDash([]);
-    const digits = v.digits;
-    const price = max - (cy / plotH) * (max - min);
-    const priceTxt = price.toFixed(digits);
-    ctx.font = '10px sans-serif';
-    ctx.textBaseline = 'middle';
-    ctx.textAlign = 'center';
-    const pw = ctx.measureText(priceTxt).width;
-    const px = padL + plotW + 24, py = cy;
-    ctx.fillStyle = colors.accent;
-    roundRect(ctx, px - pw / 2 - 4, py - 8, pw + 8, 16, 3);
-    ctx.fill();
-    ctx.fillStyle = '#fff';
-    ctx.fillText(priceTxt, px, py);
-    const timeTxt = fmtCrossTime(b.time, v.period);
-    ctx.textAlign = 'center';
-    const timeW = ctx.measureText(timeTxt).width;
-    const tx = Math.max(padL + 4 + timeW / 2, Math.min(padL + plotW - 4 - timeW / 2, cx));
-    const ty = plotH + 9;
-    ctx.fillStyle = colors.accent;
-    roundRect(ctx, tx - timeW / 2 - 4, ty - 7, timeW + 8, 14, 3);
-    ctx.fill();
-    ctx.fillStyle = '#fff';
-    ctx.fillText(timeTxt, tx, ty);
+    ctx.restore();
+    // 副图垂直虚线（贯通）
+    const sMeta = v.subMeta;
+    if (sMeta && sMeta.n && sMeta.ctx) {
+      const sCtx = sMeta.ctx;
+      sCtx.save();
+      sCtx.strokeStyle = colors.muted;
+      sCtx.lineWidth = 1;
+      sCtx.setLineDash([3, 3]);
+      sCtx.beginPath();
+      sCtx.moveTo(cx, 0);
+      sCtx.lineTo(cx, sMeta.plotH);
+      sCtx.stroke();
+      sCtx.setLineDash([]);
+      sCtx.restore();
+    }
+    // 主图 OHLC 信息框（始终显示在左上角）
     const up = b.close >= b.open;
     const col = up ? colors.red : colors.green;
     const txt =
       `${fmtCrossTime(b.time, v.period)}  开${b.open.toFixed(digits)} 高${b.high.toFixed(digits)} ` +
       `低${b.low.toFixed(digits)} 收${b.close.toFixed(digits)} 量${fmtVol(b.volume || 0)}`;
+    ctx.save();
     ctx.font = '10px sans-serif';
     ctx.textBaseline = 'top';
     ctx.textAlign = 'left';
@@ -526,26 +565,70 @@ function bindCrosshair(view, main, opts = {}) {
     ctx.fillStyle = col;
     ctx.fillText(txt, bx + 4, by + 2);
     ctx.restore();
-  };
-  const crossPos = (e) => {
-    const rect = main.getBoundingClientRect();
-    let x = e.clientX - rect.left;
-    let y = e.clientY - rect.top;
-    x = Math.max(0, Math.min(rect.width, x));
-    y = Math.max(0, Math.min(rect.height, y));
-    return { x, y };
+    // 日期时间始终显示在主图底部横坐标（时间轴）上，十字移到副图也不跟随
+    drawTimeBadge(ctx, fmtCrossTime(b.time, v.period), cx, plotW, padL, plotH + 9, colors);
+    if (cross.zone === 'main') {
+      // 主图：水平线 + 价格读数
+      const cy = Math.min(plotH, Math.max(0, cross.y));
+      ctx.save();
+      ctx.strokeStyle = colors.muted;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.moveTo(padL, cy);
+      ctx.lineTo(padL + plotW, cy);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.restore();
+      const { min, max } = meta;
+      const price = max - (cy / plotH) * (max - min);
+      drawReadoutBadge(ctx, price.toFixed(digits), padL + plotW + 24, cy, colors);
+    } else if (sMeta && sMeta.n) {
+      // 副图：水平线 + 副图读数（MACD 值 / 成交量）
+      const sCtx = sMeta.ctx;
+      const sy = Math.min(sMeta.plotH, Math.max(0, cross.subY));
+      sCtx.save();
+      sCtx.strokeStyle = colors.muted;
+      sCtx.lineWidth = 1;
+      sCtx.setLineDash([3, 3]);
+      sCtx.beginPath();
+      sCtx.moveTo(sMeta.padL, sy);
+      sCtx.lineTo(sMeta.padL + sMeta.plotW, sy);
+      sCtx.stroke();
+      sCtx.setLineDash([]);
+      sCtx.restore();
+      let valTxt;
+      if (sMeta.subType === 'vol') {
+        valTxt = fmtVol(((sMeta.plotH - sy) / sMeta.plotH) * sMeta.maxV);
+      } else {
+        const val = sMeta.mn + ((sMeta.plotH - sy) / sMeta.plotH) * (sMeta.mx - sMeta.mn);
+        valTxt = val.toFixed(2);
+      }
+      drawReadoutBadge(sCtx, valTxt, sMeta.padL + sMeta.plotW + 24, sy, colors);
+    }
   };
   const showAt = (e) => {
     const v = getView();
     if (!v || !v.mainMeta) return;
-    const { x, y } = crossPos(e);
+    const rect = main.getBoundingClientRect();
+    let x = e.clientX - rect.left;
+    x = Math.max(0, Math.min(rect.width, x));
+    // 按手指所在高度判断十字落在主图还是副图
+    const zone = e.clientY <= rect.bottom ? 'main' : 'sub';
+    let y = 0, subY = 0;
+    if (zone === 'main') {
+      y = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
+    } else if (v.sub) {
+      const sRect = v.sub.getBoundingClientRect();
+      subY = Math.max(0, Math.min(sRect.height, e.clientY - sRect.top));
+    }
     const meta = v.mainMeta;
     if (!meta || !meta.n) return;
     let idx = Math.round((x - meta.padL) / (meta.plotW / meta.n) - 0.5);
     idx = Math.max(0, Math.min(meta.n - 1, idx));
     const b = v.bars[idx];
     if (!b) return;
-    repaintLocal({ x, y, idx, bar: b });
+    repaintLocal({ x, y, subY, idx, bar: b, zone });
   };
   const clearLp = () => { if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; } };
   const clearHide = () => { if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; } };
@@ -563,7 +646,7 @@ function bindCrosshair(view, main, opts = {}) {
     hideTimer = setTimeout(() => { hideTimer = null; hideCross(); }, 5000);
   };
 
-  main.addEventListener('pointerdown', (e) => {
+  const onDown = (e) => {
     if (e.clientX <= EDGE || e.clientX >= window.innerWidth - EDGE) return;
     // canvas 已有 touch-action:none CSS，不额外 preventDefault
     sx = e.clientX; sy = e.clientY;
@@ -572,21 +655,20 @@ function bindCrosshair(view, main, opts = {}) {
     clearLp();
     clearHide();
     if (e.pointerType === 'mouse') {
-      try { main.setPointerCapture(e.pointerId); } catch {}
+      try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
       setCrossActive(true);
       showAt(e);
     } else {
       // 触摸：延迟到长按确认后再 capture，避免过早 capture 干扰浏览器事件分发
       lpTimer = setTimeout(() => {
         lpFired = true;
-        try { main.setPointerCapture(e.pointerId); } catch {}
+        try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
         setCrossActive(true);
         showAt(e);
       }, LONG_MS);
     }
-  });
-
-  main.addEventListener('pointermove', (e) => {
+  };
+  const onMove = (e) => {
     if (e.pointerType === 'mouse') { showAt(e); return; }
     const v = getView();
     if (v && v.crossActive) {
@@ -605,12 +687,11 @@ function bindCrosshair(view, main, opts = {}) {
         e.stopPropagation();
       }
     }
-  });
-
-  main.addEventListener('pointerup', (e) => {
+  };
+  const onUp = (e) => {
     if (e.pointerType === 'mouse') { hideCross(); return; }
     clearLp();
-    try { main.releasePointerCapture(e.pointerId); } catch {}
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch {}
     const v = getView();
     if (swiping && swipeFn && !(v && v.crossActive)) {
       const dx = e.clientX - sx;
@@ -628,16 +709,36 @@ function bindCrosshair(view, main, opts = {}) {
       if (isTap) hideCross();
       else scheduleHide();
     }
-  });
-  main.addEventListener('pointercancel', (e) => { try { main.releasePointerCapture(e.pointerId); } catch {} clearLp(); if (!swiping) scheduleHide(); });
-  main.addEventListener('pointerleave', (e) => { if (e.pointerType === 'mouse') repaintLocal(); });
+  };
+  const onCancel = (e) => {
+    try { e.currentTarget.releasePointerCapture(e.pointerId); } catch {}
+    clearLp();
+    if (!swiping) scheduleHide();
+  };
+  const onLeave = (e) => { if (e.pointerType === 'mouse') repaintLocal(); };
+
+  main.addEventListener('pointerdown', onDown);
+  main.addEventListener('pointermove', onMove);
+  main.addEventListener('pointerup', onUp);
+  main.addEventListener('pointercancel', onCancel);
+  main.addEventListener('pointerleave', onLeave);
   main.addEventListener('contextmenu', (e) => e.preventDefault());
+  // 副图同样绑定十字光标，使十字可移到副图（长按副图同样可激活）
+  if (sub && !sub._klCrossBound) {
+    sub._klCrossBound = true;
+    sub.addEventListener('pointerdown', onDown);
+    sub.addEventListener('pointermove', onMove);
+    sub.addEventListener('pointerup', onUp);
+    sub.addEventListener('pointercancel', onCancel);
+    sub.addEventListener('pointerleave', onLeave);
+    sub.addEventListener('contextmenu', (e) => e.preventDefault());
+  }
 }
 
 // 副图左右滑切换（左滑→下一项，右滑→上一项）；边缘滑动交给全局手势退出弹窗。
 // swipeFn 由调用方传入：周期卡片弹窗传 switchPeriodPage，段卡片弹窗传 switchKlineSegment。
-// 注意：副图横滑切换不受主图十字线状态影响，任何时刻都生效，方便在十字线显示时也能切页/切段。
-function bindSubSwipe(sub, swipeFn) {
+// view 用于判断十字态：十字激活时禁止副图横滑切页/切段，避免拖动十字时误切换。
+function bindSubSwipe(sub, swipeFn, view) {
   if (sub._klBound) return;
   sub._klBound = true;
   const fn = swipeFn || window.switchKlineSegment;
@@ -657,6 +758,7 @@ function bindSubSwipe(sub, swipeFn) {
 
   sub.addEventListener('pointermove', (e) => {
     if (moved) return;
+    if (view && view.crossActive) return; // 十字态下禁止副图横滑，拖动十字不切页
     const dx = e.clientX - sx, dy = e.clientY - sy;
     if (Math.abs(dx) > MOVE_PX || Math.abs(dy) > MOVE_PX) {
       moved = true;
