@@ -14,6 +14,7 @@ function resolveColors() {
     blue: v('--wx-blue', '#576b95'),
     card: v('--wx-card', '#fff'),
     bg: v('--wx-bg', '#f5f5f5'),
+    mono: document.body.classList.contains('mono'),
   };
 }
 
@@ -97,7 +98,7 @@ function timeToX(bars, time, xOf) {
   return xOf(bars.length - 1);
 }
 
-// 中枢矩形（颜色与中枢第一段相反：第一段跌→红，第一段涨→绿）
+// 中枢矩形（颜色与中枢第一段相反：第一段跌→红，第一段涨→绿；黑白配色下用主题色）
 function drawZhongshuRect(ctx, meta, zs, colors) {
   const { bars, xOf, yOf } = meta;
   if (!bars || !bars.length) return;
@@ -107,14 +108,13 @@ function drawZhongshuRect(ctx, meta, zs, colors) {
   const y1 = yOf(zs.high);
   const y2 = yOf(zs.low);
   ctx.save();
-  ctx.strokeStyle = zs.firstDir === 'up' ? colors.green : colors.red;
+  ctx.strokeStyle = colors.mono ? colors.accent : (zs.firstDir === 'up' ? colors.green : colors.red);
   ctx.lineWidth = 1.4;
-  ctx.setLineDash([5, 3]);
   ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
   ctx.restore();
 }
 
-// 段起点→终点连线（红涨绿跌，线型统一为虚线 + 端点圆点），no 为可选段号
+// 段起点→终点连线（红涨绿跌，黑白配色下用主题色；实线 + 端点圆点），no 为可选段号
 function drawSegConnector(ctx, meta, seg, colors, no) {
   const { bars, xOf, yOf } = meta;
   if (!bars || !bars.length) return;
@@ -123,11 +123,10 @@ function drawSegConnector(ctx, meta, seg, colors, no) {
   if (x1 < 0 || x2 < 0) return;
   const y1 = yOf(seg.start.price);
   const y2 = yOf(seg.end.price);
-  const col = seg.direction === 'up' ? colors.red : colors.green;
+  const col = colors.mono ? colors.accent : (seg.direction === 'up' ? colors.red : colors.green);
   ctx.save();
   ctx.strokeStyle = col;
   ctx.lineWidth = 1.4;
-  ctx.setLineDash([5, 3]);
   ctx.beginPath();
   ctx.moveTo(x1, y1);
   ctx.lineTo(x2, y2);
@@ -343,7 +342,7 @@ function drawMainCanvas(canvas, bars, segs, zhongshus, colors, period, digits) {
       drawZhongshuRect(ctx, meta, zs, colors);
     }
   }
-  // 段起点→终点 点线段连接
+  // 段起点→终点实线段连接
   for (const { seg: s, no } of segList) {
     if (s?.start && s?.end) drawSegConnector(ctx, meta, s, colors, no);
   }

@@ -878,6 +878,38 @@ body.search-header-fixed .search-edge-guard { display: block; }
   /* 折叠过渡更顺滑（高度随内边距/字号变化而平滑收起，下方内容跟随，无跳变） */
   transition: box-shadow .18s ease;
 }
+/* 图表（K线/分时图）展开时：卡片不吸顶，跟随页面自然滚动，展板保持完整 */
+.sec-card--detail.intraday-expanded,
+.sec-card--periods.intraday-expanded {
+  position: relative;
+  top: auto;
+}
+
+/* 段号条：K 线展开时显示在卡片下方；跟手滑动取消/恢复选中段，右端固定 */
+.sec-segnav {
+  display: flex; gap: 6px; align-items: stretch;
+  padding: 8px 14px; margin-bottom: 10px;
+  background: var(--wx-card); border: 1px solid var(--wx-line); border-radius: 10px;
+  touch-action: pan-y; /* 水平滑动手势由 JS 处理，纵向滚动交给页面 */
+  user-select: none; -webkit-user-select: none;
+}
+.sec-segnav[hidden] { display: none; }
+/* 段号均分占满整行（flex:1 等宽拉伸），右侧不留空白 */
+.sec-segnum {
+  flex: 1 1 0; min-width: 0;
+  text-align: center;
+  font-size: 12px; line-height: 20px;
+  color: var(--wx-card); background: var(--wx-txt);
+  border: 1px solid var(--wx-txt); border-radius: 6px;
+  transition: color .15s ease, background .15s ease, border-color .15s ease;
+}
+/* 段数较多时缩小字号，仍保持一行均分 */
+.sec-segnav.dense .sec-segnum { font-size: 10px; line-height: 18px; }
+/* 已取消选中的段号：置灰 + 删除线，图上同步隐藏该段及更早段 */
+.sec-segnum.off {
+  color: var(--wx-muted); background: transparent; border-color: var(--wx-line);
+  text-decoration: line-through;
+}
 .sec-card--detail .sec-head, .sec-card--periods .sec-head,
 .sec-card--detail .sec-info, .sec-card--periods .sec-info,
 .sec-card--detail .sec-name, .sec-card--periods .sec-name,
