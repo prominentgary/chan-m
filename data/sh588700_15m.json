@@ -1,7 +1,7 @@
 {
   "code": "sh588700",
   "period": "15m",
-  "exportedAt": 1789401167679,
+  "exportedAt": 1789402376582,
   "segments": [
     {
       "id": "s_l2isz63r",
@@ -379,6 +379,20 @@
       "end": {
         "time": 1788932400,
         "price": 0.96
+      }
+    },
+    {
+      "id": "s_3gm7g0fr",
+      "kind": "segment",
+      "period": "5m",
+      "direction": "up",
+      "start": {
+        "time": 1789096800,
+        "price": 0.915
+      },
+      "end": {
+        "time": 1789368600,
+        "price": 0.951
       }
     }
   ],
@@ -837,6 +851,20 @@
           "end": {
             "time": 1788932400,
             "price": 0.96
+          }
+        },
+        {
+          "id": "s_3gm7g0fr",
+          "kind": "segment",
+          "period": "5m",
+          "direction": "up",
+          "start": {
+            "time": 1789096800,
+            "price": 0.915
+          },
+          "end": {
+            "time": 1789368600,
+            "price": 0.951
           }
         }
       ],
