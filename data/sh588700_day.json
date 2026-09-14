@@ -1,7 +1,7 @@
 {
   "code": "sh588700",
   "period": "day",
-  "exportedAt": 1789315960792,
+  "exportedAt": 1789401167744,
   "segments": [
     {
       "id": "s_jrtc4b3h",
@@ -44,7 +44,7 @@
   ],
   "activePreset": "default",
   "presetName": "",
-  "a0Period": "week",
+  "a0Period": "1m",
   "bars": [
     {
       "time": "2024-01-05",
@@ -5253,6 +5253,14 @@
       "low": 0.915,
       "close": 0.926,
       "volume": 343514.0
+    },
+    {
+      "time": "2026-09-14",
+      "open": 0.923,
+      "high": 0.951,
+      "low": 0.915,
+      "close": 0.948,
+      "volume": 362755.0
     }
   ]
 }

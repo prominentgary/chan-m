@@ -1,6 +1,99 @@
 {
   "securities": [
     {
+      "code": "sz399006",
+      "name": "创业板指",
+      "periods": [
+        "5m",
+        "15m",
+        "30m",
+        "60m",
+        "day"
+      ],
+      "a0Period": "5m",
+      "presets": [
+        {
+          "id": "default",
+          "name": "走势视角"
+        },
+        {
+          "id": "preset_wg99buro",
+          "name": "中枢视角"
+        }
+      ]
+    },
+    {
+      "code": "sh512710",
+      "name": "军工龙头ETF",
+      "periods": [
+        "5m",
+        "15m",
+        "30m",
+        "60m",
+        "day"
+      ],
+      "a0Period": "5m",
+      "presets": [
+        {
+          "id": "default",
+          "name": ""
+        },
+        {
+          "id": "preset_b8td7y8a",
+          "name": ""
+        }
+      ]
+    },
+    {
+      "code": "sh000001",
+      "name": "上证指数",
+      "periods": [
+        "1m",
+        "5m",
+        "15m",
+        "30m",
+        "60m"
+      ],
+      "a0Period": "1m",
+      "presets": [
+        {
+          "id": "default",
+          "name": ""
+        },
+        {
+          "id": "preset_vve09agw",
+          "name": ""
+        }
+      ]
+    },
+    {
+      "code": "sz159692",
+      "name": "证券ETF东财",
+      "periods": [
+        "1m",
+        "5m",
+        "15m",
+        "30m",
+        "60m",
+        "day"
+      ],
+      "a0Period": "5m",
+      "presets": [
+        {
+          "id": "default",
+          "name": ""
+        },
+        {
+          "id": "preset_inveidvb",
+          "name": ""
+        },
+        {
+          "id": "preset_77gaki3t",
+          "name": ""
+        }
+      ]
+    },
+    {
       "code": "sh588700",
       "name": "科创生物",
       "periods": [
@@ -11,10 +104,32 @@
         "60m",
         "day"
       ],
-      "a0Period": "week",
+      "a0Period": "1m",
       "presets": [
         {
           "id": "default",
+          "name": ""
+        }
+      ]
+    },
+    {
+      "code": "sz159611",
+      "name": "电力ETF广发",
+      "periods": [
+        "1m",
+        "5m",
+        "15m",
+        "30m",
+        "60m"
+      ],
+      "a0Period": "5m",
+      "presets": [
+        {
+          "id": "default",
+          "name": ""
+        },
+        {
+          "id": "preset_immhvnoy",
           "name": ""
         }
       ]
@@ -56,7 +171,7 @@
           "name": ""
         },
         {
-          "id": "preset_3vq8zzji",
+          "id": "preset_k2xguatw",
           "name": ""
         }
       ]
