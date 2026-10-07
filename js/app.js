@@ -9,12 +9,13 @@ import { loadStaticData } from './sync.js?v=20260725g';
 import { openEditor } from './editor.js?v=20260830b';
 import { makeZhongshu } from './model.js?v=20260725f';
 import {
-  calcNaturalDuanEndFull, canContinueFromSeg, narrowAlleyResult,
+  calcNaturalDuanEndFull, narrowAlleyResult,
   rollbackResult, evalAutoContinue, tightenCurrentResult, isRightmostAndUnoccupied,
+  deadEndFallbackResult, strongGapFallbackResult,
   findBarIdxByTime, segRight, segDirection, oppositeDir,
   DEFAULT_CANDIDATE_SPAN_MIN, DEFAULT_CANDIDATE_SPAN_MAX, AUTO_CONTINUE_FIX_GAP,
   resetWatchCaches,
-} from './watchmode.js?v=20260830a';
+} from './watchmode.js?v=20260922d';
 
 const $ = (s) => document.querySelector(s);
 const $$ = (s) => document.querySelectorAll(s);
@@ -2644,10 +2645,15 @@ async function handleSegmentAction(act, segId, code, period) {
       return;
     }
     // 盯盘段经 ✓ 确认：对齐桌面版「持续生成」逻辑。
-    // 修复链：能续接 → 冻结为普通段并自动生成下一段盯盘；
-    // 已是最后一段(already_done) → 保持动态盯盘，提示；
-    // 行情充足但按规则找不到(rule_not_found) → 先死胡同回溯（删b、收紧a），
-    // 回溯失败则降级自回修（收紧b自己），全部失败才保持当前盯盘段不动。
+    // 与自动路径走同一套逻辑门槛（判定1 本段百分百画完 → 判定2 下一段能接吗 → 判定3 下一段充分发展了吗）：
+    // 本段未画完(null) → 提示「仍在确认中」，不动作；
+    // 下一段还没长成(wait) → 提示「行情还没长成」，不动作；
+    // 能接(continue) → 冻结为普通段并自动生成下一段盯盘；
+    // 确定接不上(fix) → ①死胡同回溯（删b、收紧a）；失败降级 ②死胡同自修（收紧b自己）；
+    //                   再失败降级 ③死胡同兜底（下调「下一段试算」的滑窗窗口）；
+    //                   再失败降级 ④强缺口兜底（b 右侧跨交易日强反向缺口成立时取缺口后极值）；
+    //                   四层全失败才保持当前盯盘段不动。
+    // 与自动路径刻意保留的差异：手动不设闸2（10根新K线）间隔节流、一次只推进一段。
     if (!targetSeg || !targetSeg._isWatch) return;
     let bars;
     try {
@@ -2657,13 +2663,27 @@ async function handleSegmentAction(act, segId, code, period) {
       return;
     }
     const segs = d.segments || [];
-    const con = canContinueFromSeg(segs, targetSeg, bars);
-    if (!con.can) {
-      if (con.reason === 'already_done') {
-        toast('已是最后一段（后续行情不足），保持当前盯盘段');
-        refreshPeriodDetailWithoutFetch(code, period);
-        return;
-      }
+    const startIdx = findBarIdxByTime(bars, targetSeg.start.time);
+    if (startIdx < 0) {
+      toast('行情数据不足，无法推进盯盘段');
+      refreshPeriodDetailWithoutFetch(code, period);
+      return;
+    }
+    const maxSpanOverride = (targetSeg._watchMaxSpan != null && targetSeg._watchMaxSpan >= DEFAULT_CANDIDATE_SPAN_MIN)
+      ? targetSeg._watchMaxSpan : undefined;
+    // 判定链与自动路径完全一致（同一函数）
+    const verdict = evalAutoContinue(segs, targetSeg, bars, startIdx, maxSpanOverride);
+    if (verdict === null) {
+      toast('本段仍在确认中，暂不能推进');
+      refreshPeriodDetailWithoutFetch(code, period);
+      return;
+    }
+    if (verdict === 'wait') {
+      toast('行情还没长成，暂不推进');
+      refreshPeriodDetailWithoutFetch(code, period);
+      return;
+    }
+    if (verdict === 'fix') {
       // —— 修复链：先死胡同回溯（最优解：删b，收紧a）——
       const roll = rollbackResult(segs, targetSeg, bars);
       if (roll.ok) {
@@ -2678,27 +2698,38 @@ async function handleSegmentAction(act, segId, code, period) {
         refreshPeriodDetailWithoutFetch(code, period);
         return;
       }
-      // —— 死胡同回溯失败，降级自回修（兜底：收紧b自己）——
-      const fixStartIdx = findBarIdxByTime(bars, targetSeg.start.time);
-      if (fixStartIdx >= 0) {
-        const t = tightenCurrentResult(targetSeg, bars, fixStartIdx);
-        if (t.ok) {
-          targetSeg.end = { time: Math.floor(t.newEnd.time), price: t.newEnd.price };
-          targetSeg._watchMaxSpan = t.tempMax;
-          targetSeg._watchFixCount = (targetSeg._watchFixCount || 0) + 1;
-          targetSeg._watchLastFixTime = Math.floor(bars[bars.length - 1].time);
-          toast('已自回修当前段，继续盯盘');
-          saveLocalEdits(code, sec.drawings);
-          refreshPeriodDetailWithoutFetch(code, period);
-          return;
-        }
+      // —— 死胡同回溯失败，降级死胡同自修（兜底：收紧b自己）——
+      const t = tightenCurrentResult(targetSeg, bars, startIdx);
+      if (t.ok) {
+        targetSeg.end = { time: Math.floor(t.newEnd.time), price: t.newEnd.price };
+        targetSeg._watchMaxSpan = t.tempMax;
+        targetSeg._watchFixCount = (targetSeg._watchFixCount || 0) + 1;
+        targetSeg._watchLastFixTime = Math.floor(bars[bars.length - 1].time);
+        toast('已死胡同自修当前段，继续盯盘');
+        saveLocalEdits(code, sec.drawings);
+        refreshPeriodDetailWithoutFetch(code, period);
+        return;
+      }
+      // —— 第三层：死胡同兜底（下调「下一段试算」的滑窗窗口，避免人工介入）——
+      if (applyDeadEndFallback(period, segs, targetSeg, bars)) {
+        toast('已下调下一段试算窗口，继续盯盘');
+        saveLocalEdits(code, sec.drawings);
+        refreshPeriodDetailWithoutFetch(code, period);
+        return;
+      }
+      // —— 第四层：强缺口兜底（b 右侧跨交易日强反向缺口成立时，c 取缺口后极值）——
+      if (applyStrongGapFallback(period, segs, targetSeg, bars)) {
+        toast('已按强缺口落下一段，继续盯盘');
+        saveLocalEdits(code, sec.drawings);
+        refreshPeriodDetailWithoutFetch(code, period);
+        return;
       }
       // 修复链全部失败，保持当前盯盘段不动
       toast('已是最后一段，无法修复');
       refreshPeriodDetailWithoutFetch(code, period);
       return;
     }
-    // 能续接：冻结当前盯盘段并续接生成下一段；下一段若未生成则保持当前为盯盘段
+    // verdict === 'continue'：冻结当前盯盘段并续接生成下一段；下一段若未生成则保持当前为盯盘段
     const frozenId = targetSeg.id;
     degradeWatch(targetSeg);
     const made = createWatchFromSource(targetSeg, bars, segs, period);
@@ -3021,20 +3052,27 @@ function degradeWatch(seg) {
   delete seg._watchDirection;
   delete seg._watchMaxSpan;
   delete seg._watchManualEnd;
+  delete seg._watchFallbackTriedAt; // 兜底重试闸一并清除（该段不再参与修复链）
+  delete seg._watchGapTriedAt;      // 强缺口兜底重试闸同理
 }
 
 // 从源段 sourceSeg 的终点创建/续接盯盘段；含窄胡同回溯（把源段自身收紧并转为盯盘段）。
-// 直接修改 segs（d.segments）。返回 { created, reason }。
-function createWatchFromSource(sourceSeg, bars, segs, period) {
+// overrideEnd：直接给定新段终点（{ time, price }），跳过选点与窄胡同——仅供死胡同兜底
+//   用「降级窗口」选出的终点落段；常规调用不传，行为完全不变。
+// 直接修改 segs（d.segments）。返回 { created, reason, seg }。
+function createWatchFromSource(sourceSeg, bars, segs, period, overrideEnd) {
   const right = segRight(sourceSeg);
   if (!right) return { created: false, reason: 'invalid' };
   const startIdx = findBarIdxByTime(bars, right.time);
   if (startIdx < 0) return { created: false, reason: 'no_start' };
   const direction = oppositeDir(sourceSeg.direction || segDirection(sourceSeg));
   const startPrice = right.price;
-  const foundB = calcNaturalDuanEndFull(bars, startIdx, startPrice, direction);
+  const foundB = overrideEnd
+    ? { endInfo: overrideEnd, _reason: 'found' }
+    : calcNaturalDuanEndFull(bars, startIdx, startPrice, direction);
   // 窄胡同回溯：右侧行情充足(avail>=9)且 b 长档未命中时，先把源段收紧并转为盯盘段
-  if (bars.length - startIdx >= 9) {
+  // （兜底给定 overrideEnd 时跳过：终点已确定，不需要再收紧源段）
+  if (!overrideEnd && bars.length - startIdx >= 9) {
     const bLongHit = !!(foundB && foundB.endInfo && foundB.matchedTier && foundB.matchedTier.indexOf('长档') === 0);
     if (!bLongHit) {
       const narrow = narrowAlleyResult(sourceSeg, segs, bars);
@@ -3067,10 +3105,65 @@ function createWatchFromSource(sourceSeg, bars, segs, period) {
     _watchSourceId: sourceSeg.id,
   };
   segs.push(seg);
-  return { created: true, reason: 'found' };
+  return { created: true, reason: 'found', seg: seg };
 }
 
-// 根据最新行情更新所有盯盘段终点；含失效降级、终点缓存、自动续接/自回修。
+// 死胡同兜底（修复链第三层）：病因是「活跃段 b 之后的下一段」按标准滑窗半径 N(10→7)
+// 找不到终点。做法：不动 b 自己，只把「下一段试算」的滑窗下限逐级下调（6→…→2），
+// 收到第一个能通过验收的窗口即停，然后用该窗口选出的终点落为新的盯盘段。
+// 与桌面版 _deadEndFallback 对应；移动版无 undo 概念，故无 keepUndo 分支。
+// 返回 true=已提交（b 已冻结、新盯盘段已落），false=无解（已在 b 上记重试闸）。
+function applyDeadEndFallback(period, segs, watchSeg, bars) {
+  if (!watchSeg || !bars || !bars.length) return false;
+  const lastBarTime = Math.floor(bars[bars.length - 1].time);
+  // 兜底重试闸：本根K线上已试过且无解 → 不再重试，等实质新行情
+  if (watchSeg._watchFallbackTriedAt === lastBarTime) return false;
+  const fb = deadEndFallbackResult(watchSeg, bars);
+  if (!fb.ok) {
+    watchSeg._watchFallbackTriedAt = lastBarTime;
+    return false;
+  }
+  // 冻结 b（不自动激活），再用兜底窗口选出的终点落下一段盯盘
+  degradeWatch(watchSeg);
+  const made = createWatchFromSource(watchSeg, bars, segs, period, fb.newEnd);
+  if (!made.created) {
+    // 落段失败（c′ 终点已在 b 右端点之后，实际不会发生）→ 恢复 b 为盯盘段，保持原状
+    watchSeg._isWatch = true;
+    return false;
+  }
+  if (made.seg) made.seg._watchFallbackWindow = fb.window;
+  return true;
+}
+
+// 强缺口兜底（修复链第四层）：b 之后要画的 c 按标准规则找不到终点（跨数空白带），
+// 且 ①回溯、②自修、③死胡同兜底 均已失败。此时若 b 右侧出现「跨交易日强反向缺口」，
+// 则把缺口视作 c 的核心动能，c 终点直接取缺口后第一个显著极值，并以「突破 b 起点价」作
+// 力度校验；校验通过即落段，不做 d 验收。
+// 与桌面版 _strongGapFallback 对应；移动版无 undo 概念，故无 keepUndo 分支。
+// 返回 true=已提交（b 已冻结、新盯盘段已落），false=无解（已在 b 上记重试闸）。
+function applyStrongGapFallback(period, segs, watchSeg, bars) {
+  if (!watchSeg || !bars || !bars.length) return false;
+  const lastBarTime = Math.floor(bars[bars.length - 1].time);
+  // 重试闸：本根K线上已试过且无解 → 不再重试，等实质新行情
+  if (watchSeg._watchGapTriedAt === lastBarTime) return false;
+  const gf = strongGapFallbackResult(watchSeg, bars);
+  if (!gf.ok) {
+    watchSeg._watchGapTriedAt = lastBarTime;
+    return false;
+  }
+  // 冻结 b（不自动激活），再用缺口后极值落下一段盯盘
+  degradeWatch(watchSeg);
+  const made = createWatchFromSource(watchSeg, bars, segs, period, gf.newEnd);
+  if (!made.created) {
+    // 落段失败（c 终点必在 b 右端点之后，实际不会发生）→ 恢复 b 为盯盘段，保持原状
+    watchSeg._isWatch = true;
+    return false;
+  }
+  if (made.seg) made.seg._watchGapFallback = true;
+  return true;
+}
+
+// 根据最新行情更新所有盯盘段终点；含失效降级、终点缓存、自动续接/四层修复链。
 // 返回 { changed, structural }；structural=发生了冻结/续接/回修等结构性变化，需重渲染。
 function updateWatchSegments(code, period, bars, refresh = true) {
   const sec = state.securities.find((s) => s.code === code);
@@ -3142,7 +3235,7 @@ function updateWatchSegments(code, period, bars, refresh = true) {
         changed = true;
       }
     }
-    // 4) 自动续接 / 自回修（仅重建触发时判定）
+    // 4) 自动续接 / 四层修复链（仅重建触发时判定）
     if (recomputed) {
       const verdict = evalAutoContinue(segs, activeWatch, bars, startIdx, maxSpanOverride);
       if (verdict === 'continue') {
@@ -3157,7 +3250,7 @@ function updateWatchSegments(code, period, bars, refresh = true) {
         changed = structural = true;
       } else if (verdict === 'fix') {
         // 自动修复链（与「✓ 确认」一致，仅多「充分发展」前置闸门）：
-        // 闸2覆盖整个修复链（回溯+自回修）：两次修复间至少间隔 AUTO_CONTINUE_FIX_GAP 根新K线
+        // 闸2覆盖整个修复链（回溯+死胡同自修+死胡同兜底）：两次修复间至少间隔 AUTO_CONTINUE_FIX_GAP 根新K线
         let fixOk = true;
         if (activeWatch._watchLastFixTime != null) {
           const lastFixIdx = findBarIdxByTime(bars, activeWatch._watchLastFixTime);
@@ -3179,7 +3272,7 @@ function updateWatchSegments(code, period, bars, refresh = true) {
             prev._watchLastFixTime = Math.floor(bars[bars.length - 1].time);
             changed = structural = true;
           } else {
-            // —— 回溯失败，降级自回修（兜底：收紧b自己）——
+            // —— 回溯失败，降级死胡同自修（兜底：收紧b自己）——
             const t = tightenCurrentResult(activeWatch, bars, startIdx);
             if (t.ok) {
               activeWatch.end = { time: Math.floor(t.newEnd.time), price: t.newEnd.price };
@@ -3187,6 +3280,14 @@ function updateWatchSegments(code, period, bars, refresh = true) {
               activeWatch._watchFixCount = (activeWatch._watchFixCount || 0) + 1;
               activeWatch._watchLastFixTime = Math.floor(bars[bars.length - 1].time);
               changed = structural = true;
+            } else {
+              // —— 第三层：死胡同兜底（下调「下一段试算」的滑窗窗口，避免人工介入）——
+              if (applyDeadEndFallback(period, segs, activeWatch, bars)) {
+                changed = structural = true;
+              } else if (applyStrongGapFallback(period, segs, activeWatch, bars)) {
+                // —— 第四层：强缺口兜底（b 右侧跨交易日强反向缺口成立时，c 取缺口后极值）——
+                changed = structural = true;
+              }
             }
           }
         }
@@ -3197,7 +3298,7 @@ function updateWatchSegments(code, period, bars, refresh = true) {
     d.segments = segs;
     if (refresh) refreshPeriodDetailWithoutFetch(code, period);
   }
-  // 终点延伸 / 自动续接 / 自回修产生的段一律自动落盘（此前只改内存，刷新即丢）
+  // 终点延伸 / 自动续接 / 死胡同自修产生的段一律自动落盘（此前只改内存，刷新即丢）
   if (changed || structural) scheduleAutoSave(code);
   return { changed: changed || structural, structural: structural };
 }

@@ -9,7 +9,13 @@
 export const DEFAULT_CANDIDATE_SPAN_MIN = 3;
 export const DEFAULT_CANDIDATE_SPAN_MAX = 27;
 export const WATCH_CONFIRM_BARS = 10;      // 极值身份确认所需真 K 线数（滑窗半径 N 最大 10）
-export const AUTO_CONTINUE_FIX_GAP = 10;   // 两次自回修之间至少间隔的新 K 线数（闸2）
+export const AUTO_CONTINUE_FIX_GAP = 10;   // 两次死胡同自修之间至少间隔的新 K 线数（闸2）
+// 死胡同兜底：下一段试算的滑窗半径由 6 逐级下调到 2（2 为兜底下限，收到第一个能通过验收的即停）
+export const DEAD_END_FALLBACK_WINDOW_MAX = 6;
+export const DEAD_END_FALLBACK_WINDOW_MIN = 2;
+// 强缺口兜底：c 终点取「缺口后第一个显著极值」时所用的滑窗半径区间（10→7，同常规选点）
+export const STRONG_GAP_WINDOW_MAX = 10;
+export const STRONG_GAP_WINDOW_MIN = 7;
 
 // ========== 段基础工具（移动端段对象 { start:{time,price}, end:{time,price}, direction }） ==========
 
@@ -153,12 +159,15 @@ export function calcMaxOverlapSpan(bars, startIdx, endIdx) {
 
 // ========== 盯盘段选点核心 ==========
 
-// 由起点(idx) + 价格 + 方向，在跨数档（长档[9,27]优先、短档[3,9)兜底）× 滑窗半径 N(10→7)
+// 由起点(idx) + 价格 + 方向，在跨数档（长档[9,27]优先、短档[3,9)兜底）× 滑窗半径 N(默认10→7)
 // 中查找最显著极值终点。返回 { endInfo, N, matchedTier, hitExtremes, hitSpanOut, _reason }；
 // endInfo 含 { time, price, barIdx, _span }。
 // maxSpanOverride：回溯重算时临时把跨数上限从 27 缩到「前一段跨数-1」；
 // longTierOnly：窄胡同收紧前段时仅用长档（[9,maxSpan]），不进入短档兜底。
-export function calcNaturalDuanEndFull(bars, startIdx, startPrice, direction, maxSpanOverride, longTierOnly) {
+// windowMax/windowMin：滑窗半径试算区间，默认 10→7（常规选点一律用默认值）。
+//   仅「死胡同兜底 deadEndFallbackResult」在下一段试算时逐级下调（6→…→2）时传入，
+//   用于把「不够显著的拐点」重新纳入候选；不影响任何常规调用点的选点质量。
+export function calcNaturalDuanEndFull(bars, startIdx, startPrice, direction, maxSpanOverride, longTierOnly, windowMax, windowMin) {
   if (!bars || !bars.length) return { endInfo: null, N: 0, matchedTier: null, hitExtremes: [], hitSpanOut: [], _reason: 'no_data' };
   if (startIdx < 0 || startIdx >= bars.length - 1) return { endInfo: null, N: 0, matchedTier: null, hitExtremes: [], hitSpanOut: [], _reason: 'already_done' };
   const maxSpan = (maxSpanOverride != null && maxSpanOverride >= DEFAULT_CANDIDATE_SPAN_MIN)
@@ -171,11 +180,14 @@ export function calcNaturalDuanEndFull(bars, startIdx, startPrice, direction, ma
         { name: '长档[' + tierBound + ',' + maxSpan + ']', min: tierBound, max: maxSpan },
         { name: '短档[3,' + tierBound + ')', min: minSpan, max: tierBound - 1 },
       ];
+  // 滑窗半径试算区间：默认 10→7；仅死胡同兜底会逐级下调下限（最低 2）
+  const wMax = (typeof windowMax === 'number' && windowMax >= 1) ? Math.floor(windowMax) : 10;
+  const wMin = (typeof windowMin === 'number' && windowMin >= 1) ? Math.floor(windowMin) : 7;
   let endInfo = null, N = 0, matchedTier = null, hitExtremes = [], hitSpanOut = [];
   const spanCache = new Map(); // 同一个「起点→barIdx」的跨数只算一次
   for (let ti = 0; ti < tiers.length && !endInfo; ti++) {
     const tier = tiers[ti];
-    for (let n = 10; n >= 7 && !endInfo; n--) {
+    for (let n = wMax; n >= wMin && !endInfo; n--) {
       const extremes = findExtremes(bars, startIdx, direction, n, 200, startPrice);
       const inTier = [];
       const outTier = [];
@@ -263,11 +275,19 @@ export function narrowAlleyResult(sourceSeg, segs, bars) {
   if (!found || !found.endInfo || found.endInfo.barIdx <= aStartIdx) {
     return { ok: false, reason: (found && found._reason) || 'fail', tempMax: tempMax };
   }
+  // 注：本函数不会出现「零改动」，也无需另设闸——a 按「所属跨数」计算 tempMax = aSpan - 1，
+  // 而候选跨数 = calcMaxOverlapSpan(bars, aStartIdx, p.barIdx) 对 barIdx 单调不减，
+  // 故 a 自身终点（barIdx = aRightIdx，跨数 = aSpan = tempMax + 1）必然超本档上限被排除。
+  // 长档为空时本函数返回 rule_not_found，由调用方回退到 b 的原选点结果（短档）——这就是「承认窄胡同」。
   return { ok: true, newEnd: found.endInfo, tempMax: tempMax };
 }
 
 // 死胡同回溯（纯计算）：盯盘段 b 已无法继续续接，找到其前一段 a（a 右端点 == b 左端点），
 // 用「临时上限 = a 跨数 - 1」重算 a 终点。成功返回 { ok:true, prevSeg:a, newEnd, tempMax }。
+// 验收标准（C 档）：仅仅「a 能收紧出新终点」不算成功——必须证明收紧后的 a′ 还能重新接出 b′，
+// 且 b′ 之后还能接出 c′，即回溯后段链仍然成立；否则回缩只会白白丢掉 b，判失败（a、b 原样不动）。
+// 预演只调用纯计算 calcNaturalDuanEndFull，不改动任何数据。
+// c′ 若因右侧K线不足（avail<9，_reason='already_done'）算不出，属「无法验证」而非失败，降级为只验 b′。
 export function rollbackResult(segs, watchSeg, bars) {
   if (!watchSeg || !bars || !bars.length) return { ok: false, reason: 'no_active' };
   const bLeft = segLeft(watchSeg);
@@ -296,7 +316,29 @@ export function rollbackResult(segs, watchSeg, bars) {
   if (!found || !found.endInfo || found.endInfo.barIdx <= aStartIdx) {
     return { ok: false, reason: (found && found._reason) || 'fail' };
   }
-  return { ok: true, prevSeg: a, newEnd: found.endInfo, tempMax: tempMax };
+  const newEnd = found.endInfo;
+  // 零改动判定（与 tightenCurrentResult 同源）：收紧后 a′ 与 a 仍是同一根K线、同一价位，说明这次回溯
+  // 一根没缩动——它对「b 之后能否接上 c」毫无改变，却要付出删掉 b 的代价（纯破坏、零收益）。
+  // 若不判，回溯会「成功」删掉 b 并把 a 重新激活为盯盘段，自动续接随即又重建出与 b 几何完全相同的段，
+  // 下一帧再被窄胡同收紧、再回溯删除……形成逐帧「删段→原样重画」的死循环（下一段盯盘段不断闪烁跳动）。
+  if (newEnd.barIdx === aRightIdx && Math.abs(newEnd.price - aRight.price) < 1e-9) {
+    return { ok: false, reason: 'no_change' };
+  }
+  // —— 验收预演（零改动）——
+  // 上面只证明「a 能收紧出 a′」。真正要验收的是：回溯后段链还立得住吗？
+  // ① 从 a′ 新终点按 b 原方向试算 b′  ② 从 b′ 终点按 c 方向（与 b 反向）试算 c′
+  const bDir = watchSeg.direction || segDirection(watchSeg);
+  const cDir = bDir === 'up' ? 'down' : 'up';
+  const bPrime = calcNaturalDuanEndFull(bars, newEnd.barIdx, newEnd.price, bDir);
+  if (!bPrime || !bPrime.endInfo || bPrime.endInfo.barIdx <= newEnd.barIdx) {
+    return { ok: false, reason: 'fail' };
+  }
+  const cPrime = calcNaturalDuanEndFull(bars, bPrime.endInfo.barIdx, bPrime.endInfo.price, cDir);
+  const cOk = !!(cPrime && cPrime.endInfo && cPrime.endInfo.barIdx > bPrime.endInfo.barIdx);
+  if (!cOk && !(cPrime && cPrime._reason === 'already_done')) {
+    return { ok: false, reason: 'fail' };
+  }
+  return { ok: true, prevSeg: a, newEnd: newEnd, tempMax: tempMax };
 }
 
 // 收紧当前盯盘段（纯计算）：临时上限 = 当前跨数 - 1，标准规则重算终点。
@@ -317,10 +359,110 @@ export function tightenCurrentResult(seg, bars, startIdx) {
   if (!found || !found.endInfo || found.endInfo.barIdx <= startIdx) {
     return { ok: false, reason: (found && found._reason) || 'fail', curSpan: curSpan, tempMax: tempMax };
   }
+  // 零改动判定：收紧后终点与当前右端点仍是同一根K线、同一价位 ⇒ 本段实际一根没动。
+  // 短档硬选出来的段（跨数贴近短档上界）收紧上限后只剩短档 [3,8]，必然重选出同一终点，
+  // 若在此报成功，修复链会误判「已修好」而截断，第三层死胡同兜底永远执行不到，
+  // 表现为每次行情刷新原地打转、段链再也接不下去。故如实报失败，让修复链继续下落。
+  if (found.endInfo.barIdx === endIdx && Math.abs(found.endInfo.price - right.price) < 1e-9) {
+    return { ok: false, reason: 'no_change', curSpan: curSpan, tempMax: tempMax };
+  }
   return { ok: true, newEnd: found.endInfo, tempMax: tempMax, curSpan: curSpan };
 }
 
-// ========== 自动续接/自回修 三判定（含跨数缓存） ==========
+// 死胡同兜底（纯计算，修复链第三层）：
+// 病因：盯盘段 b「之后的下一段」按标准滑窗半径 N(10→7) 找不到终点，段链因此接不上。
+// 做法：只把「下一段试算」的滑窗下限逐级下调（6→5→4→3→2，2 为兜底下限），
+//   收到第一个能通过验收的窗口即停。窗口只在本函数内下调，其余调用一律保持默认 10→7。
+// 验收口径与 rollbackResult 一致（C 档）：c′ 之后还要能接出 d′；
+//   d′ 因右侧K线不足（_reason='already_done'）算不出时视为「无法验证」，降级为只验 c′。
+// 不修改 seg；由调用方提交（冻结 b、用 newEnd 落下一段）。
+// 返回 { ok:true, newEnd, window } / { ok:false, reason }。
+export function deadEndFallbackResult(seg, bars) {
+  if (!seg || !bars || !bars.length) return { ok: false, reason: 'invalid' };
+  const right = segRight(seg);
+  if (!right) return { ok: false, reason: 'invalid' };
+  const endIdx = findBarIdxByTime(bars, right.time);
+  if (endIdx < 0 || endIdx >= bars.length - 1) return { ok: false, reason: 'already_done' };
+  const bDir = seg.direction || segDirection(seg);
+  const cDir = oppositeDir(bDir);
+  for (let w = DEAD_END_FALLBACK_WINDOW_MAX; w >= DEAD_END_FALLBACK_WINDOW_MIN; w--) {
+    // 只试该窗口本身：更宽的窗口在进入兜底前已确定失败，不重复试算
+    const cPrime = calcNaturalDuanEndFull(bars, endIdx, right.price, cDir, undefined, false, w, w);
+    if (!cPrime || !cPrime.endInfo || cPrime.endInfo.barIdx <= endIdx) continue;
+    // C 档验收：c′ 之后还要能接出 d′（按标准窗口试算；already_done 视为无法验证而降级）
+    const dPrime = calcNaturalDuanEndFull(bars, cPrime.endInfo.barIdx, cPrime.endInfo.price, bDir);
+    const dOk = !!(dPrime && dPrime.endInfo && dPrime.endInfo.barIdx > cPrime.endInfo.barIdx);
+    if (!dOk && !(dPrime && dPrime._reason === 'already_done')) continue;
+    return { ok: true, newEnd: cPrime.endInfo, window: w };
+  }
+  return { ok: false, reason: 'no_window' };
+}
+
+// 交易日 key（A 股 UTC+8）：同一交易日的秒级时间戳映射到同一个整数。
+// 用于强缺口兜底判定「缺口是否跨交易日」，不引入任何交易日历依赖。
+function tradingDayKey(t) {
+  return Math.floor((Math.floor(t) + 28800) / 86400);
+}
+
+// 缺口后第一个显著极值：滑窗半径由 10 逐级收紧到 7，取首个命中的相对极值。
+// 与常规选点刻意不同：忽略跨数下限与早停——缺口后的单边行情常使跨数冲到 27 以外，
+// 若按常规规则会被下限与早停排除（跨数空白带），恰是本层要救的场景。
+// 跨数上限 27 不在此处把关，由 strongGapFallbackResult 的硬上限闸负责。
+function firstExtremeAfterGap(bars, gapIdx, direction) {
+  for (let n = STRONG_GAP_WINDOW_MAX; n >= STRONG_GAP_WINDOW_MIN; n--) {
+    const ex = findExtremes(bars, gapIdx, direction, n, 1, null);
+    if (ex && ex.length) return ex[0];
+  }
+  return null;
+}
+
+// 强缺口兜底（纯计算，修复链第四层，2026-09-22）：
+// 病因：b 之后要画的 c 按标准规则找不到终点，且 ①回溯、②自修、③死胡同兜底 均已失败。
+// 此时若行情在 b 右端点之后出现「强反向缺口」——跨交易日 + 相邻K线区间不重叠 + 方向与 c 一致
+// （c 向下→向下缺口 bars[i+1].high < bars[i].low；c 向上→向上缺口 bars[i+1].low > bars[i].high）——
+// 则把缺口本身视作 c 的核心动能：c 终点直接取「缺口后第一个显著极值」（滑窗 10→7，
+// 忽略跨数下限与早停），并以「c 终点突破 b 起点价」作力度校验
+// （c 向下→终点低于 b 起点价；c 向上→终点高于 b 起点价），以此表示 c 足够强有力。
+// 本层不依赖 a 段（判据参照是 b 的起点价，不是 a 的起点价），也不做 d 验收，校验通过即落段。
+// 注意：豁免的只是「跨数下限 3」与早停，**跨数上限 27 仍必须满足**——缺口常在段尾而非段首，
+// 若不设上限会落出横跨整日、跨数远超 27 的巨段（实例：比亚迪 09-21 09:31 → 09-22 09:41，跨数 177）。
+// 不修改 seg；由调用方提交（冻结 b、用 newEnd 落下一段）。
+// 返回 { ok:true, newEnd, gapIdx } / { ok:false, reason }。
+export function strongGapFallbackResult(seg, bars) {
+  if (!seg || !bars || !bars.length) return { ok: false, reason: 'invalid' };
+  const left = segLeft(seg), right = segRight(seg);
+  if (!left || !right) return { ok: false, reason: 'invalid' };
+  const endIdx = findBarIdxByTime(bars, right.time);
+  if (endIdx < 0 || endIdx >= bars.length - 1) return { ok: false, reason: 'already_done' };
+  const bDir = seg.direction || segDirection(seg);
+  const cDir = oppositeDir(bDir);
+  // 从 b 右端点起逐根找第一个「跨交易日 + 区间不重叠 + 方向与 c 一致」的缺口
+  let gapIdx = -1;
+  for (let i = Math.max(0, endIdx); i < bars.length - 1; i++) {
+    const cur = bars[i], nxt = bars[i + 1];
+    if (!cur || !nxt) continue;
+    if (cur.high == null || cur.low == null || nxt.high == null || nxt.low == null) continue;
+    if (tradingDayKey(cur.time) === tradingDayKey(nxt.time)) continue; // 必须跨交易日
+    const isGap = cDir === 'down' ? (nxt.high < cur.low) : (nxt.low > cur.high);
+    if (isGap) { gapIdx = i; break; }
+  }
+  if (gapIdx < 0) return { ok: false, reason: 'no_gap' };
+  // 缺口后第一个显著极值（忽略跨数下限与早停，滑窗 10→7；跨数上限 27 仍由下方硬上限闸把关）
+  const cand = firstExtremeAfterGap(bars, gapIdx, cDir);
+  if (!cand || cand.barIdx <= endIdx) return { ok: false, reason: 'no_extreme' };
+  // 硬上限闸：无论缺口多强，落出来的 c 仍必须是一根合法段（跨数 ≤ 段上限 27）。
+  // 本层只豁免「跨数下限 3」与早停，不豁免上限——否则会落出横跨整日、跨数远超 27 的巨段
+  // （实例：比亚迪 09-21 09:31 → 09-22 09:41，缺口仅在段尾，跨数 177）。
+  if (calcMaxOverlapSpan(bars, endIdx, cand.barIdx) > DEFAULT_CANDIDATE_SPAN_MAX) {
+    return { ok: false, reason: 'too_long' };
+  }
+  // 力度校验：c 终点必须突破 b 的起点价（c 向下取更低，c 向上取更高）
+  const broke = cDir === 'down' ? (cand.price < left.price) : (cand.price > left.price);
+  if (!broke) return { ok: false, reason: 'weak' };
+  return { ok: true, newEnd: cand, gapIdx: gapIdx };
+}
+
+// ========== 自动续接/死胡同自修 三判定（含跨数缓存） ==========
 
 let _watchSpanCache = null;    // 跨数计算缓存（O(N²)，仅行情变化时重算）
 let _watchCappedKeys = Object.create(null); // 跨数封顶记忆（单调不减 ⇒ 一旦超限永久超限）

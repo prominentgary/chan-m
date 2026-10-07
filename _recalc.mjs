@@ -110,6 +110,26 @@ console.log('  短档结果:', JSON.stringify({reason:sh._reason, tier:sh.matche
 assert('短档-命中短档且找到终点', !!sh.endInfo && (sh.matchedTier || '').indexOf('短档') === 0);
 assert('短档-终点在起步后', !!sh.endInfo && sh.endInfo.barIdx > 0);
 
+// ============ 零改动回溯：a′ 与 a 完全相同 ⇒ 不删段 / 承认窄胡同（回归：下一段盯盘段闪烁跳动的死循环） ============
+console.log('\n[零改动回溯 - 缩完与没缩一样]');
+// a = 短档段（起于 bar0 低点 0.97，止于 bar4 最高点 1.08，overlap 跨数 <9）。
+// 收紧上限 tempMax<9 时长档成空档，只剩短档 [3,8]，最显著极值必然还是 bar4 ⇒ a′==a。
+const Z = [];
+const zHi = [1.00, 1.01, 1.02, 1.03, 1.08, 1.02, 1.01, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00];
+const zLo = [0.97, 0.96, 0.96, 0.96, 0.99, 0.96, 0.96, 0.96, 0.96, 0.96, 0.96, 0.96, 0.96, 0.96];
+for (let i = 0; i < zHi.length; i++) {
+  Z.push({ time: t0 + i * 1800, open: (zHi[i] + zLo[i]) / 2, high: zHi[i], low: zLo[i], close: (zHi[i] + zLo[i]) / 2 });
+}
+const za = { id: 'za', direction: 'up', start: { time: Z[0].time, price: Z[0].low }, end: { time: Z[4].time, price: Z[4].high } };
+const zw = { id: 'zw', direction: 'down', start: { time: Z[4].time, price: Z[4].high }, end: { time: Z[6].time, price: Z[6].low } };
+const zrb = rollbackResult([za, zw], zw, Z);
+const znr = narrowAlleyResult(za, [za, zw], Z);
+console.log('  rollback:', JSON.stringify(zrb), '| narrow:', JSON.stringify(znr));
+assert('零改动-回溯报no_change(不删段)', zrb.ok === false && zrb.reason === 'no_change');
+// 窄胡同：a 自身跨数 = tempMax + 1 必超本档上限被排除，故结构上不可能零改动（长档为空时返回
+// rule_not_found）——任何不 ok 都会让调用方回退到 b 的原选点结果（短档），即「承认窄胡同」
+assert('零改动-窄胡同必然不ok(调用方回退落b)', znr.ok === false);
+
 // ============ 平台合并 mergeCandidatePlatforms 三分支 ============
 console.log('\n[平台合并 mergeCandidatePlatforms]');
 const mk = (...prices) => prices.map((price, i) => ({ time: t0 + i*1800, price }));
