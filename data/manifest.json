@@ -8,14 +8,17 @@
         "5m",
         "15m",
         "30m",
-        "60m",
-        "day"
+        "60m"
       ],
       "a0Period": "1m",
       "presets": [
         {
           "id": "default",
-          "name": ""
+          "name": "走势视角"
+        },
+        {
+          "id": "preset_tco6oz2t",
+          "name": "中枢视角"
         }
       ]
     },
@@ -42,26 +45,22 @@
       ]
     },
     {
-      "code": "sh588080",
-      "name": "科创板50",
+      "code": "sh000688",
+      "name": "科创50",
       "periods": [
         "1m",
         "5m",
-        "15m",
-        "30m",
-        "60m",
-        "day",
-        "week"
+        "15m"
       ],
       "a0Period": "1m",
       "presets": [
         {
           "id": "default",
-          "name": ""
+          "name": "走势视角"
         },
         {
-          "id": "preset_k2xguatw",
-          "name": ""
+          "id": "preset_7pdehfo7",
+          "name": "中枢视角"
         }
       ]
     }
