@@ -2,7 +2,7 @@
 // 注意：所有 import 路径均带版本号，每次发布新版本时请同步修改 html/js/sw 中的版本号
 import { fetchBars, fetchRealtimeMulti, formatTime, formatPrice, isETF, resolveCode } from './fetcher.js?v=20260725i';
 import { computeMACD } from './macd.js?v=20260725f';
-import { segmentStrength, detectStrengthIndicators, detectOneBuySell, detectTwoAndThreeBuySell, computeZhongshuStrength, detectZhongshu } from './algo.js?v=20260902b';
+import { segmentStrength, detectStrengthIndicators, detectOneBuySell, detectTwoAndThreeBuySell, computeZhongshuStrength, detectZhongshu, computeRecursiveSegment } from './algo.js?v=20261008a';
 import { renderSegments } from './table.js?v=20260904b';
 import { renderKlineChart, sliceSegmentBars, renderIntradayChart, repaintView } from './klinechart.js?v=20260908b';
 import { loadStaticData } from './sync.js?v=20260725g';
@@ -31,6 +31,9 @@ let presetSwipeFired = false; // 周期列表页左右滑切换方案后，吞�
 let secKlineView = null;      // 详情页证券卡片内展开的该周期 K 线视图，主题切换时按它精确重绘
 let secKlineExpanded = false; // 详情页证券卡片 K 线的「用户意图展开态」：吸顶折叠时隐藏，回到顶部恢复
 let _secSegHide = 0; // 详情页段号条：从左侧取消选中的段数（0=全部显示；右端固定到最后一段）
+// 段号条每行最多显示的段号数（与 CSS .sec-segnav.wrap 的固定宽度、渲染时的换行阈值一致）；
+// 段数超过该值时编号换行，并启用纵向快速缩放（每滑过一行步进一整行）
+const SEG_NAV_PER_ROW = 8;
 
 // 辅助周期（15m 对应 5m、60m 对应 30m）不是真实画线级别：
 // 画线（段/中枢）完全复刻主周期，段的 start/end 时间都是主周期刻度；
@@ -50,6 +53,19 @@ function getHigherPeriod(period, availablePeriods) {
   for (let i = idx + 1; i < PERIODS.length; i++) {
     if (AUX_PERIODS[PERIODS[i][0]]) continue;
     if (availablePeriods.includes(PERIODS[i][0])) return PERIODS[i][0];
+  }
+  return null;
+}
+
+// 周期链上的「下一更高级别」（跳过 15m/60m 辅助周期），不要求该周期已有数据。
+// 与 getHigherPeriod 的区别：后者要求目标周期在证券周期列表内（用于级别联立/展示），
+// 而递归允许在尚不存在的更高级别上生成新段（如只有 1m/5m/15m 的证券也能从 5m 递归出 30m）。
+function getNextHigherPeriod(period) {
+  const idx = PERIODS.findIndex((x) => x[0] === period);
+  if (idx < 0) return null;
+  for (let i = idx + 1; i < PERIODS.length; i++) {
+    if (AUX_PERIODS[PERIODS[i][0]]) continue;
+    return PERIODS[i][0];
   }
   return null;
 }
@@ -95,7 +111,9 @@ function computeHideBefore(higherSegments, higherPeriod, curSegments) {
   if (!higherPeriod || !higherSegments || !higherSegments.length) return null;
   // 盯盘段终点为「当前最新价」，若把它当作更高周期的最后一段来算 hideBefore，
   // 会把低周期段几乎全部隐藏（例如 5m 盯盘导致 1m 只显示盯盘段之后）。各周期盯盘段需排除。
-  const realHigher = higherSegments.filter((s) => !s._isWatch && !s._isTrack);
+  // 递归产物（_isRecursive，见 recursiveToHigherPeriod）同理排除：它是人工在低周期上合成出的
+  // 高级别段，不代表行情推进到的最新位置，若参与对齐会把低周期视图的历史段无谓隐藏。
+  const realHigher = higherSegments.filter((s) => !s._isWatch && !s._isTrack && !s._isRecursive);
   if (!realHigher.length) return null;
   let lastEnd = 0, maxStart = 0;
   for (const s of realHigher) {
@@ -444,6 +462,21 @@ async function loadAllDrawings() {
     // 合并本地编辑（与静态数据取较新者）
     for (const s of list) {
       byCode[s.code].drawings = mergeDrawings(byCode[s.code].drawings, s.code);
+    }
+    // 本地递归产物可能在证券周期列表之外的周期（如只有 1m/5m 的证券上递归出的 30m 段）：
+    // 把 drawings 中有内容但不在列表内的周期补回列表（按周期链顺序），
+    // 否则刷新后该级别在周期页消失，数据仍在却看不到。
+    for (const sec of securities) {
+      const ps = sec.periods || (sec.periods = []);
+      const extra = Object.keys(sec.drawings || {}).filter(
+        (p) => !ps.includes(p) && PERIODS.some((x) => x[0] === p)
+          && (((sec.drawings[p] || {}).segments || []).length || ((sec.drawings[p] || {}).zhongshus || []).length)
+      );
+      if (extra.length) {
+        sec.periods = [...ps, ...extra].sort(
+          (a, b) => PERIODS.findIndex((x) => x[0] === a) - PERIODS.findIndex((x) => x[0] === b)
+        );
+      }
     }
     // 辅助周期（15m 完全复刻 5m、60m 完全复刻 30m）加载后直接把画线对象指向主周期，
     // 使运行期对主周期的任何改动（盯盘段/追踪段、编辑、增删、中枢）即时同步到辅助周期，
@@ -798,6 +831,7 @@ function renderPeriodList(code, { keepHeader = false } = {}) {
         <canvas class="period-kline-main"></canvas>
         <canvas class="period-kline-sub"></canvas>
       </div>
+      <div class="sec-segnav period-row-segnav" hidden></div>
     </div>`;
   }).join('');
 
@@ -841,13 +875,14 @@ function renderPeriodList(code, { keepHeader = false } = {}) {
   if (!keepHeader) {
     // 首次进入周期页：重置行内 K 线展开记录（保持展开状态仅在同一证券内跨刷新生效）
     state._periodExpanded = new Set();
+    state._periodSegHide = {}; // 行内段号条：按周期记录取消选中的段数
   }
 
   box.querySelectorAll('.period-row').forEach((row) => {
     const p = row.dataset.period;
     row.addEventListener('click', (e) => {
-      // K 线区域内的点击（如副图 MACD/成交量切换）不导航、不收放
-      if (e.target.closest('.period-row-kline')) return;
+      // K 线区域内的点击（如副图 MACD/成交量切换）与段号条点击不导航、不收放
+      if (e.target.closest('.period-row-kline') || e.target.closest('.period-row-segnav')) return;
       if (longPressFired) { longPressFired = false; return; } // 长按已触发简图，吞掉随后的 click
       if (presetSwipeFired) { presetSwipeFired = false; return; } // 左右滑切换方案后，吞掉随后的 click
       // 已展开的行：点头部收起，不再进入段详情
@@ -855,9 +890,11 @@ function renderPeriodList(code, { keepHeader = false } = {}) {
       pushView('detail', code, p);
     });
     attachPeriodRowLongPress(row, code, p);
+    attachPeriodRowSegNavSwipe(row, code, p);
     // 保持展开状态：preset 切换/数据刷新重建列表后自动恢复已展开的行内 K 线
     if (state._periodExpanded && state._periodExpanded.has(p)) {
       row.classList.add('expanded');
+      row._segHide = state._periodSegHide?.[p] || 0; // 连带恢复该行段号条的取消选中状态
       renderPeriodRowKline(code, p, row);
     }
   });
@@ -1096,7 +1133,7 @@ async function loadAndRenderSecKline(code, period, wrap, fresh = true) {
   const visibleSegs = getVisibleSegsForPeriod(code, period);
   const visibleIds = new Set(visibleSegs.map((s) => s.id));
   const zss = (sec.drawings[period]?.zhongshus || []).filter((z) => (z.segmentIds || []).some((id) => visibleIds.has(id)));
-  // 段号条（1..N）：右滑从左侧取消选中更早段后，仅渲染选中段（右端固定到最后一段）
+  // 段号条（1..N 终点号）：右滑从左侧取消选中更早段后，仅渲染选中段（右端固定到最后一段）
   if (_secSegHide >= visibleSegs.length) _secSegHide = Math.max(0, visibleSegs.length - 1);
   const shownSegs = visibleSegs.slice(_secSegHide);
   const zhongshuRects = buildZhongshuRects(zss, shownSegs);
@@ -1112,8 +1149,8 @@ async function loadAndRenderSecKline(code, period, wrap, fresh = true) {
     secKlineView = renderKlineChart(main, sub, [], { segs: [], zhongshus: zhongshuRects, ...commonOpts });
     return;
   }
-  // 段号保持全量可见段中的原始序号（与段号条一致），不因取消选中前段而重排
-  const viewSegItems = shownSegs.map((s, k) => ({ seg: s, no: _secSegHide + k + 1 }));
+  // no 为段起点端点号（0 基，供图上端点编号），保持全量可见段中的原始编号，不因取消选中前段而重排
+  const viewSegItems = shownSegs.map((s, k) => ({ seg: s, no: _secSegHide + k }));
   const startTime = shownSegs[0].start.time;
   const endTime = bars[bars.length - 1].time;
   // 包含 startTime 前一根 bar，使落在两根 bar 之间的段端点能通过 timeToX 时间插值精确定位
@@ -1122,7 +1159,7 @@ async function loadAndRenderSecKline(code, period, wrap, fresh = true) {
   secKlineView = renderKlineChart(main, sub, sliced, { segs: viewSegItems, zhongshus: zhongshuRects, ...commonOpts });
 }
 
-// 段号条：K 线展开时显示在卡片下方，1..N 对应当前可见段（与图上段号一致）。
+// 段号条：K 线展开时显示在卡片下方，1..N（段终点端点号，图上端点编号的终点）对应当前可见段。
 // 在条上右滑 = 从左侧多取消选中一段（图上隐藏该段及更早），左滑 = 恢复一段；右端固定到最后一段。
 function renderSecSegNav(code, period, visibleSegs) {
   const nav = document.getElementById('sec-segnav');
@@ -1136,9 +1173,11 @@ function renderSecSegNav(code, period, visibleSegs) {
     return;
   }
   nav.hidden = false;
-  nav.classList.toggle('dense', visibleSegs.length > 14); // 段多时缩小字号，保证一行放下
+  nav.classList.toggle('dense', visibleSegs.length > 14); // 段多时缩小字号
+  // 段数超过每行上限时换行（每行 SEG_NAV_PER_ROW 个，后续行按钮宽度与第一行一致）
+  nav.classList.toggle('wrap', visibleSegs.length > SEG_NAV_PER_ROW);
   nav.innerHTML = visibleSegs
-    .map((s, k) => `<span class="sec-segnum${k < _secSegHide ? ' off' : ''}">${k + 1}</span>`)
+    .map((s, k) => `<span class="sec-segnum${k < _secSegHide ? ' off' : ''}" data-k="${k}">${k + 1}</span>`)
     .join('');
 }
 
@@ -1147,11 +1186,12 @@ function renderSecSegNav(code, period, visibleSegs) {
 function attachSecSegNavSwipe(code, period) {
   const nav = document.getElementById('sec-segnav');
   if (!nav) return;
-  let sx = 0, startHide = 0, tracking = false, raf = 0;
-  // 步长 = 段号条内容区宽度 / 段数（与段号视觉宽度一致）；下限 32px 防止段多时过于敏感
+  let sx = 0, sy = 0, startHide = 0, tracking = false, axis = null, rowStep = 34, raf = 0;
+  // 横向步长 = 段号条内容区宽度 / 每行段号数（与段号视觉宽度一致）；下限 32px 防止段多时过于敏感。
+  // 编号换行（段数 > SEG_NAV_PER_ROW）时按每行上限计算，保证跟手滑动与实际列宽一致。
   const stepOf = () => {
     const n = getVisibleSegsForPeriod(code, period).length || 1;
-    return Math.max(32, (nav.clientWidth - 28) / n); // 28 = 左右 padding 14*2
+    return Math.max(32, (nav.clientWidth - 28) / Math.min(n, SEG_NAV_PER_ROW)); // 28 = 左右 padding 14*2
   };
   const apply = (hide) => {
     if (hide === _secSegHide) return;
@@ -1167,17 +1207,35 @@ function attachSecSegNavSwipe(code, period) {
     }
   };
   nav.addEventListener('pointerdown', (e) => {
-    sx = e.clientX; startHide = _secSegHide; tracking = true;
+    sx = e.clientX; sy = e.clientY; startHide = _secSegHide; tracking = true; axis = null;
+    // 缓存一个段号行高（按钮高 + 行间距），供换行后的纵向快速缩放换算行数
+    const el = nav.querySelector('.sec-segnum');
+    rowStep = (el ? el.offsetHeight : 28) + 6;
   });
   nav.addEventListener('pointermove', (e) => {
     if (!tracking) return;
     const maxHide = Math.max(0, getVisibleSegsForPeriod(code, period).length - 1); // 右端固定：至少保留最后一段
-    const target = startHide + Math.round((e.clientX - sx) / stepOf());
+    const dx = e.clientX - sx, dy = e.clientY - sy;
+    // 首次超过 6px 时按主方向锁定本次拖动轴（仅换行后允许纵向），避免斜向滑动时两种缩放互相干扰
+    if (!axis && (Math.abs(dx) > 6 || Math.abs(dy) > 6)) {
+      axis = (nav.classList.contains('wrap') && Math.abs(dy) > Math.abs(dx)) ? 'y' : 'x';
+    }
+    let target;
+    if (axis === 'y') {
+      // 纵向（编号换行/两行及以上）：上滑隐藏更多段（快速聚焦最新段）、下滑恢复，每滑过一行步进一整行
+      target = startHide + Math.round(-dy / rowStep) * SEG_NAV_PER_ROW;
+    } else if (axis === 'x') {
+      target = startHide + Math.round(dx / stepOf());
+    } else {
+      return; // 位移未超过阈值，方向未定，等下一次移动
+    }
     apply(Math.max(0, Math.min(maxHide, target)));
   });
   const end = () => { tracking = false; };
   nav.addEventListener('pointerup', end);
   nav.addEventListener('pointercancel', end);
+  // 长按段号 → 在横条下方弹出该段的功能菜单；长按触发后停止滑动跟踪（end）
+  attachSegNavLongPress(nav, code, period, () => getVisibleSegsForPeriod(code, period), end);
 }
 
 // 周期列表页左/右滑切换方案：在内容区（非边缘）向左/右滑动切换方案
@@ -1200,8 +1258,8 @@ function attachPresetSwipe(container, code) {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     // 边缘区域交给 gesture.js 处理返回
     if (e.clientX <= EDGE || e.clientX >= window.innerWidth - EDGE) return;
-    // 展开的 K 线区域内滑动交给十字光标，不触发方案切换
-    if (e.target.closest('.period-row-kline')) return;
+    // 展开的 K 线区域内滑动交给十字光标、段号条内滑动交给选中段手势，不触发方案切换
+    if (e.target.closest('.period-row-kline') || e.target.closest('.period-row-segnav')) return;
     presetSwipeFired = false; // 每次新触摸重置方案滑动标志
     startX = e.clientX;
     startY = e.clientY;
@@ -1319,6 +1377,7 @@ function togglePeriodRowKline(code, period, row) {
   row.classList.toggle('expanded', expanding);
   if (expanding) {
     state._periodExpanded.add(period);
+    row._segHide = state._periodSegHide?.[period] || 0; // 恢复该行段号条的取消选中状态
     try { navigator.vibrate?.(10); } catch {}
     renderPeriodRowKline(code, period, row);
     // 展开后后台按最新 K 线重算盯盘段/追踪段终点，数据有变化则重绘该行并刷新行头统计
@@ -1332,13 +1391,18 @@ function togglePeriodRowKline(code, period, row) {
     });
   } else {
     state._periodExpanded.delete(period);
+    // 收起时重置段号条的取消选中状态并隐藏（与详情页证券卡片收起行为一致）
+    row._segHide = 0;
+    if (state._periodSegHide) delete state._periodSegHide[period];
+    renderPeriodRowSegNav(row, []);
     const kline = row.querySelector('.period-row-kline');
     if (kline) kline.classList.remove('cross-lock');
   }
 }
 
-// 构建某周期行内 K 线的切片数据（可见段/中枢、取数范围），与旧弹窗 periodStats 一致
-function buildPeriodRowSlice(code, period, bars) {
+// 构建某周期行内 K 线的切片数据（可见段/中枢、取数范围），与旧弹窗 periodStats 一致。
+// segHide：段号条从左侧取消选中的段数（0=全部显示，右端固定到最后一段），与详情页 _secSegHide 语义一致
+function buildPeriodRowSlice(code, period, bars, segHide = 0) {
   const sec = state.securities.find((s) => s.code === code);
   if (!sec) return null;
   const higherPeriod = getHigherPeriod(period, sec.periods || []);
@@ -1349,19 +1413,22 @@ function buildPeriodRowSlice(code, period, bars) {
   if (hideBefore != null) segs = segs.filter((s) => (s.start?.time ?? s.end?.time ?? 0) >= hideBefore);
   const visibleIds = new Set(segs.map((s) => s.id));
   const zss = (sec.drawings[period]?.zhongshus || []).filter((z) => (z.segmentIds || []).some((id) => visibleIds.has(id)));
-  const zhongshuRects = buildZhongshuRects(zss, segs);
   const visibleSegs = getVisibleSegsForPeriod(code, period);
+  if (segHide >= visibleSegs.length) segHide = Math.max(0, visibleSegs.length - 1);
+  const shownSegs = visibleSegs.slice(segHide);
+  const zhongshuRects = buildZhongshuRects(zss, shownSegs);
   const digits = isETF(code) ? 3 : 2;
-  if (!bars.length || !visibleSegs.length) {
-    return { bars: [], segs: [], zhongshus: zhongshuRects, digits };
+  if (!bars.length || !shownSegs.length) {
+    return { bars: [], segs: [], zhongshus: zhongshuRects, digits, visibleSegs };
   }
-  const viewSegItems = visibleSegs.map((s, k) => ({ seg: s, no: k + 1 }));
-  const startTime = visibleSegs[0].start.time;
+  // no 为段起点端点号（0 基，供图上端点编号），保持全量可见段中的原始编号，不因取消选中前段而重排
+  const viewSegItems = shownSegs.map((s, k) => ({ seg: s, no: segHide + k }));
+  const startTime = shownSegs[0].start.time;
   const endTime = bars[bars.length - 1].time;
   // 包含 startTime 前一根 bar，使落在两根 bar 之间的段端点能通过 timeToX 时间插值精确定位
   const startIdx = Math.max(0, bars.findIndex((b) => b.time >= startTime) - 1);
   const sliced = bars.slice(startIdx).filter((b) => b.time <= endTime);
-  return { bars: sliced, segs: viewSegItems, zhongshus: zhongshuRects, digits };
+  return { bars: sliced, segs: viewSegItems, zhongshus: zhongshuRects, digits, visibleSegs };
 }
 
 // 渲染/刷新某周期行的行内 K 线（主图 + 副图 + 十字 + 中枢/段标注）。
@@ -1374,6 +1441,9 @@ async function renderPeriodRowKline(code, period, row) {
   const main = kline.querySelector('.period-kline-main');
   const sub = kline.querySelector('.period-kline-sub');
   if (!main || !sub) return;
+  // 段号条已取消选中的段数：段数减少时收敛到合法范围（右端固定最后一段）
+  const visibleSegs = getVisibleSegsForPeriod(code, period);
+  if ((row._segHide || 0) >= visibleSegs.length) row._segHide = Math.max(0, visibleSegs.length - 1);
   // K 线展示用本周期真实数据（辅助周期 15m/60m 不再回落主周期）；
   // 段的盯盘/追踪更新由 refreshSegmentsForPeriod 用主周期 bars 另算，互不影响。
   let bars;
@@ -1381,7 +1451,9 @@ async function renderPeriodRowKline(code, period, row) {
     // 新展开的行强制取最新；已绑定视图的重绘用缓存（轮询由 refreshPeriodRowsKline 刷新）
     bars = await ensureDisplayBars(code, period, !row._klView);
   } catch { bars = []; }
-  const data = buildPeriodRowSlice(code, period, bars);
+  // 段号条（1..N 段号）与 K 线同步：右滑取消选中更早段后仅渲染选中段；无数据时隐藏
+  renderPeriodRowSegNav(row, bars.length ? visibleSegs : []);
+  const data = buildPeriodRowSlice(code, period, bars, row._segHide || 0);
   if (!data) return;
   if (row._klView) {
     const v = row._klView;
@@ -1395,6 +1467,86 @@ async function renderPeriodRowKline(code, period, row) {
     ownView: true, // 多行同时展开时各行用闭包视图，避免共享全局 _view 相互覆盖
     onCrossChange: (active) => kline.classList.toggle('cross-lock', active),
   });
+}
+
+// 周期行内段号条：与详情页 .sec-segnav 同款——1..N 段号对应当前可见段（段终点端点号），
+// 右滑从左侧取消选中更早段（图上隐藏该段及更早），左滑恢复，右端固定到最后一段；
+// 每行独立维护选中态（row._segHide，行重建后由 state._periodSegHide 恢复），多行同展开互不影响。
+function renderPeriodRowSegNav(row, visibleSegs) {
+  const nav = row.querySelector('.period-row-segnav');
+  if (!nav) return;
+  const hide = row._segHide || 0;
+  if (!row.classList.contains('expanded') || !visibleSegs || visibleSegs.length < 2) {
+    nav.hidden = true;
+    nav.innerHTML = '';
+    return;
+  }
+  nav.hidden = false;
+  nav.classList.toggle('dense', visibleSegs.length > 14); // 段多时缩小字号
+  // 段数超过每行上限时换行（每行 SEG_NAV_PER_ROW 个，后续行按钮宽度与第一行一致）
+  nav.classList.toggle('wrap', visibleSegs.length > SEG_NAV_PER_ROW);
+  nav.innerHTML = visibleSegs
+    .map((s, k) => `<span class="sec-segnum${k < hide ? ' off' : ''}" data-k="${k}">${k + 1}</span>`)
+    .join('');
+}
+
+// 行内段号条滑动手势：与详情页 attachSecSegNavSwipe 一致——跟手连续映射，手指每滑过一个
+// 段号宽度步进一段（rAF 合并同帧多次步进），拖动中实时重绘该行 K 线，松手即停。
+function attachPeriodRowSegNavSwipe(row, code, period) {
+  const nav = row.querySelector('.period-row-segnav');
+  if (!nav) return;
+  let sx = 0, sy = 0, startHide = 0, tracking = false, axis = null, rowStep = 34, raf = 0;
+  // 横向步长 = 段号条内容区宽度 / 每行段号数（与段号视觉宽度一致）；下限 32px 防止段多时过于敏感。
+  // 编号换行（段数 > SEG_NAV_PER_ROW）时按每行上限计算，保证跟手滑动与实际列宽一致。
+  const stepOf = () => {
+    const n = getVisibleSegsForPeriod(code, period).length || 1;
+    return Math.max(32, (nav.clientWidth - 28) / Math.min(n, SEG_NAV_PER_ROW)); // 28 = 左右 padding 14*2
+  };
+  const apply = (hide) => {
+    if (hide === (row._segHide || 0)) return;
+    row._segHide = hide;
+    if (state._periodSegHide) state._periodSegHide[period] = hide;
+    try { navigator.vibrate?.(8); } catch {}
+    renderPeriodRowSegNav(row, getVisibleSegsForPeriod(code, period));
+    if (!raf) {
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        if (row.isConnected && row.classList.contains('expanded')) renderPeriodRowKline(code, period, row); // 用缓存 bars 重绘
+      });
+    }
+  };
+  nav.addEventListener('pointerdown', (e) => {
+    sx = e.clientX; sy = e.clientY; startHide = row._segHide || 0; tracking = true; axis = null;
+    // 缓存一个段号行高（按钮高 + 行间距），供换行后的纵向快速缩放换算行数
+    const el = nav.querySelector('.sec-segnum');
+    rowStep = (el ? el.offsetHeight : 28) + 6;
+    // 捕获指针：条高较窄，避免手指滑动时轻微滑出条外中断手势
+    try { nav.setPointerCapture(e.pointerId); } catch {}
+  });
+  nav.addEventListener('pointermove', (e) => {
+    if (!tracking) return;
+    const maxHide = Math.max(0, getVisibleSegsForPeriod(code, period).length - 1); // 右端固定：至少保留最后一段
+    const dx = e.clientX - sx, dy = e.clientY - sy;
+    // 首次超过 6px 时按主方向锁定本次拖动轴（仅换行后允许纵向），避免斜向滑动时两种缩放互相干扰
+    if (!axis && (Math.abs(dx) > 6 || Math.abs(dy) > 6)) {
+      axis = (nav.classList.contains('wrap') && Math.abs(dy) > Math.abs(dx)) ? 'y' : 'x';
+    }
+    let target;
+    if (axis === 'y') {
+      // 纵向（编号换行/两行及以上）：上滑隐藏更多段（快速聚焦最新段）、下滑恢复，每滑过一行步进一整行
+      target = startHide + Math.round(-dy / rowStep) * SEG_NAV_PER_ROW;
+    } else if (axis === 'x') {
+      target = startHide + Math.round(dx / stepOf());
+    } else {
+      return; // 位移未超过阈值，方向未定，等下一次移动
+    }
+    apply(Math.max(0, Math.min(maxHide, target)));
+  });
+  const end = () => { tracking = false; };
+  nav.addEventListener('pointerup', end);
+  nav.addEventListener('pointercancel', end);
+  // 长按段号 → 在横条下方弹出该段的功能菜单；长按触发后停止滑动跟踪（end）
+  attachSegNavLongPress(nav, code, period, () => getVisibleSegsForPeriod(code, period), end);
 }
 
 // 轮询刷新后同步所有展开行的行内 K 线：按展示周期分组，各周期强制取本周期最新
@@ -1413,14 +1565,25 @@ function refreshPeriodRowsKline(code) {
       if (!bars || !bars.length) return;
       for (const row of rows) {
         if (!row.isConnected) continue;
-        const data = buildPeriodRowSlice(code, p, bars);
+        const data = buildPeriodRowSlice(code, p, bars, row._segHide || 0);
         if (!data) continue;
+        renderPeriodRowSegNav(row, data.visibleSegs); // 段增减后同步段号条
         const v = row._klView;
         v.bars = data.bars; v.segs = data.segs; v.zhongshus = data.zhongshus;
         repaintView(v);
       }
     }).catch(() => {});
   }
+}
+
+// 段数据变化后（增删改/中枢识别/盯盘推进等）同步周期页该周期展开行的行内 K 线：
+// 用缓存 bars 重切重绘，使菜单操作立即在行内图上生效（详情页/周期页共用操作入口）
+function refreshPeriodRowKlinesForPeriod(code, period) {
+  if (state.view !== 'periods' || state.selectedCode !== code) return;
+  document.querySelectorAll('.period-row.expanded').forEach((row) => {
+    if (row.dataset.period !== period || !row._klView) return;
+    renderPeriodRowKline(code, period, row); // 已绑定视图走缓存 bars，不发网络请求
+  });
 }
 
 // 主题切换后同步所有展开行的行内 K 线（repaintView 内部重读 CSS 变量主题色）
@@ -1481,8 +1644,8 @@ function attachPeriodRowLongPress(row, code, period) {
   };
   const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
   row.addEventListener('pointerdown', (e) => {
-    // 展开的 K 线区域内的长按交给十字光标，不触发行收起
-    if (e.target.closest('.period-row-kline')) return;
+    // 展开的 K 线区域内的长按交给十字光标、段号条内的长按交给滑动选择，均不触发行收起
+    if (e.target.closest('.period-row-kline') || e.target.closest('.period-row-segnav')) return;
     start(e.clientX, e.clientY);
   });
   row.addEventListener('pointermove', (e) => {
@@ -1665,6 +1828,8 @@ function attachSegmentKlineSubToggle(container) {
 
 // 中枢编辑/本地修改后，不重新拉取行情，直接用缓存 bars 重新计算并渲染
 function refreshPeriodDetailWithoutFetch(code, period) {
+  // 段数据可能已变化：先同步周期页展开行的行内 K 线（该页无 #period-detail，由下方逻辑兜底渲染详情页）
+  refreshPeriodRowKlinesForPeriod(code, period);
   const sec = state.securities.find((s) => s.code === code);
   const detail = $('#period-detail');
   if (!sec || !detail) return;
@@ -1880,18 +2045,19 @@ function paintKline(diag) {
     });
   }
   bars = bars || [];
-  // 构建包含当前段的连续 3 段视图窗口（用于 K 线范围），段号与卡片一致。
+  // 构建包含当前段的连续 3 段视图窗口（用于 K 线范围），段子集与卡片一致。
   // 优先用打开弹层时锚定的 visibleSegs 快照，避免后台实时刷新重排段/改变 hideBefore 后，
-  // 窗口被强制落到前 3 段（1、2、3）而偏离当前段。
+  // 窗口被强制落到前 3 段（起点端点号 0、1、2）而偏离当前段。
   const visibleSegs = (_klineView.visibleSegs && _klineView.visibleSegs.length)
     ? _klineView.visibleSegs
     : getVisibleSegsForPeriod(code, period);
   const realIdx = {};
-  visibleSegs.forEach((s, k) => (realIdx[s.id] = k + 1));
+  visibleSegs.forEach((s, k) => (realIdx[s.id] = k));
 
   const idx = visibleSegs.findIndex((s) => s.id === segId);
   let viewSeg = seg;
-  let viewSegItems = [{ seg, no: realIdx[segId] || '' }];
+  // 注意 0 号段：realIdx 为 0 是有效编号，不能用 || 兜底（会被吞成空串）
+  let viewSegItems = [{ seg, no: realIdx[segId] ?? '' }];
   if (visibleSegs.length > 1 && idx >= 0) {
     const startIdx = Math.max(0, Math.min(idx - 1, visibleSegs.length - 3));
     const endIdx = Math.min(startIdx + 2, visibleSegs.length - 1);
@@ -2024,6 +2190,19 @@ function showCardOverlay(card, code, period) {
   if (card.classList.contains('kline-expanded')) return;
   hideCardOverlay();
   const segId = card.dataset.id;
+  const overlay = document.createElement('div');
+  overlay.className = 'card-overlay';
+  overlay.innerHTML = buildSegmentActionsHtml(segId, code, period);
+  card.appendChild(overlay);
+  activeCardOverlay = overlay;
+  // 下一帧触发显示动画
+  requestAnimationFrame(() => overlay.classList.add('show'));
+  bindOverlayActions(overlay, segId, code, period);
+}
+
+// 构建某段的操作按钮 HTML（长按段卡片蒙板 / 段号条长按菜单共用）：
+// 盯盘/追踪段 → 删除/编辑/转为普通段；普通段 → 删除/编辑/[新增]/[盯盘|追踪]/[中枢识别]/[递归]
+function buildSegmentActionsHtml(segId, code, period) {
   const sec = state.securities.find((s) => s.code === code);
   const d = sec?.drawings?.[period];
   const sorted = [...(d?.segments || [])].sort((a, b) => a.start.time - b.start.time);
@@ -2045,11 +2224,32 @@ function showCardOverlay(card, code, period) {
   });
   const canDetect = !isWatch && !isTrack && detected && detected.segmentIds.every((id) => !otherZsIds.has(id));
 
+  // 单根段递归：按桌面版「单根点线递归」规则预判该段能否递归为更高一级别段（如 1m → 5m），
+  // 可用时在蒙板上显示「递归」按钮；产物写入更高周期（见 recursiveToHigherPeriod）。
+  // 用周期链推算下一级（getNextHigherPeriod）：更高级别尚无数据时同样可递归（产物会创建该级别）。
+  const higherPeriod = getNextHigherPeriod(period);
+  const higherSegs = (higherPeriod && sec?.drawings?.[higherPeriod]?.segments) || [];
+  const recursiveInfo = (!isWatch && !isTrack && targetSeg && higherPeriod)
+    ? computeRecursiveSegment(sorted, higherSegs, segId)
+    : null;
+  const canRecursive = !!(recursiveInfo && recursiveInfo.ok);
+
   const detectBtn = canDetect ? `
     <button class="overlay-btn icon accent" data-act="detect" aria-label="中枢识别">
       <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round">
         <rect x="4" y="7" width="16" height="10" rx="2"/>
         <path d="M4 12 H20"/>
+      </svg>
+    </button>
+  ` : '';
+
+  // 「递归」按钮（可递归时显示）：按桌面版单根点线递归规则，把当前段所属的若干根相连段
+  // 合成一根更高一级别的新段（产物写入更高周期，如 1m 段递归 → 5m 段）
+  const recursiveBtn = canRecursive ? `
+    <button class="overlay-btn icon" data-act="recursive" aria-label="递归为${periodLabel(higherPeriod)}段">
+      <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M5 12 A7 7 0 1 1 12 19"/>
+        <polyline points="8,19 12,19 12,15"/>
       </svg>
     </button>
   ` : '';
@@ -2072,9 +2272,7 @@ function showCardOverlay(card, code, period) {
     </button>
   `) : '';
 
-  const overlay = document.createElement('div');
-  overlay.className = 'card-overlay';
-  overlay.innerHTML = (isWatch || isTrack) ? `
+  return (isWatch || isTrack) ? `
     <button class="overlay-btn icon danger" data-act="del" aria-label="删除">
       <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round">
         <line x1="18" y1="6" x2="6" y2="18"/>
@@ -2116,13 +2314,12 @@ function showCardOverlay(card, code, period) {
     </button>` : ''}
     ${watchBtn}
     ${detectBtn}
+    ${recursiveBtn}
   `;
-  card.appendChild(overlay);
-  activeCardOverlay = overlay;
+}
 
-  // 下一帧触发显示动画
-  requestAnimationFrame(() => overlay.classList.add('show'));
-
+// 段操作按钮的点击处理与「点击外部关闭」绑定（长按段卡片蒙板 / 段号条长按菜单共用）
+function bindOverlayActions(overlay, segId, code, period) {
   overlay.addEventListener('click', (e) => {
     const btn = e.target.closest('[data-act]');
     if (!btn) {
@@ -2130,15 +2327,74 @@ function showCardOverlay(card, code, period) {
       return;
     }
     e.stopPropagation();
-    const segId = card.dataset.id;
     hideCardOverlay();
     handleSegmentAction(btn.dataset.act, segId, code, period);
   });
 
-  // 点击卡片外部关闭蒙板
+  // 点击菜单外部关闭
   setTimeout(() => {
     document.addEventListener('pointerdown', closeCardOverlayOnOutside, { once: true, capture: true });
   }, 0);
+}
+
+// 段号条长按菜单：按钮与长按段卡片同款，弹在段号条下方（fixed 挂 body，
+// 避免被周期行的 overflow:hidden 裁剪），作用于被长按段号对应的段。
+function showSegNavOverlay(nav, numEl, segId, code, period) {
+  hideCardOverlay();
+  const overlay = document.createElement('div');
+  overlay.className = 'card-overlay nav-overlay';
+  // 菜单左侧显示被长按的段号（与横条上的编号一致），让用户确认操作的是哪一段
+  const noText = numEl ? numEl.textContent.trim() : '';
+  overlay.innerHTML = (noText ? `<span class="nav-overlay-no">${noText}</span>` : '')
+    + buildSegmentActionsHtml(segId, code, period);
+  document.body.appendChild(overlay);
+  activeCardOverlay = overlay;
+  // 定位：横向对齐被长按的段号并夹紧在视口内；纵向贴在段号条下方，下方放不下时上翻
+  const navRect = nav.getBoundingClientRect();
+  const numRect = numEl ? numEl.getBoundingClientRect() : navRect;
+  const vw = window.innerWidth, vh = window.innerHeight;
+  const ow = overlay.offsetWidth, oh = overlay.offsetHeight;
+  const left = Math.max(8, Math.min(vw - ow - 8, numRect.left + numRect.width / 2 - ow / 2));
+  let top = navRect.bottom + 6;
+  if (top + oh > vh - 8 && navRect.top - oh - 6 >= 8) top = navRect.top - oh - 6;
+  overlay.style.left = `${Math.round(left)}px`;
+  overlay.style.top = `${Math.round(top)}px`;
+  // 下一帧触发显示动画
+  requestAnimationFrame(() => overlay.classList.add('show'));
+  bindOverlayActions(overlay, segId, code, period);
+  // 页面滚动/视口尺寸变化后菜单会与段号条错位，直接关闭
+  window.addEventListener('scroll', hideCardOverlay, { once: true, capture: true, passive: true });
+  window.addEventListener('resize', hideCardOverlay, { once: true });
+}
+
+// 段号条长按段号 → 在横条下方弹出该段的功能菜单（按钮与长按段卡片同款，内容由
+// buildSegmentActionsHtml 按段状态生成）。与整条滑动手势共存：位移超过 10px 视为滑动/
+// 滚动并取消长按；长按触发后回调 stopSwipe 停止滑动跟踪，避免拖动手势继续改可见段。
+function attachSegNavLongPress(nav, code, period, getSegs, stopSwipe) {
+  let timer = null;
+  let sx = 0, sy = 0, pressK = -1;
+  const LONG_MS = 480;
+  const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  nav.addEventListener('pointerdown', (e) => {
+    const numEl = e.target.closest('.sec-segnum');
+    if (!numEl) return;
+    pressK = Number(numEl.dataset.k);
+    sx = e.clientX; sy = e.clientY;
+    cancel();
+    timer = setTimeout(() => {
+      timer = null;
+      const seg = getSegs()[pressK]; // 段号索引 → 可见段（与段号渲染顺序一致）
+      if (!seg) return;
+      stopSwipe();
+      showSegNavOverlay(nav, numEl, seg.id, code, period);
+    }, LONG_MS);
+  });
+  nav.addEventListener('pointermove', (e) => {
+    if (Math.abs(e.clientX - sx) > 10 || Math.abs(e.clientY - sy) > 10) cancel();
+  });
+  nav.addEventListener('pointerup', cancel);
+  nav.addEventListener('pointercancel', cancel);
+  nav.addEventListener('contextmenu', (e) => e.preventDefault());
 }
 
 function closeCardOverlayOnOutside(e) {
@@ -2154,6 +2410,9 @@ function hideCardOverlay() {
     activeCardOverlay = null;
   }
   document.removeEventListener('pointerdown', closeCardOverlayOnOutside, { capture: true });
+  // 段号条长按菜单在滚动/视口变化时关闭，监听需同步移除（once 已触发时移除无害）
+  window.removeEventListener('scroll', hideCardOverlay, { capture: true });
+  window.removeEventListener('resize', hideCardOverlay);
 }
 
 // ========== 中枢编辑：长按标题进入编辑态，拖动上下边缘纳入/剔除段 ==========
@@ -2569,6 +2828,9 @@ async function handleSegmentAction(act, segId, code, period) {
     d.zhongshus.push(makeZhongshu(detected.segmentIds, detected.baseSegmentIds));
     saveLocalEdits(code, sec.drawings);
     refreshPeriodDetailWithoutFetch(code, period);
+  } else if (act === 'recursive') {
+    if (!targetSeg) return;
+    recursiveToHigherPeriod(code, period, segId);
   } else if (act === 'edit') {
     if (!targetSeg) return;
     const wasWatch = targetSeg._isWatch;
@@ -3039,6 +3301,62 @@ async function addSegment(code, period, afterSegId) {
     saveLocalEdits(code, sec.drawings);
     refreshPeriodDetailWithoutFetch(code, period);
   }, defaults);
+}
+
+// ===== 单根段递归（对齐桌面版「单根点线递归」）=====
+// 在当前周期 P 的某根段上执行递归：按 computeRecursiveSegment 的规则（入口 B/C/C'）计算出一根
+// 新段，产物写入更高一级周期 P'（如 A0=1分钟 时在 1 分钟段上递归，形成 5 分钟新段）。
+// 桌面版产物是同一画布上的高一档线型（点线→虚线）；移动端没有线型级别概念，改用周期承载级别。
+function recursiveToHigherPeriod(code, period, segId) {
+  const sec = state.securities.find((s) => s.code === code);
+  if (!sec) return;
+  const higherPeriod = getNextHigherPeriod(period);
+  if (!higherPeriod) {
+    toast('已是最高级别，无法递归');
+    return;
+  }
+  const d = sec.drawings[period] || { segments: [], zhongshus: [] };
+  if (!sec.drawings[higherPeriod]) {
+    sec.drawings[higherPeriod] = { segments: [], zhongshus: [] };
+  }
+  const hd = sec.drawings[higherPeriod];
+  hd.segments = hd.segments || [];
+  hd.zhongshus = hd.zhongshus || [];
+  const info = computeRecursiveSegment(d.segments || [], hd.segments, segId);
+  if (!info.ok) {
+    toast('该段不满足递归条件');
+    return;
+  }
+  // 幂等：更高周期已存在相同端点的段时不再重复生成（避免重复点击产生重叠段）
+  const dup = hd.segments.some((s) => s && s.start && s.end
+    && s.start.time === info.start.time && Math.abs(s.start.price - info.start.price) < 1e-3
+    && s.end.time === info.end.time && Math.abs(s.end.price - info.end.price) < 1e-3);
+  if (dup) {
+    toast(`已存在相同的${periodLabel(higherPeriod)}段，无需重复递归`);
+    return;
+  }
+  const newSeg = {
+    id: 's_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6),
+    kind: 'segment',
+    period: higherPeriod,
+    direction: info.end.price >= info.start.price ? 'up' : 'down',
+    start: { time: info.start.time, price: info.start.price },
+    end: { time: info.end.time, price: info.end.price },
+    // 递归产物标记：不参与低周期 hideBefore 对齐（见 computeHideBefore）
+    _isRecursive: true,
+  };
+  hd.segments.push(newSeg);
+  // 递归出的更高级别可能不在证券周期列表（如只有 1m/5m/15m 的证券从 5m 递归出 30m）：
+  // 补入列表（按周期链顺序），使该级别在周期页可见可进入；刷新后由 loadAllDrawings 的补全逻辑恢复。
+  if (!(sec.periods || []).includes(higherPeriod)) {
+    sec.periods = [...(sec.periods || []), higherPeriod].sort(
+      (a, b) => PERIODS.findIndex((x) => x[0] === a) - PERIODS.findIndex((x) => x[0] === b)
+    );
+  }
+  try { navigator.vibrate?.(12); } catch {}
+  saveLocalEdits(code, sec.drawings);
+  toast(`已递归生成${periodLabel(higherPeriod)}段`);
+  refreshPeriodDetailWithoutFetch(code, period);
 }
 
 // ===== 盯盘段：选点 / 创建 / 动态更新 / 自动续接（对齐桌面版 watch 逻辑） =====

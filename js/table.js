@@ -237,7 +237,7 @@ export function renderSegments(container, segments, zhongshus, fmt, code = '', r
   const zsNumber = {};
   zsOrdered.forEach((z, rank) => { zsNumber[z.idx] = zsCount - rank; });
 
-  // 真实段序号（时间正序：最早 = 1 … 最新 = total），编号与排列顺序无关
+  // 段终点端点号（时间正序：最早 = 1 … 最新 = total），与排列顺序无关
   const byTimeAsc = [...segs].sort(
     (a, b) => (a.end?.time ?? a.start?.time) - (b.end?.time ?? b.start?.time)
   );

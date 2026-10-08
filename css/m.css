@@ -550,6 +550,38 @@ body.search-header-fixed .search-edge-guard { display: block; }
 .overlay-btn.danger { color: var(--wx-red); }
 .overlay-btn.accent { color: var(--wx-accent); }
 .overlay-btn.ok { color: var(--wx-green); }
+/* 段号条长按菜单：与长按段卡片同款按钮组，弹在段号条下方。
+   fixed 挂 body，避免被周期行的 overflow:hidden 裁剪；按钮多时自动换行。 */
+.card-overlay.nav-overlay {
+  position: fixed;
+  inset: auto;
+  z-index: 45;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  max-width: calc(100vw - 16px);
+  background: var(--wx-card);
+  border: 1px solid var(--wx-line);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+/* 长按菜单左侧的段号标识：与段号条同款配色，让用户确认是哪一个段号的菜单 */
+.nav-overlay-no {
+  flex: 0 0 auto;
+  align-self: center;
+  min-width: 34px;
+  height: 34px;
+  padding: 0 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--wx-txt);
+  color: var(--wx-card);
+  font-size: 14px;
+  font-weight: 600;
+}
 
 .icon-btn {
   background: none; border: none; padding: 4px;
@@ -898,17 +930,21 @@ body.search-header-fixed .search-edge-guard { display: block; }
 .sec-segnum {
   flex: 1 1 0; min-width: 0;
   text-align: center;
-  font-size: 12px; line-height: 20px;
+  font-size: 12px; line-height: 26px; /* 行高决定按钮高度，加高便于点按 */
   color: var(--wx-card); background: var(--wx-txt);
   border: 1px solid var(--wx-txt); border-radius: 6px;
   transition: color .15s ease, background .15s ease, border-color .15s ease;
 }
 /* 段数较多时缩小字号，仍保持一行均分 */
-.sec-segnav.dense .sec-segnum { font-size: 10px; line-height: 18px; }
-/* 已取消选中的段号：置灰 + 删除线，图上同步隐藏该段及更早段 */
+.sec-segnav.dense .sec-segnum { font-size: 10px; line-height: 24px; }
+/* 段数超过一行 8 个时换行：每行固定 8 个宽度（42px = 7 个 gap 6px），
+   第二行及以后按钮宽度与第一行一致，不因数量少而被拉伸。
+   换行后接管纵向手势（touch-action: none）做快速缩放，单行时保持 pan-y 不影响页面滚动 */
+.sec-segnav.wrap { flex-wrap: wrap; touch-action: none; }
+.sec-segnav.wrap .sec-segnum { flex: 0 0 calc((100% - 42px) / 8 - 0.5px); } /* 减 0.5px 余量，避免 sub-pixel 舍入导致每行不足 8 个 */
+/* 已取消选中的段号：置灰（不加删除线），图上同步隐藏该段及更早段 */
 .sec-segnum.off {
   color: var(--wx-muted); background: transparent; border-color: var(--wx-line);
-  text-decoration: line-through;
 }
 .sec-card--detail .sec-head, .sec-card--periods .sec-head,
 .sec-card--detail .sec-info, .sec-card--periods .sec-info,
@@ -1048,6 +1084,9 @@ body.search-header-fixed .search-edge-guard { display: block; }
 .period-row.expanded .period-row-name { flex: 0 0 auto; font-size: 15px; }
 .period-row.expanded .period-row-meta { flex: 0 0 auto; font-size: 12px; }
 .period-row.expanded .sec-arrow { transform: rotate(90deg); }
+/* 行内段号条：与详情页 .sec-segnav 同款（横向跟手取消/恢复选中段），仅展开时显示 */
+.period-row-segnav { margin: 10px 14px; }
+.period-row:not(.expanded) .period-row-segnav { display: none; }
 
 /* 周期详情：外层无大卡片，内部用 margin 控制卡片间距 */
 #period-detail {

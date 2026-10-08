@@ -114,8 +114,10 @@ function drawZhongshuRect(ctx, meta, zs, colors) {
   ctx.restore();
 }
 
-// 段起点→终点连线（红涨绿跌，黑白配色下用主题色；实线 + 端点圆点），no 为可选段号
-function drawSegConnector(ctx, meta, seg, colors, no) {
+// 段起点→终点连线（红涨绿跌，黑白配色下用主题色；实线 + 端点圆点）。
+// no 为段起点端点号（0 基，与桌面版端点编号一致）：两端点处标各自编号；
+// labelState 跨段共享，用于端点去重与防叠字。段中点不再画段号标签。
+function drawSegConnector(ctx, meta, seg, colors, no, labelState) {
   const { bars, xOf, yOf } = meta;
   if (!bars || !bars.length) return;
   const x1 = timeToX(bars, seg.start.time, xOf);
@@ -138,24 +140,45 @@ function drawSegConnector(ctx, meta, seg, colors, no) {
   ctx.beginPath();
   ctx.arc(x2, y2, 2.6, 0, Math.PI * 2);
   ctx.fill();
-  // 段号标签：中点上方，方向色底 + 白字
-  if (no) {
-    const mx = (x1 + x2) / 2;
-    const my = (y1 + y2) / 2;
-    const label = String(no);
-    ctx.font = 'bold 9px sans-serif';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    const lw = ctx.measureText(label).width;
-    const lh = 12;
-    const lx = mx;
-    const ly = my - 10;
-    ctx.fillStyle = col;
-    roundRect(ctx, lx - lw / 2 - 3, ly - lh / 2, lw + 6, lh, 2);
-    ctx.fill();
-    ctx.fillStyle = '#fff';
-    ctx.fillText(label, lx, ly);
+  const hasNo = typeof no === 'number' && isFinite(no);
+  if (hasNo && labelState) {
+    // 端点编号：起点 = no、终点 = no+1（相邻段共享端点，由 labelState 去重只画一次）
+    drawEndpointNo(ctx, meta, x1, y1, no, col, labelState);
+    drawEndpointNo(ctx, meta, x2, y2, no + 1, col, labelState);
   }
+  ctx.restore();
+}
+
+// 端点编号：画在端点右侧；靠近右侧价格轴时翻到左侧，避免侵入坐标轴区域。
+// 同一像素位置的共享端点（前段终点=后段起点）只画一次；与已画编号过密时跳过防叠字。
+function drawEndpointNo(ctx, meta, x, y, no, col, labelState) {
+  const right = (meta.padL || 0) + (meta.plotW || 0);
+  const key = Math.round(x) + ',' + Math.round(y);
+  if (labelState.vertices.has(key)) return;
+  const text = String(no);
+  ctx.save();
+  ctx.font = 'bold 11px sans-serif';
+  ctx.textBaseline = 'middle';
+  const GAP = 5; // 编号与端点的水平间距
+  const tw = ctx.measureText(text).width;
+  let lx, left, rightEdge;
+  if (right && x + GAP + tw > right - 2) {
+    lx = x - GAP; // 翻到端点左侧
+    left = lx - tw;
+    rightEdge = lx;
+    ctx.textAlign = 'right';
+  } else {
+    lx = x + GAP;
+    left = lx;
+    rightEdge = lx + tw;
+    ctx.textAlign = 'left';
+  }
+  // 与上一个已画编号过密（如段很窄时）则跳过，避免叠成一团
+  if (left < labelState.lastVertexRight + 2) { ctx.restore(); return; }
+  labelState.vertices.add(key);
+  labelState.lastVertexRight = rightEdge;
+  ctx.fillStyle = col;
+  ctx.fillText(text, lx, Math.max(6, Math.min((meta.plotH || 1e9) - 6, y)));
   ctx.restore();
 }
 
@@ -181,7 +204,7 @@ export function renderKlineChart(main, sub, bars, opts = {}) {
     sub,
     bars: bars || [],
     seg: opts.seg || null,
-    segs: opts.segs || (opts.seg ? [{ seg: opts.seg, no: opts.segNo || '' }] : []),
+    segs: opts.segs || (opts.seg ? [{ seg: opts.seg, no: opts.segNo ?? '' }] : []),
     zhongshus: opts.zhongshus || [],
     subType: opts.sub === 'vol' ? 'vol' : 'macd',
     solidMacd: !!opts.solidMacd,
@@ -335,16 +358,17 @@ function drawMainCanvas(canvas, bars, segs, zhongshus, colors, period, digits) {
   }
   // 中枢矩形 + 段连线：使用局部 meta（不再依赖全局 _view），
   // 避免多页周期弹窗并发渲染覆盖 _view 时，画线读取到错误配置。
-  const meta = { bars, xOf, yOf };
+  const meta = { bars, xOf, yOf, padL, plotW, plotH };
   // 中枢点线矩形
   if (zhongshus && zhongshus.length) {
     for (const zs of zhongshus) {
       drawZhongshuRect(ctx, meta, zs, colors);
     }
   }
-  // 段起点→终点实线段连接
+  // 段起点→终点实线段连接 + 端点编号（各段共享去重与防叠字状态）
+  const labelState = { vertices: new Set(), lastVertexRight: -Infinity };
   for (const { seg: s, no } of segList) {
-    if (s?.start && s?.end) drawSegConnector(ctx, meta, s, colors, no);
+    if (s?.start && s?.end) drawSegConnector(ctx, meta, s, colors, no, labelState);
   }
 
   return { ctx, w, h, n, min, max, plotW, plotH, padL, xOf, yOf, seg: segList.map((x) => x.seg), bars, colors, zhongshus };

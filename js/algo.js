@@ -350,6 +350,168 @@ function buildLineChains(segments) {
   return chains;
 }
 
+// ===== 单根段「递归」：把当前周期若干根相连段递归为更高一级周期的一根新段 =====
+// 移植自桌面端 drawing.js 的「单根点线递归」（点线→虚线；右键菜单「递归」，见 _validateComboSelection）：
+// 桌面版产物是本画布上的高一档线型；移动端没有线型级别概念，产物写入更高一级周期（如 1m 段递归 → 5m 段）。
+// 三个入口（与桌面版同序，先命中先用）：
+//   B ：目标段起点悬空（链首段），且自目标段起相连段数 ≥3（入口 B）→ 产物 = 目标段起点 → 第 3 段终点；
+//   C ：更高周期左侧存在「整体位于目标段之前、时间上最近」的段，且两者方向相反、
+//       目标段起点不粘连任何高周期段右端点 → 产物 = 该高段右端点 → 目标段终点（入口 C）；
+//   C'：更高周期左侧不存在任何段（无高段可续接）时，目标段在其连通链中索引 ≥2 且与链首同向
+//       （链首→目标段为奇数段完整折返）→ 产物 = 链首起点 → 目标段终点（入口 C 补充）。
+// 返回 { ok:true, entrance, start, end, sourceIds }（start/end 已按时间有序）
+//   或 { ok:false, reason }。
+
+// 段的时间有序端点：start=时间靠前，end=时间靠后
+function segOrderedEnds(seg) {
+  if (!seg || !seg.start || !seg.end) return null;
+  return seg.start.time <= seg.end.time
+    ? { start: seg.start, end: seg.end }
+    : { start: seg.end, end: seg.start };
+}
+
+function samePoint(t1, p1, t2, p2) {
+  return t1 === t2 && Math.abs(p1 - p2) < 1e-3;
+}
+
+// 段方向：按价格差符号（与桌面版一致）；水平（差为 0）时回落 direction 字段
+function segDirSign(seg) {
+  const e = segOrderedEnds(seg);
+  if (!e) return 0;
+  const s = Math.sign(e.end.price - e.start.price);
+  if (s !== 0) return s;
+  if (seg.direction === 'up') return 1;
+  if (seg.direction === 'down') return -1;
+  return 0;
+}
+
+// 以 target 为核心构建连通链（前段终点 = 后段起点），时间有序；与桌面版 _buildLineChainFromLine 一致
+function buildConnectedChain(segments, target) {
+  const usable = (segments || []).filter((s) => s && s !== target && s.start && s.end);
+  const chain = [target];
+  let cur = target;
+  for (;;) {
+    const ce = segOrderedEnds(cur);
+    const prev = usable.find((s) => {
+      if (chain.includes(s)) return false;
+      const se = segOrderedEnds(s);
+      return se && samePoint(se.end.time, se.end.price, ce.start.time, ce.start.price);
+    });
+    if (!prev) break;
+    chain.unshift(prev);
+    cur = prev;
+  }
+  cur = target;
+  for (;;) {
+    const ce = segOrderedEnds(cur);
+    const next = usable.find((s) => {
+      if (chain.includes(s)) return false;
+      const se = segOrderedEnds(s);
+      return se && samePoint(se.start.time, se.start.price, ce.end.time, ce.end.price);
+    });
+    if (!next) break;
+    chain.push(next);
+    cur = next;
+  }
+  return chain;
+}
+
+// 某点是否已是同周期其他段（含盯盘/追踪段）的端点（桌面版 _hasOtherLineEndpointAt）
+function hasOtherEndpointAt(segments, pt, exclude) {
+  for (const s of segments || []) {
+    if (!s || s === exclude) continue;
+    const se = segOrderedEnds(s);
+    if (!se) continue;
+    if (samePoint(se.start.time, se.start.price, pt.time, pt.price)) return true;
+    if (samePoint(se.end.time, se.end.price, pt.time, pt.price)) return true;
+  }
+  return false;
+}
+
+// 更高周期中「整体位于目标段之前（右端点不晚于目标段左端点）、时间上最近」的段（桌面版 _findPrevHigherLine）
+function findPrevHigherSeg(higherSegments, target) {
+  const te = segOrderedEnds(target);
+  if (!te) return null;
+  let best = null;
+  let bestEnd = -Infinity;
+  for (const s of higherSegments || []) {
+    const se = segOrderedEnds(s);
+    if (!se) continue;
+    if (se.end.time > te.start.time) continue;
+    if (se.end.time > bestEnd) { bestEnd = se.end.time; best = s; }
+  }
+  return best;
+}
+
+// 是否已有高周期段的右端点与给定点重合（桌面版入口 C 的 headConnected 检查）
+function hasHigherEndAt(higherSegments, pt) {
+  for (const s of higherSegments || []) {
+    const se = segOrderedEnds(s);
+    if (se && samePoint(se.end.time, se.end.price, pt.time, pt.price)) return true;
+  }
+  return false;
+}
+
+export function computeRecursiveSegment(segments, higherSegments, targetId) {
+  const target = (segments || []).find((s) => s && s.id === targetId);
+  if (!target || !segOrderedEnds(target)) return { ok: false, reason: 'no_target' };
+  if (target._isWatch || target._isTrack) return { ok: false, reason: 'not_plain' };
+  const te = segOrderedEnds(target);
+
+  // 入口 B：目标段起点悬空（链首），且其后（含自己）不少于 3 根相连段
+  if (!hasOtherEndpointAt(segments, te.start, target)) {
+    const chainB = buildConnectedChain(segments, target);
+    const idxB = chainB.indexOf(target);
+    if (idxB >= 0 && chainB.length > idxB + 2) {
+      const ee = segOrderedEnds(chainB[idxB + 2]);
+      return {
+        ok: true,
+        entrance: 'B',
+        start: { time: te.start.time, price: te.start.price },
+        end: { time: ee.end.time, price: ee.end.price },
+        sourceIds: chainB.slice(idxB, idxB + 3).map((s) => s.id),
+      };
+    }
+  }
+
+  // 入口 C：更高周期左侧最近段方向相反，且目标段起点不粘连高段右端点
+  const prevHigher = findPrevHigherSeg(higherSegments, target);
+  if (prevHigher) {
+    const pe = segOrderedEnds(prevHigher);
+    const hDir = segDirSign(prevHigher);
+    const sDir = segDirSign(target);
+    if (hDir !== 0 && sDir !== 0 && hDir !== sDir && !hasHigherEndAt(higherSegments, te.start)) {
+      return {
+        ok: true,
+        entrance: 'C',
+        start: { time: pe.end.time, price: pe.end.price },
+        end: { time: te.end.time, price: te.end.price },
+        sourceIds: [prevHigher.id, target.id],
+      };
+    }
+  } else {
+    // 入口 C'：无高段可续接时的兜底（链首→目标段为奇数段完整折返）
+    const chainC = buildConnectedChain(segments, target);
+    const idxC = chainC.indexOf(target);
+    if (idxC >= 2) {
+      const he = segOrderedEnds(chainC[0]);
+      const hDir = segDirSign(chainC[0]);
+      const sDir = segDirSign(target);
+      if (hDir !== 0 && sDir !== 0 && hDir === sDir) {
+        return {
+          ok: true,
+          entrance: 'C2',
+          start: { time: he.start.time, price: he.start.price },
+          end: { time: te.end.time, price: te.end.price },
+          sourceIds: chainC.slice(0, idxC + 1).map((s) => s.id),
+        };
+      }
+    }
+  }
+
+  return { ok: false, reason: 'not_eligible' };
+}
+
 // 二买/二卖 与 三买/三卖 检测（与 PC 端 _findEffectiveTradingPoints 对齐）
 // 前置条件：detectOneBuySell 已执行，段上已标记 1B/1S
 export function detectTwoAndThreeBuySell(segments, zhongshus) {
