@@ -1312,22 +1312,29 @@ function removePresetSwipe() {
   }
 }
 
+// 周期列表页末尾的方案指示器：作为内容流中独立的一行（不再 fixed 浮在
+// K 线/周期卡片上）。选中方案用主题色强调圆点标识，方案名称紧跟强调圆点
+// 右侧显示，圆点组只占一行；切换方案时同步刷新。
 function renderPresetIndicator(code) {
   const presets = state._presets[code] || [];
   const idx = state._currentPresetIdx[code] || 0;
   if (presets.length < 2) { removePresetIndicator(); return; }
+  const box = $('#sec-list');
+  if (!box) return;
   let el = document.getElementById('preset-indicator');
   if (!el) {
     el = document.createElement('div');
     el.id = 'preset-indicator';
     el.className = 'preset-indicator';
-    document.body.appendChild(el);
   }
   el.innerHTML = `
-    <div class="preset-indicator-name">${presets[idx]?.name || `方案${idx + 1}`}</div>
     <div class="preset-indicator-dots">
-      ${presets.map((p, i) => `<span class="preset-ind-dot${i === idx ? ' active' : ''}"></span>`).join('')}
+      ${presets.map((p, i) => (i === idx
+        ? `<span class="preset-ind-dot active"></span><span class="preset-ind-name">${p.name || `方案${i + 1}`}</span>`
+        : '<span class="preset-ind-dot"></span>')).join('')}
     </div>`;
+  // 追加到周期列表末尾；keepHeader 重建后它已在末尾，appendChild 为 no-op
+  box.appendChild(el);
 }
 
 function removePresetIndicator() {

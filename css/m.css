@@ -1020,12 +1020,11 @@ body.search-header-fixed .search-edge-guard { display: block; }
 .anim-item.in-start { transform: translateX(28px); opacity: 0; }
 .anim-item.out { transform: translateX(110%); opacity: 0; }
 
-/* 周期列表 */
+/* 周期列表（方案指示器已改为列表末尾的内容流一行，无需再预留底部空白） */
 .period-list {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  padding-bottom: 96px;
   flex: 1;
 }
 .period-row {
@@ -1097,28 +1096,21 @@ body.search-header-fixed .search-edge-guard { display: block; }
   padding-bottom: 64px;
 }
 
-/* 周期列表页底部方案指示器（位于 tabbar 上方） */
+/* 周期列表页末尾的方案指示器：处于内容流中的独立一行（滚动到列表底部可见），
+   不再 fixed 覆盖在 K 线/周期卡片上；选中方案用主题色强调圆点标识，
+   方案名称紧跟强调圆点右侧，与圆点组同处一行 */
 .preset-indicator {
-  position: fixed;
-  left: 0; right: 0;
-  bottom: calc(56px + env(safe-area-inset-bottom));
-  z-index: 19;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: center;
+  padding: 2px 0 4px;
   pointer-events: none;
-  padding: 6px 0;
-}
-.preset-indicator-name {
-  font-size: 12px;
-  color: var(--wx-muted);
-  margin-bottom: 5px;
-  line-height: 1;
 }
 .preset-indicator-dots {
   display: flex;
   align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
   gap: 7px;
 }
 .preset-ind-dot {
@@ -1131,6 +1123,13 @@ body.search-header-fixed .search-edge-guard { display: block; }
 .preset-ind-dot.active {
   background: var(--wx-accent);
   transform: scale(1.25);
+}
+/* 方案名称：紧跟选中（主题色）圆点右侧，不再单独占一行 */
+.preset-ind-name {
+  font-size: 12px;
+  line-height: 1;
+  color: var(--wx-muted);
+  white-space: nowrap;
 }
 
 /* ========== 提醒功能 ========== */
