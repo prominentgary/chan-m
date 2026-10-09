@@ -566,20 +566,21 @@ body.search-header-fixed .search-edge-guard { display: block; }
   backdrop-filter: none;
   -webkit-backdrop-filter: none;
 }
-/* 长按菜单左侧的段号标识：与段号条同款配色，让用户确认是哪一个段号的菜单 */
+/* 长按菜单左侧的段号标识：与段号条同款配色，让用户确认是哪一个段号的菜单；
+   尺寸与同排的 .overlay-btn 圆形按钮保持一致（42px），视觉更和谐 */
 .nav-overlay-no {
   flex: 0 0 auto;
   align-self: center;
-  min-width: 34px;
-  height: 34px;
+  min-width: 42px;
+  height: 42px;
   padding: 0 9px;
   display: flex;
   align-items: center;
   justify-content: center;
   border-radius: 999px;
-  background: var(--wx-txt);
-  color: var(--wx-card);
-  font-size: 14px;
+  background: var(--wx-accent);
+  color: #fff;
+  font-size: 15px;
   font-weight: 600;
 }
 
@@ -931,8 +932,8 @@ body.search-header-fixed .search-edge-guard { display: block; }
   flex: 1 1 0; min-width: 0;
   text-align: center;
   font-size: 12px; line-height: 26px; /* 行高决定按钮高度，加高便于点按 */
-  color: var(--wx-card); background: var(--wx-txt);
-  border: 1px solid var(--wx-txt); border-radius: 6px;
+  color: #fff; background: var(--wx-accent); /* 主题色底白字，与全局主题色按钮一致 */
+  border: 1px solid var(--wx-accent); border-radius: 6px;
   transition: color .15s ease, background .15s ease, border-color .15s ease;
 }
 /* 段数较多时缩小字号，仍保持一行均分 */
