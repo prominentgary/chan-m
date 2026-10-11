@@ -18,16 +18,20 @@ function resolveColors() {
   };
 }
 
-// 按设备像素比设置 canvas 物理像素，保证高清不糊
+// 按设备像素比设置 canvas 物理像素，保证高清不糊。
+// 宽/高为 0（容器 display:none、折叠动画中、尚未布局）时不做任何改动并返回 valid:false：
+// 改写 canvas.width 会把已有画面清成 1 物理像素宽（肉眼即「图空白」），而之后不一定还有
+// 重绘入口（如容器仍隐藏、切后台回来），宁可保留旧画面等下次显式重绘。
 function setupCanvas(canvas, cssH) {
   const dpr = window.devicePixelRatio || 1;
-  const w = canvas.clientWidth || (canvas.parentElement ? canvas.parentElement.clientWidth : 320);
+  const w = canvas.clientWidth || (canvas.parentElement ? canvas.parentElement.clientWidth : 0);
+  if (!(w > 0) || !(cssH > 0)) return { ctx: null, w: 0, h: 0, valid: false };
   canvas.style.height = cssH + 'px';
   canvas.width = Math.max(1, Math.round(w * dpr));
   canvas.height = Math.max(1, Math.round(cssH * dpr));
   const ctx = canvas.getContext('2d');
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  return { ctx, w, h: cssH };
+  return { ctx, w, h: cssH, valid: true };
 }
 
 function fmtVol(v) {
@@ -251,7 +255,10 @@ function repaintMain(cross) {
   if (!_view) return;
   console.log('[repaintMain]', { period: _view.period, nBars: _view.bars?.length, nSegs: _view.segs?.length, cross: !!cross });
   const { main, bars, segs, zhongshus, colors, period, digits } = _view;
-  _view.mainMeta = drawMainCanvas(main, bars, segs, zhongshus, colors, period, digits);
+  // 无尺寸时 drawMainCanvas 返回 null：保留旧 meta 与旧画面，等可见后由显式重绘补上
+  const meta = drawMainCanvas(main, bars, segs, zhongshus, colors, period, digits);
+  if (!meta) return;
+  _view.mainMeta = meta;
   if (cross) drawMainCross(_view.mainMeta, cross, colors, digits, period);
 }
 
@@ -259,7 +266,8 @@ function repaintSub(v) {
   v = v || _view;
   if (!v) return;
   const { sub, bars, subType, colors, period, subH, solidMacd } = v;
-  v.subMeta = drawSubCanvas(sub, bars, subType, colors, period, subH, solidMacd);
+  const meta = drawSubCanvas(sub, bars, subType, colors, period, subH, solidMacd);
+  if (meta) v.subMeta = meta;
 }
 
 // 主题切换等场景：按传入 view 重绘主图 + 副图（重新读取当前主题色）。
@@ -267,12 +275,15 @@ function repaintSub(v) {
 export function repaintView(view) {
   if (!view) return;
   view.colors = resolveColors();
-  view.mainMeta = drawMainCanvas(view.main, view.bars, view.segs, view.zhongshus, view.colors, view.period, view.digits);
-  view.subMeta = drawSubCanvas(view.sub, view.bars, view.subType, view.colors, view.period, view.subH, view.solidMacd);
+  const mainMeta = drawMainCanvas(view.main, view.bars, view.segs, view.zhongshus, view.colors, view.period, view.digits);
+  if (mainMeta) view.mainMeta = mainMeta;
+  const subMeta = drawSubCanvas(view.sub, view.bars, view.subType, view.colors, view.period, view.subH, view.solidMacd);
+  if (subMeta) view.subMeta = subMeta;
 }
 
 function drawMainCanvas(canvas, bars, segs, zhongshus, colors, period, digits) {
-  const { ctx, w, h } = setupCanvas(canvas, 220);
+  const { ctx, w, h, valid } = setupCanvas(canvas, 220);
+  if (!valid) return null; // 无尺寸：不动画布、不绘制，保留旧画面（避免清空已有图）
   ctx.clearRect(0, 0, w, h);
   if (!bars.length) {
     ctx.fillStyle = colors.muted;
@@ -375,7 +386,8 @@ function drawMainCanvas(canvas, bars, segs, zhongshus, colors, period, digits) {
 }
 
 function drawSubCanvas(canvas, bars, subType, colors, period, subH, solidMacd) {
-  const { ctx, w, h } = setupCanvas(canvas, subH);
+  const { ctx, w, h, valid } = setupCanvas(canvas, subH);
+  if (!valid) return null; // 无尺寸：不动画布、不绘制，保留旧画面
   ctx.clearRect(0, 0, w, h);
   if (!bars.length) return { n: 0, subType };
 
@@ -810,6 +822,7 @@ function bindSubSwipe(sub, swipeFn, view) {
 }
 
 function drawMainCross(meta, cross, colors, digits, period) {
+  if (!meta || !meta.n) return; // 无尺寸/无数据时 meta 可能为空或未绘制成功，直接跳过
   const { ctx, padL, plotW, plotH, min, max } = meta;
   const b = cross.bar;
   const cx = cross.x;
@@ -885,7 +898,8 @@ export function renderIntradayChart(canvas, bars, prevClose, opts = {}) {
   // canvas 会先按中间高度渲染，容器展开完成后再跳变到最终高度，出现“展开后又变高一点”的顿挫。
   // 外部可传入 opts.height 指定固定高度。
   const cssH = opts.height || (expanded ? 150 : 80);
-  const { ctx, w, h } = setupCanvas(canvas, cssH);
+  const { ctx, w, h, valid } = setupCanvas(canvas, cssH);
+  if (!valid) return; // 无尺寸：不动画布、不绘制，保留旧画面
   ctx.clearRect(0, 0, w, h);
 
   const pc = Number(prevClose) || (bars && bars.length ? bars[0].close : 0);

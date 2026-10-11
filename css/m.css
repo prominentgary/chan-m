@@ -925,6 +925,7 @@ body.search-header-fixed .search-edge-guard { display: block; }
   background: var(--wx-card); border: 1px solid var(--wx-line); border-radius: 10px;
   touch-action: pan-y; /* 水平滑动手势由 JS 处理，纵向滚动交给页面 */
   user-select: none; -webkit-user-select: none;
+  position: relative; /* 中枢标记框（.sec-zs-frame）的绝对定位基准 */
 }
 .sec-segnav[hidden] { display: none; }
 /* 段号均分占满整行（flex:1 等宽拉伸），右侧不留空白 */
@@ -940,12 +941,37 @@ body.search-header-fixed .search-edge-guard { display: block; }
 .sec-segnav.dense .sec-segnum { font-size: 10px; line-height: 24px; }
 /* 段数超过一行 8 个时换行：每行固定 8 个宽度（42px = 7 个 gap 6px），
    第二行及以后按钮宽度与第一行一致，不因数量少而被拉伸。
-   换行后接管纵向手势（touch-action: none）做快速缩放，单行时保持 pan-y 不影响页面滚动 */
-.sec-segnav.wrap { flex-wrap: wrap; touch-action: none; }
+   换行后接管纵向手势（touch-action: none）做快速缩放，单行时保持 pan-y 不影响页面滚动。
+   行间距单独加大到 12px（列间距保持 6px）：中枢标记框上下各外扩 3px，6px 行距会让
+   相邻两行的框贴在一起；纵向缩放的「行步长」由 JS 实测 offsetTop 得出，自动跟随此值 */
+.sec-segnav.wrap { flex-wrap: wrap; touch-action: none; row-gap: 12px; }
 .sec-segnav.wrap .sec-segnum { flex: 0 0 calc((100% - 42px) / 8 - 0.5px); } /* 减 0.5px 余量，避免 sub-pixel 舍入导致每行不足 8 个 */
 /* 已取消选中的段号：置灰（不加删除线），图上同步隐藏该段及更早段 */
 .sec-segnum.off {
   color: var(--wx-muted); background: transparent; border-color: var(--wx-line);
+}
+/* 段号条上的中枢标记：把构成同一中枢的连续段号用主题色圆角框圈在一起
+   （JS 按段号实测几何定位；外扩 3px 落在段号间隙里，不遮相邻段号、不参与布局） */
+.sec-zs-frame {
+  position: absolute;
+  border: 2px solid var(--wx-accent);
+  border-radius: 8px;
+  box-sizing: border-box;
+  background: rgba(240, 180, 41, 0.10);
+  pointer-events: none;
+  z-index: 1;
+}
+/* 中枢段跨行被拆到上一行/下一行时，靠行尾/行首的一侧不封口（开口边颜色透明、
+   圆角取消），表示这段与另一行的框属于同一个中枢；上下边框保留，仍把该段圈住 */
+.sec-zs-frame.open-l {
+  border-left-color: transparent;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+.sec-zs-frame.open-r {
+  border-right-color: transparent;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
 }
 .sec-card--detail .sec-head, .sec-card--periods .sec-head,
 .sec-card--detail .sec-info, .sec-card--periods .sec-info,
@@ -1020,11 +1046,12 @@ body.search-header-fixed .search-edge-guard { display: block; }
 .anim-item.in-start { transform: translateX(28px); opacity: 0; }
 .anim-item.out { transform: translateX(110%); opacity: 0; }
 
-/* 周期列表（方案指示器已改为列表末尾的内容流一行，无需再预留底部空白） */
+/* 周期列表（底部为固定的方案指示器预留空间，滚到底时尾部内容不被遮挡） */
 .period-list {
   display: flex;
   flex-direction: column;
   gap: 10px;
+  padding-bottom: 40px;
   flex: 1;
 }
 .period-row {
@@ -1046,7 +1073,7 @@ body.search-header-fixed .search-edge-guard { display: block; }
   padding: 14px;
   transition: padding .18s ease;
 }
-.period-row-head:active { background: #f7f7f7; }
+.period-row:not(.period-row--dual) .period-row-head:active { background: #f7f7f7; }
 .period-row-info { display: flex; flex-direction: column; gap: 2px; transition: gap .18s ease; }
 .period-row-name { font-size: 16px; font-weight: 600; color: var(--wx-txt); transition: font-size .18s ease; }
 .period-row-meta { font-size: 13px; color: var(--wx-muted); transition: font-size .18s ease; }
@@ -1065,6 +1092,7 @@ body.search-header-fixed .search-edge-guard { display: block; }
 
 /* 长按周期行展开的行内 K 线（可多行同时展开；展开时行头收窄为单行） */
 .period-row-kline {
+  position: relative;
   height: 0;
   overflow: hidden;
   transition: height .28s ease;
@@ -1074,19 +1102,58 @@ body.search-header-fixed .search-edge-guard { display: block; }
   border-top: 1px solid var(--wx-line);
 }
 .period-row-kline canvas { display: block; width: 100%; }
-.period-row-kline canvas:nth-child(1) { height: 220px; }
-.period-row-kline canvas:nth-child(2) { height: 96px; }
+.period-row-kline .period-kline-main { height: 220px; }
+.period-row-kline .period-kline-sub { height: 96px; }
+
 /* 十字态锁定 touch，避免拖动十字时页面跟着滚动 */
 .period-row-kline.cross-lock canvas { touch-action: none; }
-/* 展开时行头收窄：两行信息并入一行（带动画），腾出空间给 K 线 */
-.period-row.expanded .period-row-head { padding: 10px 14px; }
+/* 展开时行头收窄：两行信息并入一行（带动画），腾出空间给 K 线；
+   同时给出选中效果（浅底 + 主题色下划线 + 名称主题色），与合并行激活半区一致 */
+.period-row.expanded:not(.period-row--dual) .period-row-head {
+  padding: 10px 14px;
+  background: var(--wx-bg);
+  box-shadow: inset 0 -2px 0 var(--wx-accent);
+}
+.period-row.expanded:not(.period-row--dual) .period-row-name { color: var(--wx-accent); }
+/* 展开态按下时的反馈（比展开底色略深），避免展开背景覆盖常规 :active 效果 */
+.period-row.expanded:not(.period-row--dual) .period-row-head:active { background: #ededed; }
 .period-row.expanded .period-row-info { flex-direction: row; align-items: baseline; flex-wrap: wrap; gap: 8px; }
 .period-row.expanded .period-row-name { flex: 0 0 auto; font-size: 15px; }
 .period-row.expanded .period-row-meta { flex: 0 0 auto; font-size: 12px; }
-.period-row.expanded .sec-arrow { transform: rotate(90deg); }
+.period-row.expanded:not(.period-row--dual) .sec-arrow { transform: rotate(90deg); }
 /* 行内段号条：与详情页 .sec-segnav 同款（横向跟手取消/恢复选中段），仅展开时显示 */
 .period-row-segnav { margin: 10px 14px; }
 .period-row:not(.expanded) .period-row-segnav { display: none; }
+
+/* 周期合并行（5m|15m、30m|60m）：左右两半各占一半，共用下方同一条 K 线区；
+   长按哪半展开哪个周期的图（主/辅 K 线不同时出现），展开中非当前半区淡出提示归属 */
+.period-row--dual .period-row-head { padding: 0; gap: 0; align-items: stretch; }
+.period-half {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 14px;
+  transition: padding .18s ease, opacity .18s ease;
+}
+.period-half + .period-half { border-left: 1px solid var(--wx-line); }
+.period-half:active { background: #f7f7f7; }
+.period-half .period-row-name { white-space: nowrap; }
+.period-half .sec-arrow { flex: 0 0 auto; }
+.period-row--dual.expanded .period-half { padding: 10px 14px; }
+.period-row--dual.expanded .period-half:not(.active) { opacity: .45; }
+.period-row--dual.expanded .period-half:active { background: #ededed; }
+/* 当前展开的半区：浅底 + 主题色下划线 + 名称主题色，与淡出的另一半形成强对比 */
+.period-row--dual.expanded .period-half.active {
+  background: var(--wx-bg);
+  box-shadow: inset 0 -2px 0 var(--wx-accent);
+}
+.period-row--dual.expanded .period-half.active .period-row-name { color: var(--wx-accent); }
+.period-row--dual.expanded .period-half.active .sec-arrow { transform: rotate(90deg); }
+/* 合并行展开时同样收窄为单行：沿用上面的横向信息布局（名称与 段/中枢 并排），
+   半区过窄时由全局规则的 flex-wrap: wrap 自动换行兜底 */
 
 /* 周期详情：外层无大卡片，内部用 margin 控制卡片间距 */
 #period-detail {
@@ -1096,14 +1163,20 @@ body.search-header-fixed .search-edge-guard { display: block; }
   padding-bottom: 64px;
 }
 
-/* 周期列表页末尾的方案指示器：处于内容流中的独立一行（滚动到列表底部可见），
-   不再 fixed 覆盖在 K 线/周期卡片上；选中方案用主题色强调圆点标识，
-   方案名称紧跟强调圆点右侧，与圆点组同处一行 */
+/* 周期列表页方案指示器：固定在底部 tabbar 上方、始终可见（不随内容滚动），
+   自带底色与分隔线形成独立信息条，不再像浮层一样压在卡片/K 线文字上。
+   选中方案用主题色强调圆点在左，方案名紧随强调圆点右侧，同处一行。 */
 .preset-indicator {
+  position: fixed;
+  left: 0; right: 0;
+  bottom: calc(56px + env(safe-area-inset-bottom));
+  z-index: 19;
+  height: 28px;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 2px 0 4px;
+  background: var(--wx-bg);
+  border-top: 1px solid var(--wx-line);
   pointer-events: none;
 }
 .preset-indicator-dots {

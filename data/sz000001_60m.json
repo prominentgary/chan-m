@@ -1,7 +1,7 @@
 {
   "code": "sz000001",
   "period": "60m",
-  "exportedAt": 1791562765943,
+  "exportedAt": 1791699754458,
   "segments": [
     {
       "id": "s_llc1n54f",
@@ -659,7 +659,36 @@
     {
       "id": "preset_64ou40pm",
       "name": "",
-      "segments": [],
+      "segments": [
+        {
+          "id": "s_lqntc2x4",
+          "kind": "segment",
+          "period": "30m",
+          "direction": "down",
+          "start": {
+            "time": 1790046000,
+            "price": 3967.68
+          },
+          "end": {
+            "time": 1790575200,
+            "price": 3806.67
+          }
+        },
+        {
+          "id": "s_7wetprj1",
+          "kind": "segment",
+          "period": "30m",
+          "direction": "up",
+          "start": {
+            "time": 1790575200,
+            "price": 3806.67
+          },
+          "end": {
+            "time": 1791424800,
+            "price": 3864.12
+          }
+        }
+      ],
       "zhongshus": []
     }
   ],

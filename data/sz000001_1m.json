@@ -1,7 +1,7 @@
 {
   "code": "sz000001",
   "period": "1m",
-  "exportedAt": 1791562747176,
+  "exportedAt": 1791699746214,
   "segments": [
     {
       "id": "s_zpoa188o",
@@ -4568,6 +4568,29 @@
             {
               "time": 1791442800,
               "price": 3798.7
+            }
+          ]
+        },
+        {
+          "id": "s_ernuxh27",
+          "kind": "zhongshu",
+          "segmentIds": [
+            "s_n554zo76",
+            "s_lctdhnap",
+            "s_9fomeack"
+          ],
+          "startTime": 1790735760,
+          "endTime": 1790744520,
+          "low": 3839.37,
+          "high": 3844.42,
+          "points": [
+            {
+              "time": 1790735760,
+              "price": 3844.42
+            },
+            {
+              "time": 1790744520,
+              "price": 3839.37
             }
           ]
         }

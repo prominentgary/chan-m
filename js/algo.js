@@ -6,13 +6,12 @@ function sliceBars(bars, startSec, endSec) {
   return bars.filter((b) => b.time >= startSec && b.time <= endSec);
 }
 
-// 按 PC 端 drawing.js 规则检测中枢：连续 3 段相连且价格区间有重叠
-// 先使用端点价格判断；端点无重叠时 fallback 到段内 K 线最高/最低价
 function isSegConnected(a, b) {
   if (!a || !b) return false;
   return a.end.time === b.start.time && Math.abs(a.end.price - b.start.price) < 1e-3;
 }
 
+// 段内 K 线区间（段的时间范围内所有 K 线的最高/最低价）
 function getSegmentBarsRange(bars, seg) {
   const sub = sliceBars(bars, seg.start.time, seg.end.time);
   if (!sub.length) return null;
@@ -22,50 +21,254 @@ function getSegmentBarsRange(bars, seg) {
   };
 }
 
-export function detectZhongshu(segments, startIdx, bars = null) {
-  if (!segments || startIdx < 0 || startIdx + 2 >= segments.length) return null;
+// ===== 中枢识别：与桌面端 drawing.js 的 _detectZhongshu 完全对齐 =====
+// 判定链（与桌面一致）：
+//   1) 从目标段出发，沿「同周期首尾相连」找后两段（共 3 段）；
+//   2) 重叠区间只用「段内 K 线」的最高/最低（桌面正式条款，不再回退端点价格），
+//      取不到段内 K 线时视为不可识别（与桌面一致）；
+//   3) 方向约束（_isZhongshuDirectionAllowed 的移植）：以「本级别线段」（更高一级
+//      周期的段，即桌面图上的虚线）为参照容器——
+//        · 首段两端点都落在某条本级别线段时间范围内 → 方向必须与该线段相反；
+//        · 首段至少一个端点落在所有本级别线段之外 → 与最近的本级别线段方向相同；
+//        · 图中没有本级别线段 → 方向必须与最左同周期段相反。
+// 返回 { segmentIds, baseSegmentIds, overlapLow, overlapHigh, isKlineZhongshu, startTime, endTime }
+export function detectZhongshu(segments, startIdx, bars = null, opts = {}) {
+  if (!segments || startIdx < 0) return null;
   const sorted = [...segments].sort((a, b) => a.start.time - b.start.time);
-  const s1 = sorted[startIdx];
-  const s2 = sorted[startIdx + 1];
-  const s3 = sorted[startIdx + 2];
+  if (startIdx + 2 >= sorted.length) return null;
+  const line1 = sorted[startIdx];
+  const line2 = findNextConnectedSeg(sorted, line1);
+  if (!line2) return null;
+  const line3 = findNextConnectedSeg(sorted, line2);
+  if (!line3) return null;
 
-  if (!isSegConnected(s1, s2) || !isSegConnected(s2, s3)) return null;
+  const r1 = getSegmentBarsRange(bars, line1);
+  const r2 = getSegmentBarsRange(bars, line2);
+  const r3 = getSegmentBarsRange(bars, line3);
+  if (!r1 || !r2 || !r3) return null;
+  const overlapLow = Math.max(r1.low, r2.low, r3.low);
+  const overlapHigh = Math.min(r1.high, r2.high, r3.high);
+  if (overlapLow > overlapHigh) return null;
 
-  const lows = [
-    Math.min(s1.start.price, s1.end.price),
-    Math.min(s2.start.price, s2.end.price),
-    Math.min(s3.start.price, s3.end.price),
-  ];
-  const highs = [
-    Math.max(s1.start.price, s1.end.price),
-    Math.max(s2.start.price, s2.end.price),
-    Math.max(s3.start.price, s3.end.price),
-  ];
-  let overlapLow = Math.max(...lows);
-  let overlapHigh = Math.min(...highs);
-  let isKlineZhongshu = false;
+  if (!zhongshuDirectionAllowed(sorted, opts.containers || [], line1)) return null;
 
-  if (overlapLow > overlapHigh) {
-    if (!bars || !bars.length) return null;
-    const r1 = getSegmentBarsRange(bars, s1);
-    const r2 = getSegmentBarsRange(bars, s2);
-    const r3 = getSegmentBarsRange(bars, s3);
-    if (!r1 || !r2 || !r3) return null;
-    overlapLow = Math.max(r1.low, r2.low, r3.low);
-    overlapHigh = Math.min(r1.high, r2.high, r3.high);
-    if (overlapLow > overlapHigh) return null;
-    isKlineZhongshu = true;
-  }
-
+  const o1 = segOrderedEnds(line1);
+  const o3 = segOrderedEnds(line3);
   return {
-    segmentIds: [s1.id, s2.id, s3.id],
-    baseSegmentIds: [s1.id, s2.id, s3.id],
+    segmentIds: [line1.id, line2.id, line3.id],
+    baseSegmentIds: [line1.id, line2.id, line3.id],
     overlapLow,
     overlapHigh,
-    isKlineZhongshu,
-    startTime: s1.start.time,
-    endTime: s3.end.time,
+    isKlineZhongshu: true,
+    startTime: o1.start.time,
+    endTime: o3.end.time,
   };
+}
+
+// 沿「首尾相连」找其后一段（口径同桌面 _findNextConnectedLine，按传入池的顺序取首个命中）
+function findNextConnectedSeg(pool, seg) {
+  const e = segOrderedEnds(seg);
+  if (!e) return null;
+  for (const s of pool || []) {
+    if (s === seg || !s.start || !s.end) continue;
+    const se = segOrderedEnds(s);
+    if (se && samePoint(se.start.time, se.start.price, e.end.time, e.end.price)) return s;
+  }
+  return null;
+}
+
+// 中枢方向约束（桌面 _isZhongshuDirectionAllowed 的移植）
+function zhongshuDirectionAllowed(peers, containers, lineA) {
+  const selfDir = segDirSign(lineA);
+  const a = segOrderedEnds(lineA);
+  if (!a) return false;
+  const aLeft = a.start.time, aRight = a.end.time;
+  const cs = containers || [];
+
+  // 规则3：图中无本级别线段 → 与最左同周期段方向相反
+  if (!cs.length) {
+    let leftmost = null;
+    for (const p of peers) {
+      const o = segOrderedEnds(p);
+      if (!o) continue;
+      if (!leftmost || o.start.time < segOrderedEnds(leftmost).start.time) leftmost = p;
+    }
+    if (!leftmost) return true;
+    return segDirSign(leftmost) !== selfDir;
+  }
+
+  // 规则1：首段两端点都在某条本级别线段内（含与端点重合）→ 方向相反
+  for (const c of cs) {
+    const o = segOrderedEnds(c);
+    if (!o) continue;
+    if (aLeft >= o.start.time && aRight <= o.end.time) return segDirSign(c) !== selfDir;
+  }
+
+  // 规则2：首段有端点落在所有本级别线段之外 → 与最近的本级别线段方向相同
+  let nearest = null;
+  let nearestGap = Infinity;
+  for (const c of cs) {
+    const o = segOrderedEnds(c);
+    if (!o) continue;
+    let gap = 0;
+    if (aRight < o.start.time) gap = o.start.time - aRight;
+    else if (aLeft > o.end.time) gap = aLeft - o.end.time;
+    if (gap < nearestGap) { nearestGap = gap; nearest = c; }
+  }
+  if (nearest) return segDirSign(nearest) === selfDir;
+  return true;
+}
+
+// ===== 中枢延伸：与桌面端「一步延伸到上限」对齐（右键「延伸」/Tab）=====
+// 上限规则（_computeZhongshuUpperLimitOnChain 的普通中枢分支，基础段数 3）：
+//   区间取基础 3 段的 [lower, upper]，方向 = 首段方向；从第 3 段起顺链扫描
+//   「首个干净的第 3 类买卖点」——突破段 P（终点越出区间）之后，下一段 C 的终点也在
+//   区间外且同侧（回抽确认）：
+//     同向（首段向上∩向上突破=3买；首段向下∩向下突破=3卖）→ 上限段 = P（允许包含）；
+//     反向（首段向上∩向下突破=3卖；首段向下∩向上突破=3买）→ 上限段 = C 的前一段。
+//   8 段内找不到干净 3 类点（自由震荡）→ 上限 = 基础段起第 8 段（相对 +5 段，绝对封顶）。
+// 中间档位（_computeZhongshuExtendStopIndex 的移植）：
+//   中枢整体落在某条本级别线段时间范围内时，先停到「以该线段终点为终点的本周期线段的
+//   起点」所在段；存在多个档位时取最近的一个。
+// 返回 { chain, base0, currentIdx, limitIdx, stopIdx, toStop, targetIdx, segmentIds }；
+// 不可延伸（已到上限 / 链不完整）返回 null
+const EXTEND_MAX_SEGMENTS = 5; // 与桌面 ZHONGSHU_EXTEND_MAX_SEGMENTS 一致
+
+export function computeZhongshuExtend(segments, zs, opts = {}) {
+  const all = (segments || []).filter((s) => s && s.start && s.end);
+  if (!zs || all.length < 3) return null;
+  const byId = {};
+  all.forEach((s) => { byId[s.id] = s; });
+
+  const zsSegs = (zs.segmentIds || [])
+    .map((id) => byId[id])
+    .filter(Boolean)
+    .sort((a, b) => a.start.time - b.start.time);
+  if (zsSegs.length < 3) return null;
+  // 基础段 = 原始 3 段（baseSegmentIds 优先；兼容旧数据按时间取前 3 段）
+  let base3 = (zs.baseSegmentIds || []).map((id) => byId[id]).filter(Boolean);
+  if (base3.length !== 3) base3 = zsSegs.slice(0, 3);
+  base3.sort((a, b) => a.start.time - b.start.time);
+
+  const baseFirst = base3[0];
+  const lastSeg = zsSegs[zsSegs.length - 1];
+  const chain = buildConnectedChain(all, baseFirst);
+  const base0 = chain.findIndex((s) => s.id === baseFirst.id);
+  const currentIdx = chain.findIndex((s) => s.id === lastSeg.id);
+  if (base0 < 0 || currentIdx < 0) return null;
+
+  const range = zhongshuBaseRange(base3, opts.bars);
+  if (!range) return null;
+
+  const limitIdx = computeExtendLimitIdx(all, chain, base0, 3, range.low, range.high);
+  if (limitIdx <= currentIdx) return null; // 已达延伸上限
+
+  const leftSec = Math.min(segOrderedEnds(zsSegs[0]).start.time, segOrderedEnds(zsSegs[0]).end.time);
+  const rightSec = Math.max(segOrderedEnds(lastSeg).start.time, segOrderedEnds(lastSeg).end.time);
+  const stopIdx = computeExtendStopIdx(all, chain, currentIdx, leftSec, rightSec, opts.containers || []);
+  const toStop = stopIdx > currentIdx && stopIdx < limitIdx;
+  const targetIdx = toStop ? stopIdx : limitIdx;
+  return {
+    chain,
+    base0,
+    currentIdx,
+    limitIdx,
+    stopIdx,
+    toStop,
+    targetIdx,
+    segmentIds: chain.slice(base0, targetIdx + 1).map((s) => s.id),
+  };
+}
+
+// 中枢基础区间的 [low, high]：与识别口径一致用段内 K 线；取不到时退回端点价
+function zhongshuBaseRange(base3, bars) {
+  const rs = base3.map((s) => getSegmentBarsRange(bars, s));
+  if (rs.every(Boolean)) {
+    return {
+      low: Math.max(...rs.map((r) => r.low)),
+      high: Math.min(...rs.map((r) => r.high)),
+    };
+  }
+  const lows = base3.map((s) => Math.min(s.start.price, s.end.price));
+  const highs = base3.map((s) => Math.max(s.start.price, s.end.price));
+  const low = Math.max(...lows);
+  const high = Math.min(...highs);
+  if (low > high) return null;
+  return { low, high };
+}
+
+// 上限段索引（桌面 _computeZhongshuUpperLimitOnChain 的移植）
+function computeExtendLimitIdx(all, chain, base0, baseSegCount, lower, upper) {
+  const first = segOrderedEnds(chain[base0]);
+  if (!first) return -1;
+  const dirUp = first.end.price > first.start.price;
+
+  // 绝对上限：最后一个基础段再向右 EXTEND_MAX_SEGMENTS 段
+  const absCap = base0 + (baseSegCount - 1) + EXTEND_MAX_SEGMENTS;
+  const maxSegNo = baseSegCount + EXTEND_MAX_SEGMENTS;
+
+  // 顺链补齐后续段（连通链通常已到末段，此处防御性补齐）
+  while (chain.length < absCap + 2) {
+    const nx = findNextConnectedSeg(all, chain[chain.length - 1]);
+    if (!nx || chain.indexOf(nx) !== -1) break;
+    chain.push(nx);
+  }
+
+  let limitIdx = absCap;
+  for (let idx = base0 + baseSegCount - 1; idx + 1 < chain.length; idx++) {
+    if ((idx - base0 + 1) > maxSegNo) break; // 超过封顶段号再出现的3类点也回落封顶
+    const p = segOrderedEnds(chain[idx]);
+    const c = segOrderedEnds(chain[idx + 1]);
+    if (!p || !c) break;
+    const breakUp = p.end.price > upper && c.end.price > upper;
+    const breakDown = p.end.price < lower && c.end.price < lower;
+    if (!breakUp && !breakDown) continue;
+    const tSeg = (idx - base0) + 1; // 突破段号
+    const n = tSeg + 1;             // 回抽确认段号
+    const same = (dirUp && breakUp) || (!dirUp && breakDown);
+    const limitSeg = same ? (n - 1) : (n - 2);
+    limitIdx = Math.min(base0 + (limitSeg - 1), absCap);
+    break;
+  }
+  // 防御：上限索引不能越过链实际长度（右侧段不足时封顶到链末段）
+  if (limitIdx >= chain.length) limitIdx = chain.length - 1;
+  return limitIdx;
+}
+
+// 中间档位段索引：中枢整体落在某条本级别线段内时，取其终点处本周期线段的起点所在段
+function computeExtendStopIdx(all, chain, currentIdx, zsLeft, zsRight, containers) {
+  if (!containers.length) return -1;
+  let best = -1;
+  for (const c of containers) {
+    const o = segOrderedEnds(c);
+    if (!o) continue;
+    // 中枢整体落在该本级别线段内：左边在起点之后、右边在终点之前
+    if (!(zsLeft > o.start.time && zsRight < o.end.time)) continue;
+    // 以该线段终点为终点的本周期线段（1 秒容差，共享顶点防浮点误差）
+    let endSeg = null;
+    let bestDiff = Infinity;
+    for (const s of all) {
+      const so = segOrderedEnds(s);
+      if (!so) continue;
+      const diff = Math.abs(so.end.time - o.end.time);
+      if (diff < bestDiff) { bestDiff = diff; endSeg = s; }
+    }
+    if (!endSeg || bestDiff > 1) continue;
+    const stopSec = segOrderedEnds(endSeg).start.time;
+    const idx = findChainIndexByEndTime(chain, stopSec);
+    if (idx < 0 || idx <= currentIdx) continue;
+    if (best < 0 || idx < best) best = idx;
+  }
+  return best;
+}
+
+// 链中「终点时间等于 sec」的段索引（1 秒容差）；找不到返回 -1
+function findChainIndexByEndTime(chain, sec) {
+  for (let i = 0; i < chain.length; i++) {
+    const o = segOrderedEnds(chain[i]);
+    if (o && Math.abs(o.end.time - sec) <= 1) return i;
+  }
+  return -1;
 }
 
 // 计算单段力度（与桌面端对齐：按段方向累加 MACD 柱，上涨累加正值，下跌累加负值，最后放大 10000 倍）

@@ -1,7 +1,7 @@
 {
   "code": "sh588110",
   "period": "1m",
-  "exportedAt": 1791562772065,
+  "exportedAt": 1791699758701,
   "segments": [
     {
       "id": "s_6tawtjp7",
@@ -1411,6 +1411,31 @@
         {
           "time": 1791439500,
           "price": 0.555
+        }
+      ]
+    },
+    {
+      "id": "s_s7brb837",
+      "kind": "zhongshu",
+      "segmentIds": [
+        "s_n7z614pk",
+        "s_h7a3cr6v",
+        "s_j65pdyia",
+        "s_9bk2ra6x",
+        "s_fd9xcor4"
+      ],
+      "startTime": 1790563620,
+      "endTime": 1790576220,
+      "low": 0.596,
+      "high": 0.604,
+      "points": [
+        {
+          "time": 1790563620,
+          "price": 0.604
+        },
+        {
+          "time": 1790576220,
+          "price": 0.596
         }
       ]
     }
@@ -2828,6 +2853,31 @@
             {
               "time": 1791439500,
               "price": 0.555
+            }
+          ]
+        },
+        {
+          "id": "s_s7brb837",
+          "kind": "zhongshu",
+          "segmentIds": [
+            "s_n7z614pk",
+            "s_h7a3cr6v",
+            "s_j65pdyia",
+            "s_9bk2ra6x",
+            "s_fd9xcor4"
+          ],
+          "startTime": 1790563620,
+          "endTime": 1790576220,
+          "low": 0.596,
+          "high": 0.604,
+          "points": [
+            {
+              "time": 1790563620,
+              "price": 0.604
+            },
+            {
+              "time": 1790576220,
+              "price": 0.596
             }
           ]
         }
