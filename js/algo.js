@@ -384,7 +384,8 @@ export function computeZhongshuStrength(bars, segments, zhongshus) {
 
     zsSegs.sort((a, b) => a.start.time - b.start.time);
     const zsStart = zsSegs[0].start.time;
-    const zsEnd = zsSegs[zsSegs.length - 1].end.time;
+    // 中枢右边界用自带 endTime（= 矩形右边界），兼容中枢向右延伸
+    const zsEnd = zhongshuRightTime(zs, segMap) ?? zsSegs[zsSegs.length - 1].end.time;
     const zsIds = new Set(ids);
 
     // 找到中枢前一段（进入段）和中枢后一段（离开段）
@@ -396,8 +397,9 @@ export function computeZhongshuStrength(bars, segments, zhongshus) {
       if (s.end.time <= zsStart) {
         if (!enterSeg || s.end.time > enterSeg.end.time) enterSeg = s;
       }
-      if (s.start.time >= zsEnd) {
-        if (!leaveSeg || s.start.time < leaveSeg.start.time) leaveSeg = s;
+      // 离开段：起点时间精确等于中枢右边界（首尾相连），与 detectOneBuySell 口径一致
+      if (s.start.time === zsEnd && !leaveSeg) {
+        leaveSeg = s;
       }
     }
 
@@ -438,13 +440,17 @@ export function detectOneBuySell(segments, zhongshus) {
 
     zsSegs.sort((a, b) => a.start.time - b.start.time);
     const zsStart = zsSegs[0].start.time;
-    const zsEnd = zsSegs[zsSegs.length - 1].end.time;
     const zsIds = new Set(ids);
 
-    // 找出离开段（中枢后第一个非中枢段）
+    // 找出离开段：起点时间「精确等于」中枢右边界时间的段（首尾相连）。
+    // 不能用「起点 >= 右边界」——段之间存在时间缺口时会取到并不连接本中枢的段。
+    const zsRight = zhongshuRightTime(zs, segMap);
+    if (zsRight === null) return;
     let leaveSeg = null;
     for (const s of sortedAll) {
-      if (!zsIds.has(s.id) && s.start.time >= zsEnd) {
+      if (zsIds.has(s.id)) continue;
+      const so = segOrderedEnds(s);
+      if (so && so.start.time === zsRight) {
         leaveSeg = s;
         break;
       }
@@ -463,16 +469,14 @@ export function detectOneBuySell(segments, zhongshus) {
     // 进入段与离开段方向必须一致才参与背驰比较
     if (enterSeg.direction !== leaveSeg.direction) return;
 
-    // 找前一个中枢：其右边界时间等于进入段起点（与 PC 端对齐）
+    // 找前一个中枢：其「矩形右边界」时间等于进入段起点（与桌面版对齐，兼容中枢向右延伸）
     let prevZs = null;
     for (const z of zhongshus) {
       if (z.id === zs.id) continue;
-      const zIds = z.segmentIds || [];
-      const zSegs = zIds.map((id) => segMap[id]).filter(Boolean);
+      const zSegs = (z.segmentIds || []).map((id) => segMap[id]).filter(Boolean);
       if (zSegs.length < 3) continue;
-      zSegs.sort((a, b) => a.start.time - b.start.time);
-      const zEnd = zSegs[zSegs.length - 1].end.time;
-      if (zEnd === enterSeg.start.time) {
+      const zRight = zhongshuRightTime(z, segMap);
+      if (zRight !== null && zRight === enterSeg.start.time) {
         prevZs = z;
         break;
       }
@@ -511,13 +515,40 @@ export function detectOneBuySell(segments, zhongshus) {
   });
 }
 
-// 中枢震荡区间：max(lows) <= min(highs)
+// 中枢区间 [minLow, maxHigh]
+// 优先直读中枢自带区间（导出端 low/high = 矩形 points 的 min/max；手工新建中枢为
+// overlapLow/overlapHigh），与桌面版 _getZhongshuOscillationRange「直读矩形 points」口径一致。
+// 仅在中枢缺区间字段时才退回「构成段端点求交集」——端点重算与矩形区间实测有约 15% 不相等。
 function getZhongshuRange(zs, segMap) {
-  const segs = (zs.segmentIds || []).map((id) => segMap[id]).filter(Boolean);
+  if (!zs) return null;
+  const lo = Number.isFinite(zs.low) ? zs.low : (Number.isFinite(zs.overlapLow) ? zs.overlapLow : null);
+  const hi = Number.isFinite(zs.high) ? zs.high : (Number.isFinite(zs.overlapHigh) ? zs.overlapHigh : null);
+  if (lo !== null && hi !== null) return { minLow: lo, maxHigh: hi };
+
+  const ids = (Array.isArray(zs.baseSegmentIds) && zs.baseSegmentIds.length === 3)
+    ? zs.baseSegmentIds
+    : (zs.segmentIds || []);
+  const segs = ids.map((id) => segMap && segMap[id]).filter(Boolean);
   if (segs.length < 3) return null;
   const lows = segs.map((s) => Math.min(s.start.price, s.end.price));
   const highs = segs.map((s) => Math.max(s.start.price, s.end.price));
-  return { minLow: Math.max(...lows), maxHigh: Math.min(...highs) };
+  const minLow = Math.max(...lows);
+  const maxHigh = Math.min(...highs);
+  if (minLow > maxHigh) return null;
+  return { minLow, maxHigh };
+}
+
+// 中枢右边界时间：优先用中枢自带 endTime（= 矩形右边界，兼容中枢向右延伸），
+// 缺失时退回「末段终点」。与桌面版「用矩形右边界而非第 3 段终点」口径一致。
+function zhongshuRightTime(zs, segMap) {
+  if (zs && Number.isFinite(zs.endTime)) return zs.endTime;
+  const segs = ((zs && zs.segmentIds) || []).map((id) => segMap && segMap[id]).filter(Boolean);
+  let t = null;
+  for (const s of segs) {
+    const o = segOrderedEnds(s);
+    if (o && (t === null || o.end.time > t)) t = o.end.time;
+  }
+  return t;
 }
 
 // 将点线段按时间顺序分组为连通链（相邻段首尾相接）
@@ -783,12 +814,11 @@ export function detectTwoAndThreeBuySell(segments, zhongshus) {
 
   // 独立检测第三类买卖点 3B/3S
   const sorted = [...segments].sort((a, b) => (a.start?.time ?? 0) - (b.start?.time ?? 0));
+  // 中枢右边界 → 中枢（用自带 endTime = 矩形右边界，兼容中枢向右延伸）
   const rightTimeToZs = new Map();
   (zhongshus || []).forEach((zs) => {
-    const segs = (zs.segmentIds || []).map((id) => segMap[id]).filter(Boolean);
-    if (!segs.length) return;
-    segs.sort((a, b) => a.start.time - b.start.time);
-    const rightTime = segs[segs.length - 1].end.time;
+    const rightTime = zhongshuRightTime(zs, segMap);
+    if (rightTime === null) return;
     rightTimeToZs.set(rightTime, zs);
   });
 

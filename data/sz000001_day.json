@@ -1,7 +1,7 @@
 {
   "code": "sz000001",
   "period": "day",
-  "exportedAt": 1791734438960,
+  "exportedAt": 1791820898499,
   "segments": [
     {
       "id": "s_dz52ica0",
@@ -310,6 +310,11 @@
           "time": 1748275200,
           "price": 3227.36
         }
+      ],
+      "baseSegmentIds": [
+        "s_rvq2mqi9",
+        "s_nu0dbduv",
+        "s_5jgzlz7e"
       ]
     },
     {
@@ -335,6 +340,11 @@
           "time": 1774195200,
           "price": 4002.78
         }
+      ],
+      "baseSegmentIds": [
+        "s_b40sp97p",
+        "s_908e8o80",
+        "s_1vrul68f"
       ]
     }
   ],
@@ -650,6 +660,11 @@
               "time": 1748275200,
               "price": 3227.36
             }
+          ],
+          "baseSegmentIds": [
+            "s_rvq2mqi9",
+            "s_nu0dbduv",
+            "s_5jgzlz7e"
           ]
         },
         {
@@ -675,6 +690,11 @@
               "time": 1774195200,
               "price": 4002.78
             }
+          ],
+          "baseSegmentIds": [
+            "s_b40sp97p",
+            "s_908e8o80",
+            "s_1vrul68f"
           ]
         }
       ]
@@ -948,6 +968,11 @@
               "time": 1748275200,
               "price": 3227.36
             }
+          ],
+          "baseSegmentIds": [
+            "s_f7a28oqi",
+            "s_kt16cazd",
+            "s_ukttptj3"
           ]
         },
         {
@@ -973,6 +998,11 @@
               "time": 1774195200,
               "price": 4002.78
             }
+          ],
+          "baseSegmentIds": [
+            "s_ksuvhwrr",
+            "s_mbpjw925",
+            "s_g0vj2zp6"
           ]
         },
         {
@@ -1007,14 +1037,6 @@
   "presetName": "走势视角",
   "a0Period": "1m",
   "bars": [
-    {
-      "time": "2023-06-19",
-      "open": 11.63,
-      "high": 11.63,
-      "low": 11.41,
-      "close": 11.45,
-      "volume": 953997.0
-    },
     {
       "time": "2023-06-20",
       "open": 11.44,
@@ -7406,6 +7428,14 @@
       "low": 11.58,
       "close": 11.59,
       "volume": 1078105.0
+    },
+    {
+      "time": "2026-10-12",
+      "open": 11.62,
+      "high": 11.83,
+      "low": 11.62,
+      "close": 11.73,
+      "volume": 1058634.0
     }
   ]
 }

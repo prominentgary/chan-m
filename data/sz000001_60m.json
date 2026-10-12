@@ -1,7 +1,7 @@
 {
   "code": "sz000001",
   "period": "60m",
-  "exportedAt": 1791734436993,
+  "exportedAt": 1791820892114,
   "segments": [
     {
       "id": "s_llc1n54f",
@@ -36,11 +36,7 @@
     {
       "id": "s_8buzw8ny",
       "kind": "zhongshu",
-      "segmentIds": [
-        "s_a0o2sffh",
-        "s_3cbzi85u",
-        "s_sw7tz4u7"
-      ],
+      "segmentIds": [],
       "startTime": 1779157800,
       "endTime": 1780468200,
       "low": 4107.99,
@@ -59,11 +55,7 @@
     {
       "id": "s_2nxsmomt",
       "kind": "zhongshu",
-      "segmentIds": [
-        "s_lry48mnk",
-        "s_cfgdfd5t",
-        "s_4u33pzqh"
-      ],
+      "segmentIds": [],
       "startTime": 1781578800,
       "endTime": 1782700200,
       "low": 4070.17,
@@ -82,11 +74,7 @@
     {
       "id": "s_g5931gn8",
       "kind": "zhongshu",
-      "segmentIds": [
-        "s_zvii872i",
-        "s_qlhrksn8",
-        "s_cvuqp0u7"
-      ],
+      "segmentIds": [],
       "startTime": 1784790000,
       "endTime": 1785738600,
       "low": 3797.64,
@@ -105,11 +93,7 @@
     {
       "id": "s_g96uqbd2",
       "kind": "zhongshu",
-      "segmentIds": [
-        "s_gw5rrhvg",
-        "s_dmw6i66b",
-        "s_wg7oo3lq"
-      ],
+      "segmentIds": [],
       "startTime": 1787623200,
       "endTime": 1788937200,
       "low": 3915.22,
@@ -164,11 +148,7 @@
         {
           "id": "s_8buzw8ny",
           "kind": "zhongshu",
-          "segmentIds": [
-            "s_a0o2sffh",
-            "s_3cbzi85u",
-            "s_sw7tz4u7"
-          ],
+          "segmentIds": [],
           "startTime": 1779157800,
           "endTime": 1780468200,
           "low": 4107.99,
@@ -187,11 +167,7 @@
         {
           "id": "s_2nxsmomt",
           "kind": "zhongshu",
-          "segmentIds": [
-            "s_lry48mnk",
-            "s_cfgdfd5t",
-            "s_4u33pzqh"
-          ],
+          "segmentIds": [],
           "startTime": 1781578800,
           "endTime": 1782700200,
           "low": 4070.17,
@@ -210,11 +186,7 @@
         {
           "id": "s_g5931gn8",
           "kind": "zhongshu",
-          "segmentIds": [
-            "s_zvii872i",
-            "s_qlhrksn8",
-            "s_cvuqp0u7"
-          ],
+          "segmentIds": [],
           "startTime": 1784790000,
           "endTime": 1785738600,
           "low": 3797.64,
@@ -233,11 +205,7 @@
         {
           "id": "s_g96uqbd2",
           "kind": "zhongshu",
-          "segmentIds": [
-            "s_gw5rrhvg",
-            "s_dmw6i66b",
-            "s_wg7oo3lq"
-          ],
+          "segmentIds": [],
           "startTime": 1787623200,
           "endTime": 1788937200,
           "low": 3915.22,
@@ -696,38 +664,6 @@
   "presetName": "走势视角",
   "a0Period": "1m",
   "bars": [
-    {
-      "time": 1765247400,
-      "open": 11.52,
-      "high": 11.54,
-      "low": 11.47,
-      "close": 11.51,
-      "volume": 24494400.0
-    },
-    {
-      "time": 1765251000,
-      "open": 11.51,
-      "high": 11.53,
-      "low": 11.48,
-      "close": 11.49,
-      "volume": 13233700.0
-    },
-    {
-      "time": 1765260000,
-      "open": 11.49,
-      "high": 11.52,
-      "low": 11.46,
-      "close": 11.47,
-      "volume": 16624600.0
-    },
-    {
-      "time": 1765263600,
-      "open": 11.46,
-      "high": 11.47,
-      "low": 11.43,
-      "close": 11.43,
-      "volume": 19043000.0
-    },
     {
       "time": 1765333800,
       "open": 11.44,
@@ -7095,6 +7031,38 @@
       "low": 11.58,
       "close": 11.59,
       "volume": 33212200.0
+    },
+    {
+      "time": 1791772200,
+      "open": 11.62,
+      "high": 11.78,
+      "low": 11.62,
+      "close": 11.73,
+      "volume": 44826700.0
+    },
+    {
+      "time": 1791775800,
+      "open": 11.73,
+      "high": 11.83,
+      "low": 11.73,
+      "close": 11.77,
+      "volume": 26385500.0
+    },
+    {
+      "time": 1791784800,
+      "open": 11.77,
+      "high": 11.78,
+      "low": 11.71,
+      "close": 11.73,
+      "volume": 13633300.0
+    },
+    {
+      "time": 1791788400,
+      "open": 11.73,
+      "high": 11.76,
+      "low": 11.72,
+      "close": 11.73,
+      "volume": 21018000.0
     }
   ]
 }
