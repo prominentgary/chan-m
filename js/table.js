@@ -1,4 +1,5 @@
 import { formatPrice } from './fetcher.js?v=20260725i';
+import { zhongshuRangeLowHigh } from './algo.js?v=20261014d';
 
 // table.js —— 段/中枢 的微信会话列表风格渲染（无图表）
 
@@ -179,25 +180,16 @@ function zhongshuHeader(zs, zi, num, ctx, segById) {
   const ids = zs.segmentIds || [];
   // 计算中枢关键点位
   let priceInfo = '';
-  if (ids.length >= 3) {
-    // 基础三段：优先用 baseSegmentIds，否则取前三段
-    const baseIds = (zs.baseSegmentIds && zs.baseSegmentIds.length === 3)
-      ? zs.baseSegmentIds.filter((id) => segById[id])
-      : ids.slice(0, 3);
-    const base3 = baseIds.map((id) => segById[id]).filter(Boolean);
-    if (base3.length === 3) {
-      const lows = base3.map((s) => Math.min(s.start.price, s.end.price));
-      const highs = base3.map((s) => Math.max(s.start.price, s.end.price));
-      const overlapLow = Math.max(...lows);
-      const overlapHigh = Math.min(...highs);
-      // 围绕中枢震荡（含延伸）的最高/最低价格
-      const allSegs = ids.map((id) => segById[id]).filter(Boolean);
+  // 中枢区间直读中枢自带 low/high（与 algo.js 同一实现）；不再按构成段端点重算
+  const range = ids.length >= 3 ? zhongshuRangeLowHigh(zs, segById) : null;
+  if (range) {
+    // 围绕中枢震荡（含延伸）的最高/最低价格：取全部成员段端点的极值，属另一路量
+    const allSegs = ids.map((id) => segById[id]).filter(Boolean);
+    if (allSegs.length) {
       const allLows = allSegs.map((s) => Math.min(s.start.price, s.end.price));
       const allHighs = allSegs.map((s) => Math.max(s.start.price, s.end.price));
-      const oscHigh = Math.max(...allHighs);
-      const oscLow = Math.min(...allLows);
       const p = (v) => formatPrice(ctx.code, v);
-      priceInfo = ` <span class="zs-price-info">${p(oscLow)}-[${p(overlapLow)}-${p(overlapHigh)}]-${p(oscHigh)}</span>`;
+      priceInfo = ` <span class="zs-price-info">${p(Math.min(...allLows))}-[${p(range.low)}-${p(range.high)}]-${p(Math.max(...allHighs))}</span>`;
     }
   }
   return `<div class="zs-title" data-zs-id="${zs.id}">中枢 ${num} · ${ids.length} 段${priceInfo}</div>`;

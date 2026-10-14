@@ -1,6 +1,8 @@
 // model.js —— 段 / 中枢 数据模型与序列化
 // 与桌面端 drawings JSON 兼容：端点以 time(Unix秒) + price 锚定
 
+import { zhongshuRangeLowHigh } from './algo.js?v=20261014d';
+
 let _seq = 0;
 function uid(prefix) {
   return `${prefix}_${Date.now().toString(36)}_${(_seq++).toString(36)}`;
@@ -174,20 +176,16 @@ export function toDrawings(segments, zhongshus) {
     if (zsSegs.length >= 3) {
       zsSegs = zsSegs.sort((a, b) => a.start.time - b.start.time);
       // PC 端要求 _zhongshuLines 必须是原始 3 段；右边界通过 points 体现延伸
-      let base3 = (z.baseSegmentIds && z.baseSegmentIds.length === 3)
-        ? z.baseSegmentIds.map((id) => segById[id]).filter(Boolean)
-        : zsSegs.slice(0, 3);
-      base3 = base3.sort((a, b) => a.start.time - b.start.time);
-      const lows = base3.map((s) => Math.min(s.start.price, s.end.price));
-      const highs = base3.map((s) => Math.max(s.start.price, s.end.price));
-      const overlapLow = Math.max(...lows);
-      const overlapHigh = Math.min(...highs);
+      // 区间直读中枢自带 low/high（= 矩形 points）；不再按构成段端点重算
+      const range = zhongshuRangeLowHigh(z, segById);
       const first = zsSegs[0];
       const last = zsSegs[zsSegs.length - 1];
-      points = [
-        { time: first.start.time, price: overlapHigh },
-        { time: last.end.time, price: overlapLow },
-      ];
+      if (range) {
+        points = [
+          { time: first.start.time, price: range.high },
+          { time: last.end.time, price: range.low },
+        ];
+      }
     }
     out.push({
       id: z.id, type: 'rect', variant: 'dashed',

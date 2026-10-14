@@ -2,7 +2,7 @@
 // 注意：所有 import 路径均带版本号，每次发布新版本时请同步修改 html/js/sw 中的版本号
 import { fetchBars, fetchRealtimeMulti, formatTime, formatPrice, isETF, resolveCode } from './fetcher.js?v=20260725i';
 import { computeMACD } from './macd.js?v=20260725f';
-import { segmentStrength, detectStrengthIndicators, detectOneBuySell, detectTwoAndThreeBuySell, computeZhongshuStrength, detectZhongshu, computeZhongshuExtend, computeRecursiveSegment } from './algo.js?v=20261011a';
+import { segmentStrength, detectStrengthIndicators, detectOneBuySell, detectTwoAndThreeBuySell, computeZhongshuStrength, detectZhongshu, computeZhongshuExtend, computeRecursiveSegment, zhongshuRangeLowHigh } from './algo.js?v=20261014d';
 import { renderSegments } from './table.js?v=20260904b';
 import { renderKlineChart, sliceSegmentBars, renderIntradayChart, repaintView } from './klinechart.js?v=20261011a';
 import { loadStaticData } from './sync.js?v=20260725g';
@@ -2276,21 +2276,16 @@ function buildZhongshuRects(zss, segs) {
         .filter(Boolean);
       if (zsSegs.length < 3) return null;
       const sorted = [...zsSegs].sort((a, b) => a.start.time - b.start.time);
-      const baseIds = (z.baseSegmentIds || []).filter((id) => segById[id]);
-      const base3 = baseIds.length === 3
-        ? baseIds.map((id) => segById[id])
-        : sorted.slice(0, 3);
-      const lows = base3.map((s) => Math.min(s.start.price, s.end.price));
-      const highs = base3.map((s) => Math.max(s.start.price, s.end.price));
-      const overlapLow = Math.max(...lows);
-      const overlapHigh = Math.min(...highs);
+      // 区间直读中枢自带 low/high（= 矩形 points）；不再按构成段端点重算（实测约 21% 不等）
+      const range = zhongshuRangeLowHigh(z, segById);
+      if (!range) return null;
       const first = sorted[0];
       const last = sorted[sorted.length - 1];
       return {
         startTime: first.start.time,
         endTime: last.end.time,
-        high: overlapHigh,
-        low: overlapLow,
+        high: range.high,
+        low: range.low,
         firstDir: first.direction, // 中枢第一段方向，供矩形取相反色（第一段跌→红）
       };
     })
@@ -2969,15 +2964,9 @@ function resolveZsDragOp(edge, dy) {
   return { op, count };
 }
 
-// 计算中枢原始震荡区间 [low, high]，基于 baseSegmentIds（原始 3 段）
-function getZhongshuRange(zs, segMap) {
-  const baseIds = zs.baseSegmentIds || zs.segmentIds?.slice(0, 3) || [];
-  const baseSegs = baseIds.map((id) => segMap[id]).filter(Boolean);
-  if (baseSegs.length < 3) return null;
-  const lows = baseSegs.map((s) => Math.min(s.start.price, s.end.price));
-  const highs = baseSegs.map((s) => Math.max(s.start.price, s.end.price));
-  return { low: Math.max(...lows), high: Math.min(...highs) };
-}
+// 中枢原始震荡区间 [low, high] —— 统一由 algo.js 的 zhongshuRangeLowHigh 提供。
+// 此处原有一份「按 baseSegmentIds 端点求交集」的本地实现，与 algo.js 同名函数分叉
+// （那边已改为直读中枢自带的 low/high，这边没有），实测与矩形区间约 21% 不等，已删除。
 
 // PC 端规则：段是否已离开中枢区间
 // side: 'right' 检查段终点（右边界延伸）；'left' 检查段起点（左边界延伸）
@@ -3032,7 +3021,7 @@ function computeZsEditResult(zs, d, op, count) {
     (z.segmentIds || []).forEach((id) => otherZsIds.add(id));
   });
 
-  const range = getZhongshuRange({ ...zs, baseSegmentIds }, segMap);
+  const range = zhongshuRangeLowHigh({ ...zs, baseSegmentIds }, segMap);
   const baseIds = new Set(baseSegmentIds || []);
   let resultIds = zs.segmentIds
     .map((id) => segMap[id])

@@ -431,99 +431,112 @@ export function detectOneBuySell(segments, zhongshus) {
     delete s._bsZsId;
   });
 
-  const sortedAll = [...segments].sort((a, b) => a.start.time - b.start.time);
+  // 一类买卖点：**与 L1 `chan_semantics` 及桌面版 `_findAllTradingPoints` 同口径**
+  // （2026-10-14 裁决「让前端对齐 L1」）。
+  //   ① 参与判定的中枢：构成段齐 3 根、且**区间不退化**（ZG > ZD）。退化矩形不是中枢。
+  //   ② 趋势前提：中枢按**矩形左边界时间**升序，**相邻两两区间互不重叠**且**方向一致**
+  //      （后中枢 low > 前中枢 high ⇒ up；后中枢 high < 前中枢 low ⇒ down）；
+  //      任一对重叠 / 方向不一致 ⇒ 非趋势。中枢数 < 2 ⇒ 盘整，不构成趋势。
+  //   ③ 一类点只标在**最后一个中枢**上（L1 只在最后一个中枢上渲染一类/二类点）。
+  //   ④ 离开段 = 该中枢**矩形右边界之后**（起点时间 ≥ 右边界）、同向、且终点越过 ZG/ZD 的段中
+  //      **时间最早**的一段。**不要求「起点时间精确等于右边界」** —— 中枢向右延伸、
+  //      或段链存在时间缺口时，精确锚定会找不到离开段而漏标（旧实现即因此漏标）。
+  //   ⑤ 进入段 = 该中枢**构成首段起点之前**的最后一段（= L1 的 entry_index）。
+  //   ⑥ 背驰：进入段与离开段**方向一致**，且 |离开段力度| < |进入段力度|。
+  const zsList = [];
+  for (const zs of zhongshus || []) {
+    const range = zhongshuRangeLowHigh(zs, segMap);
+    if (!range || !(range.high > range.low)) continue;   // 区间退化 / 无法取值 → 不是中枢
+    const t0 = Number.isFinite(zs.startTime) ? zs.startTime : null;
+    if (t0 === null) continue;
+    zsList.push({ zs, t0, range });
+  }
+  if (zsList.length < 2) return;                          // 盘整，不构成趋势
+  zsList.sort((a, b) => a.t0 - b.t0);
 
-  zhongshus.forEach((zs) => {
-    const ids = zs.segmentIds || [];
-    const zsSegs = ids.map((id) => segMap[id]).filter(Boolean);
-    if (zsSegs.length < 3) return;
+  // ② 趋势前提
+  let trendDir = null;
+  for (let i = 1; i < zsList.length; i++) {
+    const r1 = zsList[i - 1].range, r2 = zsList[i].range;
+    let d = null;
+    if (r2.low > r1.high) d = 'up';
+    else if (r2.high < r1.low) d = 'down';
+    if (!d || (trendDir && trendDir !== d)) return;        // 重叠或方向不一致 → 非趋势，整体不标
+    trendDir = d;
+  }
 
-    zsSegs.sort((a, b) => a.start.time - b.start.time);
-    const zsStart = zsSegs[0].start.time;
-    const zsIds = new Set(ids);
+  // ③ 只判最后一个中枢
+  const lastEntry = zsList[zsList.length - 1];
+  const last = lastEntry.zs;
+  const lastRange = lastEntry.range;
+  const right = zhongshuRightTime(last, segMap);
+  if (right === null) return;
+  const base = (Array.isArray(last.baseSegmentIds) && last.baseSegmentIds.length === 3)
+    ? last.baseSegmentIds : null;
+  if (!base) return;                                      // 构成段不可知 → 无锚点，不判
+  const lastSegs = new Set(last.segmentIds || []);
 
-    // 找出离开段：起点时间「精确等于」中枢右边界时间的段（首尾相连）。
-    // 不能用「起点 >= 右边界」——段之间存在时间缺口时会取到并不连接本中枢的段。
-    const zsRight = zhongshuRightTime(zs, segMap);
-    if (zsRight === null) return;
-    let leaveSeg = null;
-    for (const s of sortedAll) {
-      if (zsIds.has(s.id)) continue;
+  // ④ 离开段：右边界之后、同向、越过边界者中时间最早的一段
+  const pickLeave = (dir, bound, above) => {
+    let best = null, bestKey = null;
+    for (const s of segments) {
+      if (lastSegs.has(s.id)) continue;
+      const d = segDirSign(s);
+      if (d !== dir) continue;
       const so = segOrderedEnds(s);
-      if (so && so.start.time === zsRight) {
-        leaveSeg = s;
-        break;
+      if (!so) continue;
+      if (so.start.time < right) continue;
+      if (above ? !(so.end.price > bound) : !(so.end.price < bound)) continue;
+      const key = [so.start.time, so.end.time];
+      if (best === null || key[0] < bestKey[0] || (key[0] === bestKey[0] && key[1] < bestKey[1])) {
+        best = s; bestKey = key;
       }
     }
-    if (!leaveSeg) return;
+    return best;
+  };
 
-    // 找出进入段（中枢前最后一个非中枢段）
-    let enterSeg = null;
-    for (const s of sortedAll) {
-      if (!zsIds.has(s.id) && s.end.time <= zsStart) {
-        if (!enterSeg || s.end.time > enterSeg.end.time) enterSeg = s;
-      }
-    }
-    if (!enterSeg) return;
+  // ⑤ 进入段：构成首段起点之前、时间上最后的一段
+  const firstSeg = segMap[base[0]];
+  if (!firstSeg) return;
+  const firstStart = Math.min(firstSeg.start.time, firstSeg.end.time);
+  let enterSeg = null, enterEnd = -Infinity;
+  for (const s of segments) {
+    const so = segOrderedEnds(s);
+    if (!so) continue;
+    if (so.end.time > firstStart) continue;
+    if (so.end.time > enterEnd) { enterSeg = s; enterEnd = so.end.time; }
+  }
+  if (!enterSeg) return;
+  const enterStr = enterSeg._strength && enterSeg._strength.macdArea;
+  if (!Number.isFinite(enterStr)) return;
 
-    // 进入段与离开段方向必须一致才参与背驰比较
-    if (enterSeg.direction !== leaveSeg.direction) return;
+  // ⑥ 背驰判定
+  const tryLeave = (code, label, color, leave) => {
+    if (!leave) return;
+    if (segDirSign(enterSeg) !== segDirSign(leave)) return;
+    const s = leave._strength && leave._strength.macdArea;
+    if (!Number.isFinite(s) || Math.abs(s) >= Math.abs(enterStr)) return;
+    leave._buySell = code;
+    leave._bsLabel = label;
+    leave._bsColor = color;
+    leave._bsZsId = last.id;
+  };
 
-    // 找前一个中枢：其「矩形右边界」时间等于进入段起点（与桌面版对齐，兼容中枢向右延伸）
-    let prevZs = null;
-    for (const z of zhongshus) {
-      if (z.id === zs.id) continue;
-      const zSegs = (z.segmentIds || []).map((id) => segMap[id]).filter(Boolean);
-      if (zSegs.length < 3) continue;
-      const zRight = zhongshuRightTime(z, segMap);
-      if (zRight !== null && zRight === enterSeg.start.time) {
-        prevZs = z;
-        break;
-      }
-    }
-
-    // 没有前中枢，不是趋势中的中枢，不标一类买卖点
-    if (!prevZs) return;
-
-    // 检查当前中枢是否为趋势中最后一个中枢（与前中枢震荡区间无重叠）
-    const r1 = getZhongshuRange(zs, segMap);
-    const r2 = getZhongshuRange(prevZs, segMap);
-    if (r1 && r2) {
-      // 无重叠：本中枢最低 > 前中枢最高，或本中枢最高 < 前中枢最低
-      const noOverlap = r1.minLow > r2.maxHigh || r1.maxHigh < r2.minLow;
-      if (!noOverlap) return; // 震荡区间重叠，不是最后一个趋势中枢
-    }
-
-    // 比较力度
-    const enterStr = enterSeg._strength || { macdArea: 0 };
-    const leaveStr = leaveSeg._strength || { macdArea: 0 };
-    const weakerLeave = Math.abs(leaveStr.macdArea) < Math.abs(enterStr.macdArea);
-
-    if (weakerLeave) {
-      if (leaveSeg.direction === 'down') {
-        leaveSeg._buySell = '1B';
-        leaveSeg._bsLabel = '一买';
-        leaveSeg._bsColor = '#07c160';
-        leaveSeg._bsZsId = zs.id;
-      } else if (leaveSeg.direction === 'up') {
-        leaveSeg._buySell = '1S';
-        leaveSeg._bsLabel = '一卖';
-        leaveSeg._bsColor = '#fa5151';
-        leaveSeg._bsZsId = zs.id;
-      }
-    }
-  });
+  if (trendDir === 'down') tryLeave('1B', '一买', '#07c160', pickLeave(-1, lastRange.low, false));
+  if (trendDir === 'up')   tryLeave('1S', '一卖', '#fa5151', pickLeave(1, lastRange.high, true));
 }
 
-// 中枢区间 [minLow, maxHigh]
-// 优先直读中枢自带区间（导出端 low/high = 矩形 points 的 min/max；手工新建中枢为
-// overlapLow/overlapHigh），与桌面版 _getZhongshuOscillationRange「直读矩形 points」口径一致。
-// 仅在中枢缺区间字段时才退回「构成段端点求交集」——端点重算与矩形区间实测有约 15% 不相等。
-function getZhongshuRange(zs, segMap) {
+// 中枢区间取值 —— 全项目唯一实现（买卖点判定 / 矩形绘制 / 表格 / 迷你图 / 边界拖拽共用）。
+// 优先级：直读中枢自带 low/high（导出端由矩形 points 写入）
+//       → overlapLow/overlapHigh（手工新建中枢）
+//       → 回退「构成段端点求交集」。
+// 端点重算与矩形区间实测约 21% 不相等，故仅在自带字段缺失时才走回退。
+// 返回 { low, high }；无法判定时返回 null。
+export function zhongshuRangeLowHigh(zs, segMap) {
   if (!zs) return null;
   const lo = Number.isFinite(zs.low) ? zs.low : (Number.isFinite(zs.overlapLow) ? zs.overlapLow : null);
   const hi = Number.isFinite(zs.high) ? zs.high : (Number.isFinite(zs.overlapHigh) ? zs.overlapHigh : null);
-  if (lo !== null && hi !== null) return { minLow: lo, maxHigh: hi };
+  if (lo !== null && hi !== null) return { low: lo, high: hi };
 
   const ids = (Array.isArray(zs.baseSegmentIds) && zs.baseSegmentIds.length === 3)
     ? zs.baseSegmentIds
@@ -532,10 +545,10 @@ function getZhongshuRange(zs, segMap) {
   if (segs.length < 3) return null;
   const lows = segs.map((s) => Math.min(s.start.price, s.end.price));
   const highs = segs.map((s) => Math.max(s.start.price, s.end.price));
-  const minLow = Math.max(...lows);
-  const maxHigh = Math.min(...highs);
-  if (minLow > maxHigh) return null;
-  return { minLow, maxHigh };
+  const low = Math.max(...lows);
+  const high = Math.min(...highs);
+  if (low > high) return null;
+  return { low, high };
 }
 
 // 中枢右边界时间：优先用中枢自带 endTime（= 矩形右边界，兼容中枢向右延伸），
@@ -746,8 +759,18 @@ export function computeRecursiveSegment(segments, higherSegments, targetId) {
   return { ok: false, reason: 'not_eligible' };
 }
 
-// 二买/二卖 与 三买/三卖 检测（与 PC 端 _findEffectiveTradingPoints 对齐）
-// 前置条件：detectOneBuySell 已执行，段上已标记 1B/1S
+// 二买/二卖 与 三买/三卖 检测
+// 口径（原文；与 chan_semantics.py（L1 唯一事实来源）及桌面版 _findEffectiveTradingPoints 对齐）：
+//   二类点：一类点之后“同向隔一段”的段终点为候选（第 101 课定义）。
+//     落点未跌破（升破）一类点 → 一般形态（或最强形态：与三类点合一）；
+//     落点跌破（升破）一类点 → 最弱形态，需“落点段 vs 一类点所在段”同向且力度衰减（盘整背驰）。
+//     ⚠ 旧实现把“跌破一类点”折叠为“一类点位移”（第 86 课的操作简化），
+//       原文第 21 课明确“这是完全可以的”，故最弱形态永远标不出来；此处不再位移一类点。
+//   三类点：自中枢最后一根基础段起沿连通链扫描首个干净的（离开段, 回试段）配对——
+//     离开段越界 + 回试段反向且不重回中枢区间 → 回试段终点即三类点。
+//     “首个干净配对即定”隐含“必须是第一次回试”。
+//   一类点：按“该趋势最后一个中枢是否已出现同类第三类点”区分标准 / 普通。
+// 前置条件：detectOneBuySell 已执行（段上已标记 1B/1S，且 _strength 已就绪）。
 export function detectTwoAndThreeBuySell(segments, zhongshus) {
   if (!segments || !segments.length) return;
   const segMap = {};
@@ -759,38 +782,45 @@ export function detectTwoAndThreeBuySell(segments, zhongshus) {
   const markers = new Map();
   segments.forEach((s) => {
     if (s._buySell === '1B' || s._buySell === '1S') {
-      markers.set(s.id, { segId: s.id, label: s._buySell, zsId: s._bsZsId || null, originalId: null });
+      markers.set(s.id, { segId: s.id, label: s._buySell, zsId: s._bsZsId || null, originalId: null, weak: false });
     }
   });
 
-  // 按连通链应用 1B/1S 移动规则并产生 2B/2S
-  const chains = buildLineChains(segments);
-  for (const chain of chains) {
-    for (let i = 2; i < chain.length; i++) {
-      const z = chain[i];
-      const x = chain[i - 2];
-      const marker = markers.get(x.id);
-      if (!marker) continue;
-      if (markers.has(z.id)) continue; // 不覆盖已有标记
+  // ---- 二类买卖点 ----
+  // 落点段 = 一类点所在段之后**同向隔一段**的那一段（第 101 课定义）。
+  // 取段落链口径：**全段按起点时间排序的单一链**（= L1 `chain_all`），
+  // 而不是连通链 —— 段链存在时间缺口时，连通链会把 `i-2` 数到另一段上，
+  // 与 L1 的 `chain_all[k+2]` 不一致（见 reports/BSP-ALGORITHM-REVIEW.md §15）。
+  const chainAll = [...segments].sort((a, b) =>
+    (a.start.time - b.start.time) || (a.end.time - b.end.time));
+  for (let i = 2; i < chainAll.length; i++) {
+    const z = chainAll[i];
+    const x = chainAll[i - 2];
+    const marker = markers.get(x.id);
+    if (!marker) continue;
+    if (markers.has(z.id)) continue;                   // 不覆盖已有标记
+    if (marker.label !== '1B' && marker.label !== '1S') continue;
 
-      const xPrice = x.end.price;
-      const zPrice = z.end.price;
-      if (marker.label === '1B') {
-        if (zPrice < xPrice) {
-          // 创新低：一买移动到新终点
-          markers.delete(x.id);
-          markers.set(z.id, { segId: z.id, label: '1B', zsId: marker.zsId, originalId: x.id });
-        } else {
-          markers.set(z.id, { segId: z.id, label: '2B', zsId: marker.zsId, originalId: null });
-        }
-      } else if (marker.label === '1S') {
-        if (zPrice > xPrice) {
-          markers.delete(x.id);
-          markers.set(z.id, { segId: z.id, label: '1S', zsId: marker.zsId, originalId: x.id });
-        } else {
-          markers.set(z.id, { segId: z.id, label: '2S', zsId: marker.zsId, originalId: null });
-        }
-      }
+    const isBuy = marker.label === '1B';
+    const xe = segOrderedEnds(x);
+    const ze = segOrderedEnds(z);
+    if (!xe || !ze) continue;
+    const broke = isBuy ? (ze.end.price < xe.end.price) : (ze.end.price > xe.end.price);
+    const label = isBuy ? '2B' : '2S';
+
+    if (!broke) {
+      // 一般形态（或最强形态：与三类点合一）
+      markers.set(z.id, { segId: z.id, label, zsId: marker.zsId, originalId: null, weak: false });
+      continue;
+    }
+    // 最弱形态：需盘整背驰（落点段 vs 一类点所在段，同向且力度衰减）
+    const dz = segDirSign(z);
+    const dx = segDirSign(x);
+    const sz = z._strength && z._strength.macdArea;
+    const sx = x._strength && x._strength.macdArea;
+    if (dz !== 0 && dz === dx && Number.isFinite(sz) && Number.isFinite(sx) &&
+        Math.abs(sz) < Math.abs(sx)) {
+      markers.set(z.id, { segId: z.id, label, zsId: marker.zsId, originalId: null, weak: true });
     }
   }
 
@@ -800,51 +830,90 @@ export function detectTwoAndThreeBuySell(segments, zhongshus) {
     if (!m.zsId) continue;
     const zs = zsMap[m.zsId];
     if (!zs) continue;
-    const range = getZhongshuRange(zs, segMap);
+    const range = zhongshuRangeLowHigh(zs, segMap);
     if (!range) continue;
     const seg = segMap[m.segId];
-    const endPrice = seg?.end?.price;
-    if (endPrice == null) continue;
-    if (m.label === '2B' && endPrice > range.maxHigh) {
-      m.label = '2B/3B';
-    } else if (m.label === '2S' && endPrice < range.minLow) {
-      m.label = '2S/3S';
-    }
+    const oe = seg ? segOrderedEnds(seg) : null;
+    if (!oe) continue;
+    if (m.label === '2B' && oe.end.price > range.high) m.label = '2B/3B';
+    else if (m.label === '2S' && oe.end.price < range.low) m.label = '2S/3S';
   }
 
-  // 独立检测第三类买卖点 3B/3S
-  const sorted = [...segments].sort((a, b) => (a.start?.time ?? 0) - (b.start?.time ?? 0));
-  // 中枢右边界 → 中枢（用自带 endTime = 矩形右边界，兼容中枢向右延伸）
-  const rightTimeToZs = new Map();
-  (zhongshus || []).forEach((zs) => {
-    const rightTime = zhongshuRightTime(zs, segMap);
-    if (rightTime === null) return;
-    rightTimeToZs.set(rightTime, zs);
-  });
-
-  for (let i = 1; i < sorted.length; i++) {
-    const c = sorted[i];
-    const p = sorted[i - 1];
-    if (p.end.time !== c.start.time) continue;
-    const zs = rightTimeToZs.get(p.start.time);
-    if (!zs) continue;
-    const range = getZhongshuRange(zs, segMap);
+  // ---- 三类买卖点（3B/3S）----
+  // 定义（**与 L1 `chan_semantics._detect_third_point` 及桌面版 `_findThirdClassPoints` 同口径**；
+  // buy-sell-points.md §1.3）：
+  //   1) 沿**同周期段链**从「末构成段**之后**那一段」起逐段扫描，取**首个干净配对**：
+  //      · 离开段 p：向上离开 → p 终点 > 上沿（range.high）；
+  //                  向下离开 → p 终点 < 下沿（range.low）；
+  //      · 回试段 c：链上紧随 p 的下一段，且与 p 反向、整段不重回中枢区间
+  //        （3B：c 低点 ≥ 上沿，含恰好触及；3S：c 高点 ≤ 下沿）；
+  //      则 c 的终点即为该中枢的三类点。「首个干净配对即定」＝「必须是第一次回试」。
+  //   2) 买、卖**各自独立**取首个配对（同一个中枢可以同时给出 3B 与 3S）。
+  // 口径变更记录（2026-10-14，依据 reports/BSP-ALGORITHM-REVIEW.md §14）：
+  //   旧版只试**两个候选**（① 末构成段；② 起点时间 == 中枢右边界时间的段），命中即止，
+  //   与 L1 不一致（实测 20 个样本 35 处标记差异，两方向都有）。L1 的口径是：
+  //   离开段＝末构成段之后**第一个**能离开中枢、且紧随的回试不重回中枢的配对，
+  //   故**不把「末构成段自身越界」当离开段**，也**不受中枢右边界限制**（中枢延伸区照扫）。
+  //   旧版注释里担心的「无界向后扫会漂移到后续中枢」，实为「不断赋值、最后一个配对胜出」
+  //   所致的假象；用 `buyDone/sellDone` 守住命中即定，即不会漂移。
+  const chain = [...segments].sort((a, b) => (a.start?.time ?? 0) - (b.start?.time ?? 0));
+  for (const zs of zhongshus || []) {
+    // 构成段（= 桌面版 _zhongshuLines）必须齐 3 根，否则本中枢不参与三类点判定。
+    // 与 L1（chan_semantics._detect_third_point 的「中枢构成段缺失」分支）及桌面版口径一致：
+    // 中枢的定义是「连续 3 个次级别走势的重叠」，构成段不可知即无法确认其为**本级别**中枢。
+    // 典型情形：由更低级别自动升级投影而来的中枢（_autoUpFrom / _isExtendedZhongshu），
+    // 其构成段属于更低级别、不在本图段集合内 —— 本级别（点线）的离开/回试无从在其上判定。
+    const base = (Array.isArray(zs.baseSegmentIds) && zs.baseSegmentIds.length === 3)
+      ? zs.baseSegmentIds
+      : null;
+    if (!base) continue;
+    const range = zhongshuRangeLowHigh(zs, segMap);
     if (!range) continue;
+    // 区间退化（ZG ≤ ZD）的矩形**不是中枢**：中枢＝连续三段走势的重叠区间，
+    // 重叠宽度为零时无从判定「离开 / 重回」。与 L1 `chan_semantics._collect_zhongshus`
+    // 的 `if zg <= zd: 跳过并告警` 及桌面版 `_findThirdClassPoints` 同口径
+    // （实测 sh588110_1m 有 2 个这类矩形，旧版会在其上判出假的第三类卖点）。
+    if (!(range.high > range.low)) continue;
 
-    const pEnd = p.end.price;
-    const cEnd = c.end.price;
-    let label = null;
-    if (pEnd > range.maxHigh && cEnd > range.maxHigh) label = '3B';
-    else if (pEnd < range.minLow && cEnd < range.minLow) label = '3S';
-    if (!label) continue;
+    // 末构成段在链中的位置；不在链中（悬空 / 属更低级别）→ 无从定位扫描起点，不判。
+    const lastBaseIdx = chain.findIndex((s) => s.id === base[2]);
+    if (lastBaseIdx < 0) continue;
 
-    const existing = markers.get(c.id);
-    if (existing) {
-      if (existing.label === '2B' && label === '3B') existing.label = '2B/3B';
-      else if (existing.label === '2S' && label === '3S') existing.label = '2S/3S';
-      continue;
+    let buyDone = false, sellDone = false;
+    for (let k = lastBaseIdx + 1; k < chain.length && !(buyDone && sellDone); k++) {
+      const p = chain[k];
+      const pd = segDirSign(p);
+      if (pd === 0) continue;
+      const pe = segOrderedEnds(p);
+      if (!pe) continue;
+      const crossedUp = pd > 0 && pe.end.price > range.high;
+      const crossedDown = pd < 0 && pe.end.price < range.low;
+      if (!crossedUp && !crossedDown) continue;   // 该段没有离开中枢，向后看下一段
+
+      // 回试段 c：链上紧随 p 的下一段，且与离开段反向（= 第一次回试）
+      const c = chain[k + 1];
+      if (!c) continue;
+      const cd = segDirSign(c);
+      if (cd === 0 || cd === pd) continue;
+      const ce = segOrderedEnds(c);
+      if (!ce) continue;
+      const cLow = Math.min(ce.start.price, ce.end.price);
+      const cHigh = Math.max(ce.start.price, ce.end.price);
+
+      let label = null;
+      if (!buyDone && crossedUp && cLow >= range.high) { label = '3B'; buyDone = true; }
+      else if (!sellDone && crossedDown && cHigh <= range.low) { label = '3S'; sellDone = true; }
+      if (!label) continue;
+
+      const existing = markers.get(c.id);
+      if (existing) {
+        if (existing.label === '2B' && label === '3B') existing.label = '2B/3B';
+        else if (existing.label === '2S' && label === '3S') existing.label = '2S/3S';
+      } else {
+        markers.set(c.id, { segId: c.id, label, zsId: zs.id, originalId: null, weak: false });
+      }
+      // 注意：这里**不 break** —— 买卖各自独立，由 buyDone/sellDone 控制命中即定。
     }
-    markers.set(c.id, { segId: c.id, label, zsId: zs.id, originalId: null });
   }
 
   // 把最终标记写回段对象（先清空旧买卖点，再写入）
@@ -857,6 +926,13 @@ export function detectTwoAndThreeBuySell(segments, zhongshus) {
     }
   });
 
+  // 中枢自身是否已出现同类第三类点：用于区分“标准 / 普通”第一类买卖点
+  //   一买 → 需该中枢已出现第三类卖点（向下有效离开）；一卖 → 需第三类买点
+  const ownThird = new Map();
+  for (const m of markers.values()) {
+    if ((m.label === '3B' || m.label === '3S') && m.zsId) ownThird.set(m.zsId, m.label);
+  }
+
   const labelMap = {
     '1B': '一买', '1S': '一卖',
     '2B': '二买', '2S': '二卖',
@@ -867,8 +943,15 @@ export function detectTwoAndThreeBuySell(segments, zhongshus) {
     const seg = segMap[m.segId];
     if (!seg) continue;
     const isBuy = m.label.includes('B');
+    let disp = labelMap[m.label] || m.label;
+    if (m.label === '1B' || m.label === '1S') {
+      const need = m.label === '1B' ? '3S' : '3B';
+      disp = (m.zsId && ownThird.get(m.zsId) === need ? '标准' : '普通') + disp;
+    } else if (m.weak) {
+      disp += '（弱）';
+    }
     seg._buySell = m.label;
-    seg._bsLabel = labelMap[m.label] || m.label;
+    seg._bsLabel = disp;
     seg._bsColor = isBuy ? '#07c160' : '#fa5151';
     seg._bsZsId = m.zsId;
   }

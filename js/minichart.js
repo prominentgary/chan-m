@@ -1,33 +1,27 @@
 // minichart.js —— 段走势简图（SVG）：折线连接各段端点，叠加中枢框
 // 不依赖任何图表库，纯内联 SVG，适配移动端黑白/彩色主题。
 
+import { zhongshuRangeLowHigh } from './algo.js?v=20261014d';
+
 // 中枢配色：统一黑色
 const ZS_COLOR = 'var(--wx-txt)';
 
 // 由中枢计算其震荡区间与时间范围。
-//   - 中枢区间（高低价）= 前 3 段（基础段）的重叠区域，与 algo.js 的 getZhongshuRange 一致。
+//   - 中枢区间（高低价）直读中枢自带 low/high，与 algo.js 的 zhongshuRangeLowHigh 同一实现。
 //   - 时间宽度 = 全部成员段（含延伸段）的跨度，体现中枢延伸。
 function computeZsBox(zs, segMap) {
-  // 价格区间：基于基础 3 段
-  const baseIds = (zs.baseSegmentIds && zs.baseSegmentIds.length >= 3)
-    ? zs.baseSegmentIds
-    : (zs.segmentIds || []).slice(0, 3);
-  const baseSegs = baseIds.map((id) => segMap[id]).filter(Boolean);
-  if (baseSegs.length < 3) return null;
-  baseSegs.sort((a, b) => (a.start?.time ?? 0) - (b.start?.time ?? 0));
-  // 前 3 段的重叠区域：低点取各段低点最大值，高点取各段高点最小值
-  const lows = baseSegs.map((s) => Math.min(s.start.price, s.end.price));
-  const highs = baseSegs.map((s) => Math.max(s.start.price, s.end.price));
-  const low = Math.max(...lows);
-  const high = Math.min(...highs);
+  // 价格区间：直读中枢自带 low/high；仅缺字段时才回退构成段端点求交集
+  const range = zhongshuRangeLowHigh(zs, segMap);
+  if (!range) return null;
+  const { low, high } = range;
   if (!(high > low)) return null; // 无重叠区间，不成中枢
 
   // 时间宽度：基于全部成员段（含延伸段），取首段起点到末段终点
-  const memberSegs = (zs.segmentIds || [])
+  const spanSegs = (zs.segmentIds || [])
     .map((id) => segMap[id])
     .filter(Boolean)
     .sort((a, b) => (a.start?.time ?? 0) - (b.start?.time ?? 0));
-  const spanSegs = memberSegs.length ? memberSegs : baseSegs;
+  if (!spanSegs.length) return null;
   const tStart = spanSegs[0].start.time;
   const tEnd = spanSegs[spanSegs.length - 1].end.time;
 
