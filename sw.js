@@ -1,10 +1,10 @@
 // sw.js —— 离线缓存（PWA）
-const CACHE = 'chan-m-v162';
+const CACHE = 'chan-m-v164';
 const ASSETS = [
   './', './index.html', './manifest.webmanifest', './icon.svg',
   './css/m.css?v=20261011c',
   './js/app.js?v=20261011g', './js/gesture.js?v=20260905a', './js/fetcher.js?v=20260725i', './js/adjust.js?v=20260725b', './js/macd.js?v=20260725f', './js/model.js?v=20260725f',
-  './js/klinechart.js?v=20261011a', './js/table.js?v=20260904b', './js/algo.js?v=20261011a', './js/editor.js?v=20260830b', './js/watchmode.js?v=20260922d', './js/sync.js?v=20260725g',
+  './js/klinechart.js?v=20261011a', './js/table.js?v=20260904b', './js/algo.js?v=20261015b', './js/editor.js?v=20260830b', './js/watchmode.js?v=20260922d', './js/sync.js?v=20260725g',
   './data/manifest.json',
 ];
 

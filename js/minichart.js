@@ -1,7 +1,7 @@
 // minichart.js —— 段走势简图（SVG）：折线连接各段端点，叠加中枢框
 // 不依赖任何图表库，纯内联 SVG，适配移动端黑白/彩色主题。
 
-import { zhongshuRangeLowHigh } from './algo.js?v=20261014d';
+import { zhongshuRangeLowHigh } from './algo.js?v=20261015b';
 
 // 中枢配色：统一黑色
 const ZS_COLOR = 'var(--wx-txt)';

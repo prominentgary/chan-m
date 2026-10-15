@@ -419,6 +419,35 @@ export function computeZhongshuStrength(bars, segments, zhongshus) {
 // 与 PC 端对齐：
 //   1B：中枢是趋势中最后一个（不与前中枢重叠），离开段力度 < 进入段力度，离开段方向向下
 //   1S：中枢是趋势中最后一个（不与前中枢重叠），离开段力度 < 进入段力度，离开段方向向上
+// 三类点的**回试段**定位（与 L1 `chan_semantics._detect_third_point` 及桌面版
+// `_findThirdClassPoints` 同口径）：沿同线型段链从「末构成段之后」逐段扫描，
+// 取**首个**「离开段越过边界 + 紧随回试不重回中枢区间」的配对，返回回试段。
+// `dir` ＝ 离开方向（-1 向下＝三卖，1 向上＝三买）。不成立返回 null。
+// 抽成公共函数：`detectOneBuySell`（需要三类点来定位一类点的第二个候选）与
+// `detectTwoAndThreeBuySell`（标 3B/3S）共用同一判定，避免两份实现漂移。
+function thirdRetestSeg(chain, range, baseIds, dir) {
+  if (!range || !Array.isArray(baseIds) || !baseIds.length) return null;
+  const lastBaseIdx = chain.findIndex((s) => s.id === baseIds[baseIds.length - 1]);
+  if (lastBaseIdx < 0) return null;
+  for (let k = lastBaseIdx + 1; k + 1 < chain.length; k++) {
+    const p = chain[k];
+    const pd = segDirSign(p);
+    if (pd !== dir) continue;
+    const pe = segOrderedEnds(p);
+    if (!pe) continue;
+    if (dir < 0 ? !(pe.end.price < range.low) : !(pe.end.price > range.high)) continue;
+    const c = chain[k + 1];
+    const cd = segDirSign(c);
+    if (cd === 0 || cd === pd) continue;
+    const ce = segOrderedEnds(c);
+    if (!ce) continue;
+    const cLow = Math.min(ce.start.price, ce.end.price);
+    const cHigh = Math.max(ce.start.price, ce.end.price);
+    if (dir < 0 ? (cHigh <= range.low) : (cLow >= range.high)) return c;
+  }
+  return null;
+}
+
 export function detectOneBuySell(segments, zhongshus) {
   if (!zhongshus || !zhongshus.length) return;
   const segMap = {};
@@ -522,8 +551,43 @@ export function detectOneBuySell(segments, zhongshus) {
     leave._bsZsId = last.id;
   };
 
-  if (trendDir === 'down') tryLeave('1B', '一买', '#07c160', pickLeave(-1, lastRange.low, false));
-  if (trendDir === 'up')   tryLeave('1S', '一卖', '#fa5151', pickLeave(1, lastRange.high, true));
+  // ⑦ 候选位置：一类点有**两个**候选（原文 buy-sell-points.md §三）
+  //    · 候选一＝最后一个中枢之后**首个**越过边界的同向段
+  //      （直接离开中枢即背驰 → 形态「普通」）；
+  //    · 候选二＝该中枢**三类点之后**再次别次同向的那段
+  //      （原文链条「三卖 → 再次别次向下 → 底背驰 = 标准一买」）。
+  //    候选二越过候选一（买点更低 / 卖点更高）⇒ 候选一被证伪，以候选二为准。
+  //    两候选的力度基准相同（都是进入段），故判定统一走 tryLeave。
+  //    与 L1 `_pick_follow_leave` / `_first_conclusion`、桌面版 `decideLeave` 同口径。
+  const chainAll = [...segments].sort((a, b) =>
+    (a.start.time - b.start.time) || (a.end.time - b.end.time));
+  const pickFollowLeave = (dir) => {
+    const retest = thirdRetestSeg(chainAll, lastRange, base, dir);
+    if (!retest) return null;
+    const idx = chainAll.indexOf(retest);
+    if (idx < 0) return null;
+    for (let i = idx + 1; i < chainAll.length; i++) {
+      if (segDirSign(chainAll[i]) === dir) return chainAll[i];
+    }
+    return null;
+  };
+  const decideLeave = (dir, cand1, cand2) => {
+    if (!cand2) return cand1;
+    if (!cand1) return cand2;
+    const e1 = segOrderedEnds(cand1), e2 = segOrderedEnds(cand2);
+    if (!e1 || !e2) return cand1;
+    return (dir < 0 ? (e2.end.price < e1.end.price) : (e2.end.price > e1.end.price))
+      ? cand2 : cand1;
+  };
+
+  if (trendDir === 'down') {
+    tryLeave('1B', '一买', '#07c160', decideLeave(-1,
+      pickLeave(-1, lastRange.low, false), pickFollowLeave(-1)));
+  }
+  if (trendDir === 'up') {
+    tryLeave('1S', '一卖', '#fa5151', decideLeave(1,
+      pickLeave(1, lastRange.high, true), pickFollowLeave(1)));
+  }
 }
 
 // 中枢区间取值 —— 全项目唯一实现（买卖点判定 / 矩形绘制 / 表格 / 迷你图 / 边界拖拽共用）。
@@ -875,36 +939,12 @@ export function detectTwoAndThreeBuySell(segments, zhongshus) {
     // （实测 sh588110_1m 有 2 个这类矩形，旧版会在其上判出假的第三类卖点）。
     if (!(range.high > range.low)) continue;
 
-    // 末构成段在链中的位置；不在链中（悬空 / 属更低级别）→ 无从定位扫描起点，不判。
-    const lastBaseIdx = chain.findIndex((s) => s.id === base[2]);
-    if (lastBaseIdx < 0) continue;
-
-    let buyDone = false, sellDone = false;
-    for (let k = lastBaseIdx + 1; k < chain.length && !(buyDone && sellDone); k++) {
-      const p = chain[k];
-      const pd = segDirSign(p);
-      if (pd === 0) continue;
-      const pe = segOrderedEnds(p);
-      if (!pe) continue;
-      const crossedUp = pd > 0 && pe.end.price > range.high;
-      const crossedDown = pd < 0 && pe.end.price < range.low;
-      if (!crossedUp && !crossedDown) continue;   // 该段没有离开中枢，向后看下一段
-
-      // 回试段 c：链上紧随 p 的下一段，且与离开段反向（= 第一次回试）
-      const c = chain[k + 1];
+    // 三类点：买、卖**各自独立**取首个合格配对（同一中枢可同时给出 3B 与 3S），
+    // 由 `thirdRetestSeg` 统一实现（与 detectOneBuySell 的候选二定位共用同一份判定）。
+    for (const pair of [[1, '3B'], [-1, '3S']]) {
+      const c = thirdRetestSeg(chain, range, base, pair[0]);
       if (!c) continue;
-      const cd = segDirSign(c);
-      if (cd === 0 || cd === pd) continue;
-      const ce = segOrderedEnds(c);
-      if (!ce) continue;
-      const cLow = Math.min(ce.start.price, ce.end.price);
-      const cHigh = Math.max(ce.start.price, ce.end.price);
-
-      let label = null;
-      if (!buyDone && crossedUp && cLow >= range.high) { label = '3B'; buyDone = true; }
-      else if (!sellDone && crossedDown && cHigh <= range.low) { label = '3S'; sellDone = true; }
-      if (!label) continue;
-
+      const label = pair[1];
       const existing = markers.get(c.id);
       if (existing) {
         if (existing.label === '2B' && label === '3B') existing.label = '2B/3B';
@@ -912,7 +952,6 @@ export function detectTwoAndThreeBuySell(segments, zhongshus) {
       } else {
         markers.set(c.id, { segId: c.id, label, zsId: zs.id, originalId: null, weak: false });
       }
-      // 注意：这里**不 break** —— 买卖各自独立，由 buyDone/sellDone 控制命中即定。
     }
   }
 
@@ -927,10 +966,16 @@ export function detectTwoAndThreeBuySell(segments, zhongshus) {
   });
 
   // 中枢自身是否已出现同类第三类点：用于区分“标准 / 普通”第一类买卖点
-  //   一买 → 需该中枢已出现第三类卖点（向下有效离开）；一卖 → 需第三类买点
-  const ownThird = new Map();
+  //   一买 → 需该中枢已出现第三类卖点（向下有效离开）；一卖 → 需第三类买点。
+  //   **且该三类点必须早于本类点位置**（原文链条：三卖 → 再次级别向下 → 底背驰 =
+  //   标准一买；顺序颠倒时等于用后续走势追认前面的低点）。与 L1 chan_semantics
+  //   的 `_form_ok()` 同口径。三类点标记落在**回试段**上，其终点即该三类点位置。
+  const ownThird = new Map();   // 中枢 id -> { label, atTime }
   for (const m of markers.values()) {
-    if ((m.label === '3B' || m.label === '3S') && m.zsId) ownThird.set(m.zsId, m.label);
+    if ((m.label !== '3B' && m.label !== '3S') || !m.zsId) continue;
+    const t3 = segMap[m.segId];
+    const t3e = t3 ? segOrderedEnds(t3) : null;
+    ownThird.set(m.zsId, { label: m.label, atTime: t3e ? t3e.end.time : null });
   }
 
   const labelMap = {
@@ -946,7 +991,12 @@ export function detectTwoAndThreeBuySell(segments, zhongshus) {
     let disp = labelMap[m.label] || m.label;
     if (m.label === '1B' || m.label === '1S') {
       const need = m.label === '1B' ? '3S' : '3B';
-      disp = (m.zsId && ownThird.get(m.zsId) === need ? '标准' : '普通') + disp;
+      const third = m.zsId ? ownThird.get(m.zsId) : null;
+      // 一类点位置 = 其所在段（离开段）的终点；三类点必须早于它
+      const le = segOrderedEnds(seg);
+      const isStd = !!(third && third.label === need && third.atTime != null
+                       && le && third.atTime < le.end.time);
+      disp = (isStd ? '标准' : '普通') + disp;
     } else if (m.weak) {
       disp += '（弱）';
     }

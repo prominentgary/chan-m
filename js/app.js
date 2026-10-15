@@ -2,7 +2,7 @@
 // 注意：所有 import 路径均带版本号，每次发布新版本时请同步修改 html/js/sw 中的版本号
 import { fetchBars, fetchRealtimeMulti, formatTime, formatPrice, isETF, resolveCode } from './fetcher.js?v=20260725i';
 import { computeMACD } from './macd.js?v=20260725f';
-import { segmentStrength, detectStrengthIndicators, detectOneBuySell, detectTwoAndThreeBuySell, computeZhongshuStrength, detectZhongshu, computeZhongshuExtend, computeRecursiveSegment, zhongshuRangeLowHigh } from './algo.js?v=20261014d';
+import { segmentStrength, detectStrengthIndicators, detectOneBuySell, detectTwoAndThreeBuySell, computeZhongshuStrength, detectZhongshu, computeZhongshuExtend, computeRecursiveSegment, zhongshuRangeLowHigh } from './algo.js?v=20261015b';
 import { renderSegments } from './table.js?v=20260904b';
 import { renderKlineChart, sliceSegmentBars, renderIntradayChart, repaintView } from './klinechart.js?v=20261011a';
 import { loadStaticData } from './sync.js?v=20260725g';

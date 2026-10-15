@@ -1,5 +1,5 @@
 import { formatPrice } from './fetcher.js?v=20260725i';
-import { zhongshuRangeLowHigh } from './algo.js?v=20261014d';
+import { zhongshuRangeLowHigh } from './algo.js?v=20261015b';
 
 // table.js —— 段/中枢 的微信会话列表风格渲染（无图表）
 

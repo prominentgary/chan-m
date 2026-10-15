@@ -1,7 +1,7 @@
 // model.js —— 段 / 中枢 数据模型与序列化
 // 与桌面端 drawings JSON 兼容：端点以 time(Unix秒) + price 锚定
 
-import { zhongshuRangeLowHigh } from './algo.js?v=20261014d';
+import { zhongshuRangeLowHigh } from './algo.js?v=20261015b';
 
 let _seq = 0;
 function uid(prefix) {
