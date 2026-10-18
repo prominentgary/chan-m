@@ -1568,3 +1568,14 @@ body.search-header-fixed .search-edge-guard { display: block; }
   letter-spacing: .5px;
 }
 .row-ai-btn:active { background: rgba(240, 180, 41, .16); }
+
+/* 合并行半区里的迷你胶囊：只占 22px 左右，给「N 段 · M 中枢」留出位置 */
+.row-ai-btn--mini {
+  padding: 1px 6px;
+  font-size: 10px;
+  letter-spacing: 0;
+  border-width: 1px;
+}
+/* 合并行半区可收缩，避免胶囊把计数文字顶出去 */
+.period-half .period-row-info { min-width: 0; }
+.period-half .period-row-meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

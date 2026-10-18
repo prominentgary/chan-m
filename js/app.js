@@ -865,11 +865,11 @@ function dualPeriodRowHtml(sec, main, aux) {
       <div class="period-row-head period-row-head--dual">
         <div class="period-half" data-period="${main}">
           ${periodRowInfoHtml(sec, main)}
-          <span class="period-row-tail">${aiChipHtml(main)}<span class="sec-arrow">▸</span></span>
+          <span class="period-row-tail">${aiChipHtml(main, true)}<span class="sec-arrow">▸</span></span>
         </div>
         <div class="period-half" data-period="${aux}">
           ${periodRowInfoHtml(sec, aux)}
-          <span class="period-row-tail">${aiChipHtml(aux)}<span class="sec-arrow">▸</span></span>
+          <span class="period-row-tail">${aiChipHtml(aux, true)}<span class="sec-arrow">▸</span></span>
         </div>
       </div>
       <div class="period-row-kline">
