@@ -2157,9 +2157,10 @@ async function openBriefSheet(code, period) {
   const presetName = (presets.length > 1 && presets[pIdx])
     ? (presets[pIdx].name || `方案${pIdx + 1}`)
     : null;
+  // 中文里「15分 周期」这种空格很别扭，这里把单位词和周期名连起来写
   const periodNote = (briefPeriod !== period)
-    ? `你正在看的是 ${periodLabel(period)} 周期。它是辅助周期，画线沿用 ${periodLabel(briefPeriod)} 的刻度，`
-      + `所以下面按 ${periodLabel(briefPeriod)} 的口径描述段与中枢（段的时间点都是 ${periodLabel(briefPeriod)} 的 K 线时刻）。`
+    ? `你正在看的是${periodLabel(period)}周期。它是辅助周期，画线沿用${periodLabel(briefPeriod)}周期的刻度，`
+      + `所以下面按${periodLabel(briefPeriod)}周期的口径描述段与中枢（段的时间点都是${periodLabel(briefPeriod)}周期 K 线的时刻）。`
     : '';
 
   let brief = null;
@@ -2183,6 +2184,9 @@ async function openBriefSheet(code, period) {
       // 方案名取自列表页同一来源（state._presets + 当前索引）。drawings[period] 上没有
       // presetName 字段，从那里取会静默变成 null，简报就少了「看的是哪个方案」。
       presetName,
+      // 图上做了「聚焦最近走势」过滤，只显示可见段；简报用全量段。
+      // 把可见段数传过去，让简报自己说明「图上只显示了几段」，否则两个数字会打架。
+      visibleSegCount: getVisibleSegsForPeriod(code, period).length,
     });
   } catch (err) {
     toast('生成失败：' + ((err && err.message) || '未知错误'));
@@ -2210,8 +2214,8 @@ async function openBriefSheet(code, period) {
         <pre class="brief-text" id="brief-text"></pre>
       </div>
       <div class="action-sheet-footer brief-footer">
-        <button type="button" class="mini" id="brief-copy">复制全文</button>
-        <button type="button" class="primary" id="brief-share">分享到…</button>
+        <button type="button" class="primary" id="brief-copy">复制全文</button>
+        <button type="button" class="mini" id="brief-share">分享到…</button>
       </div>
     </div>
   `;

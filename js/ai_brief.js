@@ -168,6 +168,13 @@ export function buildBrief(ctx) {
     + `行情取到 ${lastTime !== null ? tf(lastTime) : '（无）'} 那根 K 线为止。`
     + '下面所有数字都是手机按这套画线算好的现成结论，**请直接引用，不要自己从 K 线重新数段、'
     + '重新算力度或重新判买卖点**。');
+  // 图上做了「聚焦最近走势」的过滤，只显示可见段；简报用全量段算中枢与买卖点。
+  // 不说破的话，同一屏上「列表写 4 段、这里写 107 段」会像自相矛盾，模型也会以为图上真有 107 段。
+  const visCount = Number.isFinite(c.visibleSegCount) ? c.visibleSegCount : null;
+  if (visCount !== null && visCount < segs.length) {
+    out.push(`你图上为了聚焦最近走势，只显示了其中 ${visCount} 段；`
+      + `下面的中枢与买卖点按全部 ${segs.length} 段给出（中枢需要更长的历史才成立，只用最近几段会判不出来）。`);
+  }
   out.push('「力度」= 这一段里同方向 MACD 柱子累加，数字越大说明这一波推得越猛；'
     + '它跟涨跌幅是两回事，不要用价格幅度代替力度。');
 
