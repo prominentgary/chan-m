@@ -1,0 +1,207 @@
+// model.js —— 段 / 中枢 数据模型与序列化
+// 与桌面端 drawings JSON 兼容：端点以 time(Unix秒) + price 锚定
+
+import { zhongshuRangeLowHigh } from './algo.js?v=20261015b';
+
+let _seq = 0;
+function uid(prefix) {
+  return `${prefix}_${Date.now().toString(36)}_${(_seq++).toString(36)}`;
+}
+
+// 桌面端周期 -> Chan-M 周期
+const PERIOD_MAP = {
+  '1m': '1m', '5m': '5m', '15m': '15m', '30m': '30m', '60m': '60m',
+  '1d': 'day', 'day': 'day',
+  '1w': 'week', 'week': 'week',
+  '1M': 'month', 'month': 'month',
+  '1Q': 'quarter', 'quarter': 'quarter',
+  '1y': 'year', 'year': 'year',
+};
+
+export function normPeriod(p) {
+  return PERIOD_MAP[p] || p || '';
+}
+
+// 统一把桌面端 time（可能是秒数或 "2025-03-18" 字符串）转成 Unix 秒
+export function normTime(t) {
+  if (typeof t === 'number') return Math.floor(t);
+  if (typeof t === 'string') {
+    if (/^\d{4}-\d{2}-\d{2}$/.test(t)) {
+      return Math.floor(new Date(`${t.replace(/-/g, '/')} 00:00:00`).getTime() / 1000);
+    }
+    if (/^\d{8}$/.test(t)) { // 如 "20260623"
+      const y = +t.slice(0, 4), mo = +t.slice(4, 6), d = +t.slice(6, 8);
+      return Math.floor(new Date(y, mo - 1, d, 0, 0).getTime() / 1000);
+    }
+  }
+  return Math.floor(new Date(t).getTime() / 1000);
+}
+
+export function makeSegment({ startSec, endSec, period, bars }) {
+  const s = barAtOrBefore(bars, startSec);
+  const e = barAtOrAfter(bars, endSec);
+  // 先按收盘价判断趋势方向，再按涨跌方向取对应端点高低价：
+  //   上涨段：起点=最低价(low)，终点=最高价(high)
+  //   下跌段：起点=最高价(high)，终点=最低价(low)
+  const direction = (e && s && e.close >= s.close) ? 'up' : 'down';
+  const start = { time: startSec, price: s ? (direction === 'up' ? s.low : s.high) : 0 };
+  const end = { time: endSec, price: e ? (direction === 'up' ? e.high : e.low) : 0 };
+  return {
+    id: uid('seg'),
+    kind: 'segment',
+    period,
+    direction,
+    start, end,
+  };
+}
+
+export function makeZhongshu(segmentIds, baseSegmentIds) {
+  const ids = [...segmentIds];
+  const baseIds = baseSegmentIds && baseSegmentIds.length === 3 ? [...baseSegmentIds] : ids.slice(0, 3);
+  return { id: uid('zs'), kind: 'zhongshu', segmentIds: ids, baseSegmentIds: baseIds };
+}
+
+// 从桌面端 drawings JSON 导入为段/中枢
+export function fromDrawings(drawings) {
+  const segments = [];
+  const segById = {};
+  const endToId = {};
+  const watchSegs = [];
+
+  // 第一遍先收集所有段
+  for (const d of drawings || []) {
+    if (d.type === 'line' && d.points?.length >= 2) {
+      const [a, b] = [d.points[0], d.points[d.points.length - 1]];
+      const start = { time: normTime(a.time), price: a.price };
+      const end = { time: normTime(b.time), price: b.price };
+      const seg = {
+        id: d.id || uid('seg'),
+        kind: 'segment',
+        period: normPeriod(d.createdPeriod) || '',
+        direction: end.price >= start.price ? 'up' : 'down',
+        start, end,
+      };
+      // 盯盘段：保留标记，加载后按最新 K 线自动延伸
+      if (d._isWatch) {
+        seg._isWatch = true;
+        watchSegs.push(seg);
+      }
+      // 追踪段（非 A0 简化盯盘）：保留标记
+      if (d._isTrack) {
+        seg._isTrack = true;
+        seg._trackSourceId = d._trackSourceId || seg.id;
+      }
+      segments.push(seg);
+      segById[seg.id] = seg;
+      endToId[`${seg.end.time}|${seg.end.price}`] = seg.id;
+    }
+  }
+
+  // 解析盯盘段的源线段：盯盘段起点 = 源段终点（优先用导出时附带的 _watchSourceId）
+  for (const seg of watchSegs) {
+    const key = `${seg.start.time}|${seg.start.price}`;
+    seg._watchSourceId = seg._watchSourceId || endToId[key] || seg.id;
+  }
+
+  const sortedSegs = [...segments].sort((a, b) => a.start.time - b.start.time);
+  const zhongshus = [];
+
+  // 第二遍处理中枢：按 PC 端矩形右边界把延伸段一起纳入
+  for (const d of drawings || []) {
+    if (d._isZhongshu) {
+      const baseIds = d._zhongshuLines || [];
+      let segmentIds = [...baseIds];
+
+      if (d.points && d.points.length >= 2 && baseIds.length >= 3) {
+        const rightSec = Math.max(normTime(d.points[0].time), normTime(d.points[1].time));
+        const baseSegs = baseIds.map((id) => segById[id]).filter(Boolean);
+        if (baseSegs.length === 3) {
+          baseSegs.sort((a, b) => a.start.time - b.start.time);
+          const startIdx = sortedSegs.findIndex((s) => s.id === baseSegs[0].id);
+          const endIdx = sortedSegs.findIndex((s) => s.end.time === rightSec);
+          if (startIdx >= 0 && endIdx >= startIdx + 2) {
+            segmentIds = sortedSegs.slice(startIdx, endIdx + 1).map((s) => s.id);
+          }
+        }
+      }
+
+      let baseSegmentIds = baseIds.length === 3 ? baseIds : segmentIds.slice(0, 3);
+      baseSegmentIds = baseSegmentIds
+        .map((id) => segById[id])
+        .filter(Boolean)
+        .sort((a, b) => a.start.time - b.start.time)
+        .map((s) => s.id);
+      zhongshus.push({
+        id: d.id || uid('zs'),
+        kind: 'zhongshu',
+        segmentIds,
+        baseSegmentIds,
+      });
+    }
+  }
+  return { segments, zhongshus };
+}
+
+// 导出为桌面端兼容的 drawings 结构
+export function toDrawings(segments, zhongshus) {
+  const out = [];
+  const segById = {};
+  for (const s of segments) segById[s.id] = s;
+
+  for (const s of segments) {
+    const segOut = {
+      id: s.id, type: 'line', variant: 'dotted',
+      createdPeriod: s.period,
+      style: { color: s.direction === 'up' ? '#ef4444' : '#22c55e', lineType: 'solid', width: 2 },
+      points: [{ time: s.start.time, price: s.start.price }, { time: s.end.time, price: s.end.price }],
+    };
+    // 保留盯盘段标记，PC 端可继续作为盯盘段还原
+    if (s._isWatch) {
+      segOut._isWatch = true;
+      if (s._watchSourceId) segOut._watchSourceId = s._watchSourceId;
+    }
+    // 保留追踪段标记
+    if (s._isTrack) {
+      segOut._isTrack = true;
+      segOut._trackSourceId = s._trackSourceId || segOut.id;
+    }
+    out.push(segOut);
+  }
+  for (const z of zhongshus) {
+    let zsSegs = (z.segmentIds || []).map((id) => segById[id]).filter(Boolean);
+    let points = [];
+    let zhongshuLines = (z.baseSegmentIds && z.baseSegmentIds.length === 3)
+      ? z.baseSegmentIds
+      : (z.segmentIds || []).slice(0, 3);
+    if (zsSegs.length >= 3) {
+      zsSegs = zsSegs.sort((a, b) => a.start.time - b.start.time);
+      // PC 端要求 _zhongshuLines 必须是原始 3 段；右边界通过 points 体现延伸
+      // 区间直读中枢自带 low/high（= 矩形 points）；不再按构成段端点重算
+      const range = zhongshuRangeLowHigh(z, segById);
+      const first = zsSegs[0];
+      const last = zsSegs[zsSegs.length - 1];
+      if (range) {
+        points = [
+          { time: first.start.time, price: range.high },
+          { time: last.end.time, price: range.low },
+        ];
+      }
+    }
+    out.push({
+      id: z.id, type: 'rect', variant: 'dashed',
+      style: { color: '#f0b429', lineType: 'dotted', width: 2 },
+      points, _isZhongshu: true, _zhongshuLines: zhongshuLines,
+    });
+  }
+  return out;
+}
+
+function barAtOrBefore(bars, sec) {
+  let r = null;
+  for (const b of bars) { if (b.time <= sec) r = b; else break; }
+  return r;
+}
+function barAtOrAfter(bars, sec) {
+  for (const b of bars) if (b.time >= sec) return b;
+  return bars[bars.length - 1] || null;
+}

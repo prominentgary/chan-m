@@ -1,0 +1,1570 @@
+:root {
+  --wx-bg: #f5f5f5;
+  --wx-card: #ffffff;
+  --wx-line: #e6e6e6;
+  --wx-txt: #111111;
+  --wx-muted: #999999;
+  --wx-green: #07c160;
+  --wx-red: #fa5151;
+  --wx-blue: #576b95;
+  --wx-hint: #b2b2b2;
+  --wx-header: #ededed;
+  --wx-tabbar: #f7f7f7;
+  --wx-accent: #f0b429;
+  --wx-red-soft: #fff2f0;
+  --wx-green-soft: #e6f7ff;
+}
+
+/* 黑白模式（默认）：把红涨绿跌相关颜色全部压成黑/灰，避免一眼看出是股票软件 */
+body.mono {
+  --wx-red: #111111;
+  --wx-green: #111111;
+  --wx-red-soft: #f2f2f2;
+  --wx-green-soft: #f2f2f2;
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+html {
+  /* 确保根元素高度覆盖整个视口，为 body min-height:100% 提供参照 */
+  height: 100%;
+  height: 100dvh;
+  /* 禁止水平滚动，防止 fixed 元素或 100vw 元素导致的横向滚动条闪现。
+     用 clip 而非 hidden，避免创建额外格式化上下文导致子元素 position:sticky 失效。 */
+  overflow-x: clip;
+}
+
+body {
+  margin: 0;
+  /* 多层 fallback：vh/svh 兜底，dvh 优先；避免小米等浏览器在页面切换时
+     因 dvh 延迟计算导致 body 高度不足，进而使 fixed 底部元素被裁切。 */
+  min-height: 100vh;
+  min-height: 100svh;
+  min-height: 100dvh;
+  background: var(--wx-bg);
+  color: var(--wx-txt);
+  font: 16px/1.5 -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+  padding-top: env(safe-area-inset-top);
+  padding-right: env(safe-area-inset-right);
+  padding-bottom: calc(56px + env(safe-area-inset-bottom));
+  padding-left: env(safe-area-inset-left);
+  /* 禁止水平滚动，避免水平滚动条闪现导致 tabbar 跳动。
+     用 clip 而非 hidden，避免创建额外格式化上下文导致子元素 position:sticky 失效。 */
+  overflow-x: clip;
+  /* 让整屏（含内容下方的空白区）把横向边缘滑动交给 JS 处理，避免被系统/浏览器吞掉 */
+  touch-action: pan-y;
+  /* 关键：关闭滚动锚定。详情页证券卡片折叠会改变其高度，若开启锚定，浏览器会为保持
+     下方内容稳定而回调整 scrollY，越过折叠阈值后反复横跳 —— 即“强烈抖动”。关闭后折叠
+     不会触发 scrollY 回调整，彻底消除抖动。 */
+  overflow-anchor: none;
+}
+
+/* 软键盘弹起时取消 body 底部占位，配合 JS 把 tabbar 贴住键盘顶部，
+   否则 iOS/Safari 上会出现「底部菜单跑到屏幕中部」的卡顿 */
+body.keyboard-open {
+  padding-bottom: 0 !important;
+}
+
+/* 顶部标题栏（企业微信风格） */
+.wx-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 48px;
+  padding: 0 12px;
+  background: var(--wx-header);
+  border-bottom: 1px solid var(--wx-line);
+}
+.wx-header h1 {
+  font-size: 17px;
+  font-weight: 600;
+  margin: 0;
+  letter-spacing: 0.2px;
+  text-align: center;
+}
+.header-back {
+  position: absolute; left: 8px; top: 50%; transform: translateY(-50%);
+  width: 34px; height: 34px; padding: 0;
+  border: none; background: transparent; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 24px; font-weight: 400; line-height: 1;
+  color: var(--wx-txt);
+}
+.header-back[hidden] { display: none; }
+.header-back:active { opacity: .7; }
+.header-toggle {
+  position: absolute; right: 10px; top: 50%; transform: translateY(-50%);
+  width: 44px; height: 32px; padding: 0;
+  border: none; background: transparent; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+.header-toggle:active { opacity: .7; }
+.theme-clr {
+  font-size: 13px; font-weight: 700; letter-spacing: 0.5px; line-height: 1;
+  color: #111111;
+  border: 1.5px solid currentColor;
+  border-radius: 5px;
+  padding: 3px 6px;
+}
+
+/* 标题栏内搜索框：长按盯盘/行情时出现在「Chan-M」那一行，并同步弹起键盘 */
+.header-search {
+  display: none;
+  flex: 1;
+  min-width: 0;
+  height: 34px;
+  margin: 0 44px 0 8px;
+  padding: 0 14px;
+  border: 1px solid var(--wx-line);
+  border-radius: 17px;
+  background: var(--wx-card);
+  color: var(--wx-txt);
+  font-size: 15px;
+  outline: none;
+  -webkit-appearance: none;
+}
+.header-search::-webkit-search-cancel-button { -webkit-appearance: none; }
+.header-search::placeholder { color: var(--wx-muted); }
+.header-search-close {
+  display: none;
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font-size: 18px;
+  line-height: 1;
+  color: var(--wx-muted);
+  cursor: pointer;
+}
+.header-search-close:active { opacity: .6; }
+.wx-header.search-active .header-title { display: none; }
+.wx-header.search-active .header-toggle { display: none; }
+.wx-header.search-active .header-search { display: block; }
+.wx-header.search-active .header-search-close { display: block; }
+/* 搜索激活时：chrome 内搜索框 */
+.wx-header.search-active { justify-content: flex-start; }
+
+/* 键盘弹起时，尤其是 Android Edge，position:sticky 的输入框聚焦会导致
+   浏览器滚动和 fixed 元素错位。搜索态将 title bar 改为 fixed，不参与滚动。 */
+.wx-header.search-active {
+  position: fixed;
+  top: env(safe-area-inset-top, 0);
+  left: 0;
+  right: 0;
+  z-index: 50;
+}
+/* body 顶上腾出 title bar 的高度，避免被 fixed header 遮挡 */
+body.search-header-fixed {
+  padding-top: calc(48px + env(safe-area-inset-top));
+  /* 搜索态禁用浏览器「从左/右边缘滑出返回/前进」手势（Android Edge/Chrome）。
+     该手势在 touchstart 阶段就被系统接管，仅靠 touchmove 的 preventDefault 拦不住，
+     必须用 overscroll-behavior 关掉滚动导航，否则第二次边缘滑动会直接退出网页。 */
+  overscroll-behavior-x: none;
+}
+
+/* 搜索态左右边缘守卫：touch-action:none 在 touchstart 阶段即屏蔽系统边缘返回/前进手势
+   （与弹窗 backdrop 的防护机制一致），避免 iOS Safari 等环境下边缘滑动直接退出程序。
+   仅覆盖屏幕左右各 32px（与 gesture.js 的 EDGE 区对齐），不影响中间内容滚动与点击。 */
+.search-edge-guard {
+  position: fixed;
+  top: 0; bottom: 0;
+  width: 32px;
+  z-index: 49;            /* 低于标题栏(50)，高于内容与 tabbar(20)，确保仅拦截边缘 */
+  background: transparent;
+  touch-action: none;
+  overscroll-behavior-x: none;
+  display: none;
+}
+.search-edge-guard.left { left: 0; }
+.search-edge-guard.right { right: 0; }
+body.search-header-fixed .search-edge-guard { display: block; }
+
+/* 主菜单长按不进入文字选中模式 */
+.wx-tabbar, .wx-tabbar .wx-tab, .wx-tabbar .wx-tab * {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+/* 行情页：A 股搜索结果 */
+.hg-search-results { padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+.hg-search-results[hidden] { display: none; }
+.hg-tip { color: var(--wx-muted); font-size: 13px; text-align: center; padding: 24px 0; }
+.hg-result {
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--wx-card); border: 1px solid var(--wx-line); border-radius: 10px;
+  padding: 12px 14px;
+}
+.hg-result-info { display: flex; flex-direction: column; gap: 2px; overflow: hidden; }
+.hg-result-name { font-size: 15px; color: var(--wx-txt); }
+.hg-result-code { font-size: 12px; color: var(--wx-muted); }
+.hg-add-btn {
+  flex: none; height: 32px; padding: 0 16px; border: none; border-radius: 16px;
+  background: var(--wx-accent); color: #fff; font-size: 13px;
+}
+.hg-add-btn:disabled { opacity: .5; }
+
+/* 轻提示 toast */
+.chanm-toast {
+  position: fixed; left: 50%; bottom: calc(76px + env(safe-area-inset-bottom));
+  transform: translateX(-50%) translateY(10px);
+  background: rgba(0,0,0,.82); color: #fff; font-size: 13px;
+  padding: 10px 16px; border-radius: 20px; z-index: 90;
+  opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s;
+  max-width: 80vw; text-align: center;
+}
+.chanm-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* 概览 */
+.wx-overview {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  padding: 0 12px 10px; font-size: 13px; color: var(--wx-muted);
+}
+.wx-overview span {
+  background: #fff; padding: 4px 10px; border-radius: 12px;
+  border: 1px solid var(--wx-line);
+}
+#rt-price { color: var(--wx-green); font-weight: 500; }
+
+/* 快捷操作 */
+.wx-actions {
+  display: flex; gap: 8px; padding: 0 12px 10px; overflow-x: auto;
+}
+.wx-actions button {
+  flex: 1; min-width: 64px; height: 36px;
+  border: 1px solid var(--wx-line); border-radius: 6px;
+  background: #fff; color: var(--wx-txt);
+  font-size: 14px; white-space: nowrap;
+}
+.wx-actions button:active { background: #f2f2f2; }
+
+/* 列表 */
+.wx-list { padding: 14px 12px 12px; display: flex; flex-direction: column; gap: 10px; overflow-anchor: none; }
+
+/* 中枢分组（加强区分：橙色描边 + 琥珀色标题栏） */
+.zs-block {
+  position: relative;
+  background: transparent; border-radius: 12px; overflow: hidden;
+  border: 1px solid #ffd591; border-left: 4px solid var(--wx-accent);
+  box-shadow: 0 2px 6px rgba(250,140,22,.14);
+  margin-bottom: 10px;
+}
+.zs-title {
+  font-size: 13px; color: #ad6800; font-weight: 600;
+  padding: 10px 14px; background: #fff7e6; border-bottom: 1px solid #ffe7ba;
+  display: flex; align-items: center; gap: 6px;
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+  flex-wrap: wrap;
+}
+.zs-price-info {
+  font-size: 11px; font-weight: 400; color: #8b6914;
+  white-space: nowrap;
+}
+.zs-title.plain { background: transparent; border: none; padding: 0 14px; }
+.zs-title-right { margin-left: auto; font-weight: 400; font-size: 11px; color: #8b6914; white-space: nowrap; }
+.zs-title-right.muted { color: #bfbfbf; }
+
+/* 周期详情内的中枢分组需要白底（外层 #period-detail 已无白色背景） */
+#period-detail .zs-block { background: var(--wx-card); }
+
+/* 中枢编辑态：边缘高亮、提示文字 */
+.zs-block.editing {
+  overflow: visible;
+  border-color: var(--wx-accent);
+  box-shadow: 0 0 0 2px rgba(240, 180, 41, .35), 0 4px 12px rgba(250, 140, 22, .18);
+  z-index: 2;
+}
+/* 中枢上下边缘拖动区 */
+.zs-edge {
+  position: absolute;
+  left: 0; right: 0;
+  height: 32px;
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+  z-index: 6;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  cursor: ns-resize;
+  touch-action: none;
+  pointer-events: auto;
+}
+.zs-edge::after {
+  content: '';
+  width: 48px; height: 6px;
+  border-radius: 3px;
+  background: var(--wx-accent);
+  box-shadow: 0 1px 4px rgba(0,0,0,.15);
+  opacity: .75;
+  transition: opacity .15s ease, width .15s ease;
+}
+.zs-edge-top { top: -16px; }
+.zs-edge-bottom { bottom: -16px; }
+.zs-block.editing .zs-edge { display: flex; }
+
+/* 中枢编辑态解散按钮 */
+.zs-edit-close {
+  margin-left: auto;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .92);
+  color: #ad6800;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0,0,0,.10);
+}
+.zs-edit-close svg {
+  width: 12px;
+  height: 12px;
+}
+.zs-block.editing .zs-edit-close { display: inline-flex; }
+.zs-edit-close:active { background: #fff0d6; }
+.zs-block.editing .zs-edge::after {
+  animation: zs-edge-pulse 1.6s ease-in-out infinite;
+}
+@keyframes zs-edge-pulse {
+  0%, 100% { opacity: .75; transform: scaleX(1); }
+  50% { opacity: 1; transform: scaleX(1.18); }
+}
+.zs-edge.dragging { background: rgba(240, 180, 41, .14); }
+.zs-edge.dragging::after { opacity: 1; width: 62px; animation: none; }
+.zs-drag-badge {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 10px;
+  background: var(--wx-accent);
+  color: #fff;
+  border-radius: 999px;
+  white-space: nowrap;
+  z-index: 10;
+  pointer-events: none;
+  box-shadow: 0 2px 8px rgba(0,0,0,.15);
+}
+.zs-edge-top .zs-drag-badge { bottom: 36px; }
+.zs-edge-bottom .zs-drag-badge { top: 36px; }
+
+/* 中枢编辑纳入/剔除预览 */
+.card.zs-preview-include {
+  box-shadow: 0 0 0 2px var(--wx-accent), 0 3px 10px rgba(240, 180, 41, .18);
+  transform: scale(1.01);
+}
+.card.zs-preview-exclude {
+  opacity: .42;
+}
+
+/* 段卡片（企业微信会话项风格） */
+.card {
+  position: relative;
+  transition: opacity .2s ease, box-shadow .2s ease, transform .2s ease;
+  background: var(--wx-card); padding: 12px 14px;
+  border-bottom: 1px solid var(--wx-line);
+  display: flex; flex-wrap: wrap; align-items: flex-start;
+  /* 横向间距给段号↔正文；行间距必须为 0 —— 行内 K 线收起时高度为 0 的第二行 flex 行
+     若保留 row-gap 会在每张卡片底部多出 12px 空隙 */
+  column-gap: 12px;
+  row-gap: 0;
+  /* 长按卡片弹出操作按钮：禁用文本选择/系统菜单，避免按到文字数字时触发原生选区而吞掉长按 */
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+}
+.card:last-child { border-bottom: none; }
+
+/* 普通段：独立卡片，互不相连（与中枢打包形成对比） */
+.plain-card {
+  border-bottom: none;
+  border-radius: 12px;
+  border: 1px solid var(--wx-line);
+  box-shadow: 0 1px 2px rgba(0,0,0,.04);
+  margin-bottom: 10px;
+  background: var(--wx-card);
+}
+
+/* 盯盘段卡片标记 */
+.watch-card { position: relative; }
+.track-card { position: relative; }
+.watch-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  color: var(--wx-accent);
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+  pointer-events: none;
+}
+.watch-badge svg { display: block; }
+.track-badge {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  color: var(--wx-accent);
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+  pointer-events: none;
+}
+.track-badge svg { display: block; }
+
+.card-avatar-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 6px;
+}
+.watch-ring {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.watch-ring svg {
+  display: block;
+  width: 32px;
+  height: 32px;
+  transform: rotate(-90deg);
+}
+.watch-ring-dur {
+  font-size: 10px;
+  line-height: 1;
+  font-weight: 600;
+  color: var(--wx-muted);
+  white-space: nowrap;
+}
+.watch-ring-dur.is-full {
+  color: var(--wx-accent);
+}
+.watch-ring-track {
+  fill: none;
+  stroke: var(--wx-line);
+  stroke-width: 3;
+}
+.watch-ring-fill {
+  fill: none;
+  stroke: var(--wx-accent);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+.track-ring-fill {
+  fill: none;
+  stroke: var(--wx-accent);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+
+.card-avatar {
+  width: 44px; height: 44px; border-radius: 8px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  color: #fff; font-weight: 700; font-size: 16px;
+  background: var(--wx-green);
+}
+.card-body { flex: 1; min-width: 0; }
+.card-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 6px; gap: 8px;
+}
+.card-name {
+  font-size: 16px; font-weight: 500; color: var(--wx-txt);
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+.card-meta {
+  font-size: 12px; color: var(--wx-muted); white-space: nowrap;
+}
+.card-desc {
+  font-size: 14px; color: var(--wx-muted); line-height: 1.6;
+  margin-bottom: 4px;
+}
+
+.dir { font-size: 14px; font-weight: 500; }
+.pct { font-size: 14px; font-weight: 500; }
+.badge {
+  font-size: 11px; padding: 2px 8px; border-radius: 999px; font-weight: 500;
+  display: inline-block; margin-left: 4px;
+}
+.badge-warn { background: #fff2f0; color: var(--wx-red); border: 1px solid #ffccc7; }
+.badge-info { background: #e6f7ff; color: var(--wx-blue); border: 1px solid #bae7ff; }
+
+.card-foot {
+  display: flex; gap: 14px; margin-top: 8px;
+}
+.metric { flex: 1; display: flex; align-items: center; gap: 8px; min-width: 0; }
+.metric .bar { flex: 1; min-width: 0; }
+.metric-val { font-size: 12px; color: var(--wx-muted); white-space: nowrap; }
+.bar { width: 100%; height: 6px; background: #e6e6e6; border-radius: 999px; overflow: hidden; }
+.bar-fill { height: 100%; border-radius: 999px; }
+
+/* 段卡片长按蒙板 */
+.card-overlay {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: rgba(255, 255, 255, 0.42);
+  backdrop-filter: blur(14px) saturate(140%);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 0 14px;
+  z-index: 5;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+}
+.card-overlay.show { opacity: 1; pointer-events: auto; }
+.overlay-btn {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: var(--wx-card);
+  border: 1px solid var(--wx-line);
+  box-shadow: 0 2px 8px rgba(0,0,0,0.10);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--wx-txt);
+  cursor: pointer;
+}
+.overlay-btn.icon svg { fill: none; }
+.overlay-btn:active { background: #f2f2f2; }
+.overlay-btn.danger { color: var(--wx-red); }
+.overlay-btn.accent { color: var(--wx-accent); }
+.overlay-btn.ok { color: var(--wx-green); }
+/* 段号条长按菜单：与长按段卡片同款按钮组，弹在段号条下方。
+   fixed 挂 body，避免被周期行的 overflow:hidden 裁剪；按钮多时自动换行。 */
+.card-overlay.nav-overlay {
+  position: fixed;
+  inset: auto;
+  z-index: 45;
+  flex-wrap: wrap;
+  padding: 10px 14px;
+  max-width: calc(100vw - 16px);
+  background: var(--wx-card);
+  border: 1px solid var(--wx-line);
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+/* 长按菜单左侧的段号标识：与段号条同款配色，让用户确认是哪一个段号的菜单；
+   尺寸与同排的 .overlay-btn 圆形按钮保持一致（42px），视觉更和谐 */
+.nav-overlay-no {
+  flex: 0 0 auto;
+  align-self: center;
+  min-width: 42px;
+  height: 42px;
+  padding: 0 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--wx-accent);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.icon-btn {
+  background: none; border: none; padding: 4px;
+  display: flex; align-items: center; justify-content: center;
+  color: #000;
+}
+.icon-btn svg { fill: none; }
+.icon-btn.danger { color: #fa5151; }
+
+.mini {
+  padding: 5px 12px; border-radius: 4px; border: 1px solid var(--wx-line);
+  background: #fff; color: var(--wx-txt); font-size: 13px;
+}
+.mini:active { background: #f2f2f2; }
+.mini.danger { color: var(--wx-red); border-color: #ffccc7; }
+
+.point-row {
+  display: flex; align-items: center; gap: 8px;
+}
+.point-label {
+  width: 32px; color: var(--wx-muted); flex-shrink: 0;
+}
+.point-price {
+  margin-left: auto; color: var(--wx-muted); font-weight: 500;
+}
+
+.empty { color: var(--wx-muted); text-align: center; padding: 50px 0; font-size: 14px; }
+.empty.loading { animation: chanm-pulse 1s ease-in-out infinite; }
+@keyframes chanm-pulse { 0%,100% { opacity: .35; } 50% { opacity: 1; } }
+
+/* 加载界面诗句（替代原「暂无画线数据」提示） */
+.poem-screen {
+  display: flex;
+  flex-direction: column;
+  gap: 28px;
+  padding: 44px 24px;
+  color: var(--wx-text);
+}
+.poem-head {
+  font-size: 13px;
+  color: var(--wx-muted);
+  margin-bottom: 10px;
+  letter-spacing: 0.5px;
+  text-align: center;
+}
+.poem-body {
+  font-size: 15px;
+  line-height: 2;
+  text-align: center;
+}
+.poem-body p { margin: 0; }
+.poem-err {
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--wx-err, #e8743b);
+}
+
+/* 底部 tabbar */
+.wx-tabbar {
+  position: fixed; left: 0; right: 0;
+  /* bottom 优先贴住安全区上沿：MIUI/小米浏览器在页面切换时，env() 可能
+     在 1~2 秒内从 0 跳变到正确值，以此避免 fixed 元素被系统手势条遮挡。
+     若浏览器不支持 env() 则回退到 0。 */
+  bottom: env(safe-area-inset-bottom, 0);
+  display: flex; justify-content: space-around; align-items: center;
+  height: 56px;
+  /* 使用 left/right:0 控制宽度，避免 100vw 导致的滚动条宽度计算问题 */
+  background: var(--wx-tabbar); border-top: 1px solid var(--wx-line);
+  z-index: 20;
+  /* 提升为合成层，避免 iOS Safari 在底部工具栏显隐/页面切换时重绘抖动 */
+  transform: translateZ(0);
+  -webkit-transform: translateZ(0);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  /* 禁止 tabbar 自身产生滚动条（overflow-x:hidden 在某些桌面浏览器会隐式打开 y 轴滚动） */
+  overflow: hidden;
+  /* 防止某些浏览器把 fixed 元素当作 body overflow-x:hidden 的子元素进行裁切 */
+  will-change: transform;
+  /* 初始隐藏：等 JS 校准完视口位置后再显示，避免首屏位置跳动/溢出 */
+  opacity: 0;
+  visibility: hidden;
+  /* 位置变化时平滑过渡，避免 visualViewport 变化时生硬跳动 */
+  transition: transform .2s ease-out, opacity .15s ease-out, visibility .15s ease-out;
+}
+/* JS 校准完成后添加，使 tabbar 平滑显现 */
+.wx-tabbar.ready {
+  opacity: 1;
+  visibility: visible;
+}
+/* 安全区填充与 tabbar 主体分离：env() 抖动时只影响 ::after 高度，
+   tabbar 内容（图标/文字）位置和高度保持不变，避免"溢出"或跳动。
+   当 bottom 已经等于 safe-area-inset-bottom 时，::after 继续向下延伸
+   覆盖手势条区域，保证视觉连贯。 */
+.wx-tabbar::after {
+  content: '';
+  position: absolute;
+  top: 100%;
+  left: 0; right: 0;
+  height: env(safe-area-inset-bottom);
+  background: var(--wx-tabbar);
+  pointer-events: none;
+}
+.wx-tab {
+  flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  height: 56px; min-height: 56px;
+  color: var(--wx-muted); font-size: 10px; gap: 3px;
+}
+.wx-tab .icon {
+  width: 24px; height: 24px; display: block;
+}
+.wx-tab.active { color: var(--wx-accent); }
+.wx-tab:active { opacity: .7; }
+
+/* 弹窗 */
+.modal-mask {
+  display: none; position: fixed; inset: 0; background: rgba(0,0,0,.45);
+  align-items: center; justify-content: center; z-index: 50; padding: 16px;
+}
+.modal {
+  background: var(--wx-card); border-radius: 16px; padding: 18px;
+  width: 100%; max-width: 340px; box-shadow: 0 10px 30px rgba(0,0,0,.15);
+}
+.modal h3 { margin: 0 0 18px; font-size: 18px; font-weight: 600; text-align: center; }
+.modal label { display: block; font-size: 13px; color: var(--wx-muted); margin-bottom: 14px; }
+.modal input {
+  width: 100%; margin-top: 6px; padding: 11px; font-size: 15px;
+  border-radius: 8px; border: 1px solid var(--wx-line); background: #fafafa; color: var(--wx-txt);
+}
+.modal input.locked {
+  background: #f0f0f0; color: #b0b0b0; cursor: not-allowed;
+  border-style: dashed;
+}
+.modal .locked-hint { font-size: 11px; color: var(--wx-muted); margin: -8px 0 14px; }
+.modal-actions { display: flex; gap: 10px; margin-top: 4px; }
+.modal-actions .mini,
+.modal-actions .primary { flex: 1; padding: 10px 16px; border-radius: 6px; text-align: center; font-size: 15px; }
+.modal-actions .primary { background: var(--wx-accent); color: #fff; border: none; font-weight: 500; }
+.modal-actions .primary:active { opacity: .85; }
+
+/* 搜索栏提示 */
+.search-hint { font-size: 12px; color: var(--wx-muted); }
+
+/* 行情视图 */
+.index-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  padding: 12px;
+}
+.index-card {
+  background: var(--wx-card);
+  border: 1px solid var(--wx-line);
+  border-radius: 12px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 150px;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+  box-shadow: 0 1px 2px rgba(0,0,0,.04);
+}
+.index-card-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.index-code-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.index-name { font-size: 15px; font-weight: 600; color: var(--wx-txt); }
+.index-code {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .2px;
+  color: var(--wx-muted);
+  white-space: nowrap;
+}
+.index-card-price { display: flex; align-items: flex-end; }
+.index-price { font-size: 26px; font-weight: 700; color: var(--wx-txt); line-height: 1; }
+.index-change { font-size: 12px; font-weight: 500; color: var(--wx-muted); }
+.index-change.up { color: var(--wx-red); }
+.index-change.down { color: var(--wx-green); }
+.index-card-chart {
+  flex: 1;
+  min-height: 56px;
+  width: 100%;
+  margin-top: 2px;
+}
+.index-intraday {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* 行情页自定义卡片 — 长按删除 */
+.index-card.custom {
+  position: relative;
+}
+.index-card.custom.editing {
+  border-color: var(--wx-red);
+  box-shadow: 0 0 0 1.5px rgba(250, 81, 81, .35);
+}
+.index-delete-btn {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 5;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(250, 81, 81, .12);
+  color: var(--wx-red);
+  font-size: 16px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.index-delete-btn:active {
+  background: rgba(250, 81, 81, .25);
+}
+.index-delete-btn[hidden] {
+  display: none;
+}
+
+/* 编辑视图 */
+.bianji-content { padding: 12px; }
+.bianji-content h3 { font-size: 15px; font-weight: 600; margin: 16px 0 8px; color: var(--wx-txt); }
+.bianji-content h3:first-child { margin-top: 0; }
+
+/* 重试按钮 */
+.retry-btn { font-size: 11px; padding: 2px 8px; margin-left: 8px; }
+
+/* 证券卡片（accordion） */
+.sec-card {
+  background: var(--wx-card); border-radius: 12px; overflow: hidden;
+  border: 1px solid var(--wx-line); box-shadow: 0 1px 2px rgba(0,0,0,.04);
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+}
+.sec-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px; cursor: pointer;
+  transition: padding .18s ease;
+}
+.sec-head:active { background: #f7f7f7; }
+.sec-info { display: flex; flex-direction: column; gap: 2px; transition: gap .18s ease, opacity .18s ease; }
+.sec-name { font-size: 17px; font-weight: 600; color: var(--wx-txt); transition: font-size .18s ease, opacity .18s ease; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sec-meta { font-size: 14px; color: var(--wx-muted); transition: font-size .18s ease, opacity .18s ease; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.preset-dot { margin: 0 4px; color: var(--wx-muted); }
+.sec-right { display: flex; align-items: center; gap: 10px; }
+.sec-quote { text-align: right; line-height: 1.35; }
+.sec-price { font-size: 17px; font-weight: 600; color: var(--wx-txt); transition: font-size .18s ease; }
+.sec-change { font-size: 14px; font-weight: 500; color: var(--wx-muted); transition: font-size .18s ease; }
+.sec-change.up { color: var(--wx-red); }
+.sec-change.down { color: var(--wx-green); }
+.sec-arrow { font-size: 14px; color: var(--wx-muted); transition: transform .18s ease; }
+.sec-detail { border-top: 1px solid var(--wx-line); padding: 8px 10px 10px; }
+.sec-intraday {
+  border-top: 1px solid transparent;
+  padding: 0 14px;
+  height: 0;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: height .28s ease, padding .28s ease, border-color .28s ease;
+}
+.sec-intraday.expanded {
+  border-top-color: transparent;
+  padding-top: 8px;
+  padding-bottom: 10px;
+  height: 150px;
+}
+/* 展开分时图时压缩证券卡片信息行，把第二行信息并入第一行（带动画） */
+.sec-card.intraday-expanded .sec-head { padding: 10px 14px; }
+.sec-card.intraday-expanded .sec-info { flex-direction: row; align-items: baseline; flex-wrap: wrap; gap: 8px; }
+.sec-card.intraday-expanded .sec-name { flex: 0 0 auto; font-size: 16px; }
+.sec-card.intraday-expanded .sec-meta { flex: 0 0 auto; font-size: 13px; }
+.sec-card.intraday-expanded .sec-quote { display: flex; align-items: baseline; gap: 8px; }
+.sec-card.intraday-expanded .sec-price { font-size: 16px; }
+.sec-card.intraday-expanded .sec-change { font-size: 13px; }
+
+.sec-intraday canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  transition: opacity .22s ease;
+}
+.sec-intraday.expanded canvas {
+  opacity: 1;
+}
+
+/* 详情页证券卡片展开：该周期 K 线图（主图 + 副图，替代分时图） */
+.sec-intraday.sec-kline {
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+}
+.sec-intraday.sec-kline.expanded {
+  height: 340px;
+}
+.sec-intraday.sec-kline canvas { height: auto; }
+.sec-intraday.sec-kline canvas:nth-child(1) { height: 220px; }
+.sec-intraday.sec-kline canvas:nth-child(2) { height: 96px; }
+/* 十字态下锁定触摸，避免拖动十字时页面滚动 */
+.sec-kline.kline-cross-lock canvas { touch-action: none; }
+
+/* 详情页/周期列表页顶部证券卡片：吸顶；下滚后折叠为单行 */
+.sec-card--detail,
+.sec-card--periods {
+  position: sticky;
+  top: 48px;          /* 紧贴顶部标题栏下方 */
+  z-index: 9;
+  margin-bottom: 0;
+  box-shadow: 0 1px 4px rgba(0,0,0,.06);
+  /* 折叠过渡更顺滑（高度随内边距/字号变化而平滑收起，下方内容跟随，无跳变） */
+  transition: box-shadow .18s ease;
+}
+/* 图表（K线/分时图）展开时：卡片不吸顶，跟随页面自然滚动，展板保持完整 */
+.sec-card--detail.intraday-expanded,
+.sec-card--periods.intraday-expanded {
+  position: relative;
+  top: auto;
+}
+
+/* 段号条：K 线展开时显示在卡片下方；跟手滑动取消/恢复选中段，右端固定 */
+.sec-segnav {
+  display: flex; gap: 6px; align-items: stretch;
+  padding: 8px 14px; margin-bottom: 10px;
+  background: var(--wx-card); border: 1px solid var(--wx-line); border-radius: 10px;
+  touch-action: pan-y; /* 水平滑动手势由 JS 处理，纵向滚动交给页面 */
+  user-select: none; -webkit-user-select: none;
+  position: relative; /* 中枢标记框（.sec-zs-frame）的绝对定位基准 */
+}
+.sec-segnav[hidden] { display: none; }
+/* 段号均分占满整行（flex:1 等宽拉伸），右侧不留空白 */
+.sec-segnum {
+  flex: 1 1 0; min-width: 0;
+  text-align: center;
+  font-size: 12px; line-height: 26px; /* 行高决定按钮高度，加高便于点按 */
+  color: #fff; background: var(--wx-accent); /* 主题色底白字，与全局主题色按钮一致 */
+  border: 1px solid var(--wx-accent); border-radius: 6px;
+  transition: color .15s ease, background .15s ease, border-color .15s ease;
+}
+/* 段数较多时缩小字号，仍保持一行均分 */
+.sec-segnav.dense .sec-segnum { font-size: 10px; line-height: 24px; }
+/* 段数超过一行 8 个时换行：每行固定 8 个宽度（42px = 7 个 gap 6px），
+   第二行及以后按钮宽度与第一行一致，不因数量少而被拉伸。
+   换行后接管纵向手势（touch-action: none）做快速缩放，单行时保持 pan-y 不影响页面滚动。
+   行间距单独加大到 12px（列间距保持 6px）：中枢标记框上下各外扩 3px，6px 行距会让
+   相邻两行的框贴在一起；纵向缩放的「行步长」由 JS 实测 offsetTop 得出，自动跟随此值 */
+.sec-segnav.wrap { flex-wrap: wrap; touch-action: none; row-gap: 12px; }
+.sec-segnav.wrap .sec-segnum { flex: 0 0 calc((100% - 42px) / 8 - 0.5px); } /* 减 0.5px 余量，避免 sub-pixel 舍入导致每行不足 8 个 */
+/* 已取消选中的段号：置灰（不加删除线），图上同步隐藏该段及更早段 */
+.sec-segnum.off {
+  color: var(--wx-muted); background: transparent; border-color: var(--wx-line);
+}
+/* 段号条上的中枢标记：把构成同一中枢的连续段号用主题色圆角框圈在一起
+   （JS 按段号实测几何定位；外扩 3px 落在段号间隙里，不遮相邻段号、不参与布局） */
+.sec-zs-frame {
+  position: absolute;
+  border: 2px solid var(--wx-accent);
+  border-radius: 8px;
+  box-sizing: border-box;
+  background: rgba(240, 180, 41, 0.10);
+  pointer-events: none;
+  z-index: 1;
+}
+/* 中枢段跨行被拆到上一行/下一行时，靠行尾/行首的一侧不封口（开口边颜色透明、
+   圆角取消），表示这段与另一行的框属于同一个中枢；上下边框保留，仍把该段圈住 */
+.sec-zs-frame.open-l {
+  border-left-color: transparent;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+.sec-zs-frame.open-r {
+  border-right-color: transparent;
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+}
+.sec-card--detail .sec-head, .sec-card--periods .sec-head,
+.sec-card--detail .sec-info, .sec-card--periods .sec-info,
+.sec-card--detail .sec-name, .sec-card--periods .sec-name,
+.sec-card--detail .sec-meta, .sec-card--periods .sec-meta,
+.sec-card--detail .sec-quote, .sec-card--periods .sec-quote,
+.sec-card--detail .sec-price, .sec-card--periods .sec-price,
+.sec-card--detail .sec-change, .sec-card--periods .sec-change {
+  transition: padding .18s ease, font-size .18s ease, gap .18s ease, flex-basis .18s ease;
+}
+.sec-card--detail.sec-card--collapsed .sec-head,
+.sec-card--periods.sec-card--collapsed .sec-head { padding: 8px 14px; }
+.sec-card--detail.sec-card--collapsed .sec-info,
+.sec-card--periods.sec-card--collapsed .sec-info { flex-direction: row; align-items: baseline; flex-wrap: wrap; gap: 8px; }
+.sec-card--detail.sec-card--collapsed .sec-name,
+.sec-card--periods.sec-card--collapsed .sec-name { flex: 0 0 auto; font-size: 16px; }
+.sec-card--detail.sec-card--collapsed .sec-meta,
+.sec-card--periods.sec-card--collapsed .sec-meta { flex: 0 0 auto; font-size: 13px; }
+.sec-card--detail.sec-card--collapsed .sec-quote,
+.sec-card--periods.sec-card--collapsed .sec-quote { display: flex; align-items: baseline; gap: 8px; }
+.sec-card--detail.sec-card--collapsed .sec-price,
+.sec-card--periods.sec-card--collapsed .sec-price { font-size: 16px; }
+.sec-card--detail.sec-card--collapsed .sec-change,
+.sec-card--periods.sec-card--collapsed .sec-change { font-size: 13px; }
+
+/* 周期分组块 */
+.period-block {
+  margin-bottom: 10px; border: 1px solid var(--wx-line); border-radius: 10px;
+  overflow: hidden; background: var(--wx-card);
+}
+.period-block:last-child { margin-bottom: 0; }
+.period-title {
+  font-size: 13px; font-weight: 600; color: var(--wx-blue);
+  padding: 0 2px 10px; background: transparent; border: none;
+}
+
+/* 导航返回 */
+.nav-back {
+  padding: 12px 14px;
+  font-size: 14px;
+  color: var(--wx-blue);
+  background: var(--wx-card);
+  border: 1px solid var(--wx-line);
+  border-radius: 12px;
+  margin-bottom: 10px;
+  cursor: pointer;
+}
+.nav-back:active { background: #f7f7f7; }
+.nav-back-bottom {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: calc(56px + env(safe-area-inset-bottom) + 10px);
+  z-index: 30;
+  margin-bottom: 0;
+  box-shadow: 0 2px 8px rgba(0,0,0,.08);
+}
+
+/* 左滑返回手势：内容随手指右移，提起时关闭过渡以跟手 */
+#sec-list { touch-action: pan-y; }
+#sec-list.swiping { transition: none !important; }
+/* 保证主内容区撑满视口，使周期列表页底部空白处也能识别方案左右滑手势 */
+#sec-list {
+  min-height: calc(100dvh - 48px - 58px - env(safe-area-inset-top));
+}
+
+/* 卡片进场动画：自上而下依次右移淡入 */
+.anim-item {
+  transition: transform .30s cubic-bezier(.22,.61,.36,1), opacity .30s ease;
+  will-change: transform, opacity;
+}
+.anim-item.in-start { transform: translateX(28px); opacity: 0; }
+.anim-item.out { transform: translateX(110%); opacity: 0; }
+
+/* 周期列表（底部为固定的方案指示器预留空间，滚到底时尾部内容不被遮挡） */
+.period-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-bottom: 40px;
+  flex: 1;
+}
+.period-row {
+  background: var(--wx-card);
+  border: 1px solid var(--wx-line);
+  border-radius: 12px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  cursor: pointer;
+  user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+}
+.period-row-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px;
+  transition: padding .18s ease;
+}
+.period-row:not(.period-row--dual) .period-row-head:active { background: #f7f7f7; }
+.period-row-info { display: flex; flex-direction: column; gap: 2px; transition: gap .18s ease; }
+.period-row-name { font-size: 16px; font-weight: 600; color: var(--wx-txt); transition: font-size .18s ease; }
+.period-row-meta { font-size: 13px; color: var(--wx-muted); transition: font-size .18s ease; }
+.period-row-tag {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 4px;
+  margin-left: 6px;
+  vertical-align: middle;
+  line-height: 1.4;
+}
+.period-row-tag.a0 { color: #fff; background: var(--wx-accent); }
+.period-row-tag.track { color: var(--wx-blue); background: #eef2ff; border: 1px solid var(--wx-blue); }
+
+/* 长按周期行展开的行内 K 线（可多行同时展开；展开时行头收窄为单行） */
+.period-row-kline {
+  position: relative;
+  height: 0;
+  overflow: hidden;
+  transition: height .28s ease;
+}
+.period-row.expanded .period-row-kline {
+  height: 316px;
+  border-top: 1px solid var(--wx-line);
+}
+.period-row-kline canvas { display: block; width: 100%; }
+.period-row-kline .period-kline-main { height: 220px; }
+.period-row-kline .period-kline-sub { height: 96px; }
+
+/* 十字态锁定 touch，避免拖动十字时页面跟着滚动 */
+.period-row-kline.cross-lock canvas { touch-action: none; }
+/* 展开时行头收窄：两行信息并入一行（带动画），腾出空间给 K 线；
+   同时给出选中效果（浅底 + 主题色下划线 + 名称主题色），与合并行激活半区一致 */
+.period-row.expanded:not(.period-row--dual) .period-row-head {
+  padding: 10px 14px;
+  background: var(--wx-bg);
+  box-shadow: inset 0 -2px 0 var(--wx-accent);
+}
+.period-row.expanded:not(.period-row--dual) .period-row-name { color: var(--wx-accent); }
+/* 展开态按下时的反馈（比展开底色略深），避免展开背景覆盖常规 :active 效果 */
+.period-row.expanded:not(.period-row--dual) .period-row-head:active { background: #ededed; }
+.period-row.expanded .period-row-info { flex-direction: row; align-items: baseline; flex-wrap: wrap; gap: 8px; }
+.period-row.expanded .period-row-name { flex: 0 0 auto; font-size: 15px; }
+.period-row.expanded .period-row-meta { flex: 0 0 auto; font-size: 12px; }
+.period-row.expanded:not(.period-row--dual) .sec-arrow { transform: rotate(90deg); }
+/* 行内段号条：与详情页 .sec-segnav 同款（横向跟手取消/恢复选中段），仅展开时显示 */
+.period-row-segnav { margin: 10px 14px; }
+.period-row:not(.expanded) .period-row-segnav { display: none; }
+
+/* 周期合并行（5m|15m、30m|60m）：左右两半各占一半，共用下方同一条 K 线区；
+   长按哪半展开哪个周期的图（主/辅 K 线不同时出现），展开中非当前半区淡出提示归属 */
+.period-row--dual .period-row-head { padding: 0; gap: 0; align-items: stretch; }
+.period-half {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 14px;
+  transition: padding .18s ease, opacity .18s ease;
+}
+.period-half + .period-half { border-left: 1px solid var(--wx-line); }
+.period-half:active { background: #f7f7f7; }
+.period-half .period-row-name { white-space: nowrap; }
+.period-half .sec-arrow { flex: 0 0 auto; }
+.period-row--dual.expanded .period-half { padding: 10px 14px; }
+.period-row--dual.expanded .period-half:not(.active) { opacity: .45; }
+.period-row--dual.expanded .period-half:active { background: #ededed; }
+/* 当前展开的半区：浅底 + 主题色下划线 + 名称主题色，与淡出的另一半形成强对比 */
+.period-row--dual.expanded .period-half.active {
+  background: var(--wx-bg);
+  box-shadow: inset 0 -2px 0 var(--wx-accent);
+}
+.period-row--dual.expanded .period-half.active .period-row-name { color: var(--wx-accent); }
+.period-row--dual.expanded .period-half.active .sec-arrow { transform: rotate(90deg); }
+/* 合并行展开时同样收窄为单行：沿用上面的横向信息布局（名称与 段/中枢 并排），
+   半区过窄时由全局规则的 flex-wrap: wrap 自动换行兜底 */
+
+/* 周期详情：外层无大卡片，内部用 margin 控制卡片间距 */
+#period-detail {
+  display: flex;
+  flex-direction: column;
+  padding-top: 0;
+  padding-bottom: 64px;
+}
+
+/* 周期列表页方案指示器：固定在底部 tabbar 上方、始终可见（不随内容滚动），
+   自带底色与分隔线形成独立信息条，不再像浮层一样压在卡片/K 线文字上。
+   选中方案用主题色强调圆点在左，方案名紧随强调圆点右侧，同处一行。 */
+.preset-indicator {
+  position: fixed;
+  left: 0; right: 0;
+  bottom: calc(56px + env(safe-area-inset-bottom));
+  z-index: 19;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--wx-bg);
+  border-top: 1px solid var(--wx-line);
+  pointer-events: none;
+}
+.preset-indicator-dots {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.preset-ind-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--wx-line);
+  transition: transform .15s ease, background .15s ease;
+}
+.preset-ind-dot.active {
+  background: var(--wx-accent);
+  transform: scale(1.25);
+}
+/* 方案名称：紧跟选中（主题色）圆点右侧，不再单独占一行 */
+.preset-ind-name {
+  font-size: 12px;
+  line-height: 1;
+  color: var(--wx-muted);
+  white-space: nowrap;
+}
+
+/* ========== 提醒功能 ========== */
+.sec-alert-dot {
+  display: inline-block;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--wx-accent);
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+.alert-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 16px 10px;
+  background: var(--wx-bg);
+  position: sticky; top: 0; z-index: 5;
+}
+.alert-title { font-size: 17px; font-weight: 600; color: var(--wx-txt); }
+.alert-stats { display: flex; gap: 8px; }
+.alert-stat {
+  font-size: 12px; padding: 3px 8px; border-radius: 10px;
+}
+.alert-stat.active { background: rgba(240, 180, 41, .15); color: var(--wx-accent); }
+.alert-stat.done { background: rgba(153, 153, 153, .15); color: var(--wx-muted); }
+
+.alert-list {
+  padding: 8px 12px 80px;
+  display: flex; flex-direction: column; gap: 10px;
+}
+
+.alert-card {
+  background: var(--wx-card);
+  border-radius: 12px;
+  padding: 12px 14px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, .06);
+}
+.alert-card.triggered { opacity: .65; }
+.alert-card.disabled { opacity: .5; }
+
+.alert-card-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 8px;
+}
+.alert-card-info { display: flex; flex-direction: column; gap: 2px; }
+.alert-card-name { font-size: 15px; font-weight: 600; color: var(--wx-txt); }
+.alert-card-code { font-size: 12px; color: var(--wx-muted); }
+
+.alert-card-status {
+  font-size: 11px; padding: 3px 8px; border-radius: 8px; font-weight: 500;
+}
+.alert-card-status.active { background: rgba(240, 180, 41, .15); color: var(--wx-accent); }
+.alert-card-status.triggered { background: rgba(240, 180, 41, .2); color: var(--wx-accent); }
+.alert-card-status.disabled { background: rgba(153, 153, 153, .15); color: var(--wx-muted); }
+
+.alert-card-body { margin-bottom: 10px; }
+.alert-card-condition {
+  display: flex; align-items: baseline; gap: 8px;
+  margin-bottom: 4px;
+}
+.alert-type-tag {
+  font-size: 12px; color: var(--wx-muted);
+  flex-shrink: 0;
+}
+.alert-target-value {
+  font-size: 18px; font-weight: 700; color: var(--wx-txt);
+}
+.alert-card-cur { font-size: 12px; color: var(--wx-muted); }
+
+.alert-card-actions {
+  display: flex; gap: 8px;
+  border-top: 1px solid var(--wx-line);
+  padding-top: 10px;
+}
+.alert-action-btn {
+  flex: 1;
+  padding: 7px 0;
+  border: none; border-radius: 8px;
+  font-size: 13px; font-weight: 500;
+  cursor: pointer;
+  background: var(--wx-line);
+  color: var(--wx-txt);
+}
+.alert-action-btn:active { opacity: .7; }
+.alert-action-btn.delete-btn { color: var(--wx-red); }
+.alert-action-btn.toggle-btn { color: var(--wx-accent); }
+
+/* 添加提醒底部弹窗 */
+.action-sheet-mask {
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 50;
+  /* 用动态视口高度 100dvh 让遮罩在键盘弹起/收起时自动跟随可视区变化：
+     键盘弹起 → dvh 缩小 → 遮罩高度 = 键盘上方区域 → 面板贴键盘顶边；
+     键盘收起 → dvh 恢复 → 遮罩回归全屏；
+     不支持 dvh 的旧浏览器自动回退到 inset:0 行为（无 JS 降级）。 */
+  height: 100dvh;
+  background: rgba(0, 0, 0, .45);
+  opacity: 0; visibility: hidden;
+  transition: height 0.15s ease-out, opacity .25s ease, visibility .25s ease;
+  display: flex; align-items: flex-end;
+  touch-action: none;
+}
+.action-sheet-mask.show { opacity: 1; visibility: visible; }
+
+.action-sheet {
+  width: 100%;
+  background: var(--wx-card);
+  border-radius: 16px 16px 0 0;
+  box-shadow: 0 -4px 20px rgba(0, 0, 0, .15);
+  transform: translateY(100%);
+  transition: transform .28s cubic-bezier(.22, .61, .36, 1);
+  max-height: 80vh;
+  display: flex; flex-direction: column;
+  padding-bottom: env(safe-area-inset-bottom);
+  touch-action: pan-y;
+}
+.action-sheet-mask.show .action-sheet { transform: translateY(0); }
+
+.action-sheet-title {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--wx-line);
+  font-size: 15px; font-weight: 600; color: var(--wx-txt);
+}
+.action-sheet-close {
+  width: 30px; height: 30px; padding: 0; border: none; background: transparent;
+  font-size: 20px; color: var(--wx-muted); cursor: pointer; line-height: 1;
+}
+.action-sheet-close:active { opacity: .6; }
+
+.action-sheet-footer {
+  padding: 12px 16px;
+  border-top: 1px solid var(--wx-line);
+}
+.action-sheet-footer button {
+  width: 100%;
+  padding: 12px;
+  border: none; border-radius: 10px;
+  font-size: 15px; font-weight: 600;
+  cursor: pointer;
+}
+.action-sheet-footer button.primary {
+  background: var(--wx-accent);
+  color: #fff;
+}
+.action-sheet-footer button.primary:active { opacity: .85; }
+
+.alert-sheet-body {
+  padding: 16px;
+  overflow: auto;
+  display: flex; flex-direction: column; gap: 16px;
+}
+
+.alert-type-group { display: flex; flex-direction: column; gap: 8px; }
+.alert-type-label { font-size: 13px; color: var(--wx-muted); font-weight: 500; }
+.alert-sec-group { display: flex; flex-direction: column; gap: 8px; }
+.alert-sec-select {
+  width: 100%;
+  padding: 10px 8px;
+  border: 1px solid var(--wx-line);
+  border-radius: 8px;
+  background: var(--wx-bg);
+  color: var(--wx-txt);
+  font-size: 14px; font-weight: 500;
+  -webkit-appearance: none; appearance: none;
+}
+.alert-type-options {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+}
+.alert-type-opt {
+  padding: 10px 8px;
+  border: 1px solid var(--wx-line);
+  border-radius: 8px;
+  background: var(--wx-bg);
+  color: var(--wx-txt);
+  font-size: 13px; font-weight: 500;
+  cursor: pointer;
+}
+.alert-type-opt.active {
+  border-color: var(--wx-accent);
+  background: rgba(240, 180, 41, .1);
+  color: var(--wx-accent);
+}
+.alert-type-opt:active { opacity: .7; }
+
+.alert-period-options {
+  display: flex; flex-wrap: wrap; gap: 6px;
+}
+.alert-period-opt {
+  padding: 8px 12px;
+  border: 1px solid var(--wx-line);
+  border-radius: 8px;
+  background: var(--wx-bg);
+  color: var(--wx-txt);
+  font-size: 13px; font-weight: 500;
+  cursor: pointer;
+}
+.alert-period-opt.active {
+  border-color: var(--wx-accent);
+  background: rgba(240, 180, 41, .1);
+  color: var(--wx-accent);
+}
+.alert-period-opt:active { opacity: .7; }
+.alert-period-tag {
+  font-size: 12px; color: var(--wx-muted); font-weight: 500;
+  background: var(--wx-line); border-radius: 6px; padding: 2px 8px;
+  margin-left: 6px;
+}
+
+.alert-input-group { display: flex; flex-direction: column; gap: 8px; }
+.alert-input-label { font-size: 13px; color: var(--wx-muted); font-weight: 500; }
+.alert-input-row {
+  display: flex; align-items: center;
+  background: var(--wx-bg);
+  border: 1px solid var(--wx-line);
+  border-radius: 8px;
+  padding: 0 12px;
+}
+.alert-input-row input {
+  flex: 1;
+  border: none; background: transparent;
+  padding: 11px 0;
+  font-size: 16px; font-weight: 600;
+  color: var(--wx-txt);
+  outline: none;
+}
+.alert-input-row input::placeholder { color: var(--wx-muted); font-weight: 400; }
+.alert-input-row span {
+  margin-left: 8px;
+  font-size: 14px; color: var(--wx-muted);
+  flex-shrink: 0;
+}
+
+.alert-quick-row {
+  display: flex; gap: 6px; flex-wrap: wrap;
+}
+.alert-quick-btn {
+  padding: 6px 10px;
+  border: 1px solid var(--wx-line);
+  border-radius: 6px;
+  background: var(--wx-bg);
+  color: var(--wx-muted);
+  font-size: 12px; font-weight: 500;
+  cursor: pointer;
+}
+.alert-quick-btn:active { opacity: .7; background: var(--wx-line); }
+
+/* 通知横幅 */
+.alert-notification {
+  position: fixed; top: 12px; left: 12px; right: 12px;
+  z-index: 100;
+  background: var(--wx-card);
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, .18);
+  padding: 12px 14px;
+  display: flex; align-items: center; gap: 12px;
+  transform: translateY(-120%);
+  transition: transform .35s cubic-bezier(.22, .61, .36, 1);
+}
+.alert-notification.show { transform: translateY(0); }
+
+.alert-notif-icon { font-size: 22px; flex-shrink: 0; }
+.alert-notif-body { flex: 1; min-width: 0; }
+.alert-notif-title {
+  font-size: 14px; font-weight: 600; color: var(--wx-txt);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.alert-notif-desc { font-size: 12px; color: var(--wx-muted); margin-top: 2px; }
+.alert-notif-close {
+  width: 28px; height: 28px; padding: 0;
+  border: none; background: transparent;
+  font-size: 18px; color: var(--wx-muted);
+  cursor: pointer; line-height: 1;
+  flex-shrink: 0;
+}
+.alert-notif-close:active { opacity: .6; }
+
+/* ========== 段卡片内联展开的 K 线（长按段号展开） ========== */
+/* K 线展示时段卡片改为两行模式：隐藏第 2、3 行（起点/终点）；
+   并换行让 .card-kline 以 100% 宽度独占一行，填充段号左侧空白 */
+.card.kline-expanded .card-desc { display: none; }
+.card-kline {
+  flex: 0 0 100%;
+  /* 收起时高度为 0（不用 display:none），配合 height 过渡实现平滑展开/收起动画；
+     overflow:hidden 让 K 线随容器高度逐帧露出/裁切 */
+  height: 0;
+  overflow: hidden;
+  padding-top: 8px;
+  min-width: 0;
+  transition: height .28s ease;
+}
+/* 220 主图 + 96 副图 + 8 内边距 = 324px */
+.card.kline-expanded .card-kline { height: 324px; }
+.card-kline canvas {
+  display: block; width: 100%; height: auto;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+/* 十字态下锁定触摸，避免拖动十字时页面滚动（与证券卡片 K 线一致） */
+.card.kline-cross-lock canvas { touch-action: none; }
+.kline-canvas {
+  display: block; width: 100%;
+  touch-action: none;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+
+/* ===== 手机端「问 AI」：周期标题右侧入口 + 结构简报弹层 ===== */
+/* 标题改为两端对齐，让入口贴在右边；label 仍是纯文本节点，不影响既有逻辑 */
+.period-title {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+}
+.period-ai-btn {
+  flex: none;
+  padding: 3px 10px; border-radius: 999px;
+  border: 1px solid var(--wx-accent);
+  background: transparent; color: var(--wx-accent);
+  font-size: 12px; font-weight: 600; line-height: 1.6;
+}
+.period-ai-btn:active { background: rgba(240, 180, 41, .14); }
+
+.brief-sheet { height: 88vh; max-height: 88vh; }
+.brief-body {
+  flex: 1; min-height: 0;
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 10px 14px 0;
+}
+.brief-hint { flex: none; font-size: 12px; color: var(--wx-muted); line-height: 1.5; }
+.brief-warn {
+  flex: none;
+  font-size: 12px; line-height: 1.5;
+  color: var(--wx-red); background: var(--wx-red-soft);
+  border-radius: 8px; padding: 8px 10px;
+}
+/* 正文要能长按选中：面板整体是 touch-action:pan-y / none，这里显式放开选择 */
+.brief-text {
+  flex: 1; min-height: 0; overflow: auto; margin: 0;
+  padding: 10px 12px;
+  background: var(--wx-bg); border: 1px solid var(--wx-line); border-radius: 10px;
+  font-size: 12px; line-height: 1.7; color: var(--wx-txt);
+  font-family: -apple-system, "PingFang SC", "Microsoft YaHei", monospace;
+  white-space: pre-wrap; word-break: break-word;
+  -webkit-user-select: text; user-select: text;
+  -webkit-touch-callout: default;
+}
+.brief-footer { display: flex; gap: 10px; }
+.brief-footer button { flex: 1; }
+
+/* ===== 周期行右端：「问 AI」胶囊（与展开箭头同组） ===== */
+.period-row-tail { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.row-ai-btn {
+  flex: 0 0 auto;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--wx-accent);
+  background: transparent;
+  color: var(--wx-accent);
+  font-size: 11px; font-weight: 700; line-height: 1.7;
+  letter-spacing: .5px;
+}
+.row-ai-btn:active { background: rgba(240, 180, 41, .16); }

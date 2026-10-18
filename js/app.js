@@ -1,0 +1,5958 @@
+// app.js —— Chan-M 入口：一键导入站点全部画线，按「证券 → 周期」展示，联网算力
+// 注意：所有 import 路径均带版本号，每次发布新版本时请同步修改 html/js/sw 中的版本号
+import { fetchBars, fetchRealtimeMulti, formatTime, formatPrice, isETF, resolveCode } from './fetcher.js?v=20260725i';
+import { computeMACD } from './macd.js?v=20260725f';
+import { buildBrief } from './ai_brief.js?v=20261018a';
+import { segmentStrength, detectStrengthIndicators, detectOneBuySell, detectTwoAndThreeBuySell, computeZhongshuStrength, detectZhongshu, computeZhongshuExtend, computeRecursiveSegment, zhongshuRangeLowHigh } from './algo.js?v=20261015b';
+import { renderSegments } from './table.js?v=20260904b';
+import { renderKlineChart, sliceSegmentBars, renderIntradayChart, repaintView } from './klinechart.js?v=20261011a';
+import { loadStaticData } from './sync.js?v=20260725g';
+import { openEditor } from './editor.js?v=20260830b';
+import { makeZhongshu } from './model.js?v=20260725f';
+import {
+  calcNaturalDuanEndFull, narrowAlleyResult,
+  rollbackResult, evalAutoContinue, tightenCurrentResult, isRightmostAndUnoccupied,
+  deadEndFallbackResult, strongGapFallbackResult,
+  findBarIdxByTime, segRight, segDirection, oppositeDir,
+  DEFAULT_CANDIDATE_SPAN_MIN, DEFAULT_CANDIDATE_SPAN_MAX, AUTO_CONTINUE_FIX_GAP,
+  resetWatchCaches,
+} from './watchmode.js?v=20260922d';
+
+const $ = (s) => document.querySelector(s);
+const $$ = (s) => document.querySelectorAll(s);
+
+const PERIODS = [
+  ['1m', '1分'], ['5m', '5分'], ['15m', '15分'], ['30m', '30分'], ['60m', '60分'],
+  ['day', '日'], ['week', '周'],
+];
+const periodLabel = (p) => (PERIODS.find((x) => x[0] === p) || [p, p])[1];
+
+let longPressFired = false; // 周期行长按进入段详情后，吞掉随后冒泡的 click，避免又触发行内 K 线的开合
+let presetSwipeFired = false; // 周期列表页左右滑切换方案后，吞掉随后冒泡的 click，避免误进段详情
+let secKlineView = null;      // 详情页证券卡片内展开的该周期 K 线视图，主题切换时按它精确重绘
+let secKlineExpanded = false; // 详情页证券卡片 K 线的「用户意图展开态」：吸顶折叠时隐藏，回到顶部恢复
+let _secSegHide = 0; // 详情页段号条：从左侧取消选中的段数（0=全部显示；右端固定到最后一段）
+// 段号条每行最多显示的段号数（与 CSS .sec-segnav.wrap 的固定宽度、渲染时的换行阈值一致）；
+// 段数超过该值时编号换行，并启用纵向快速缩放（每滑过一行步进一整行）
+const SEG_NAV_PER_ROW = 8;
+
+// 辅助周期（15m 对应 5m、60m 对应 30m）不是真实画线级别：
+// 画线（段/中枢）完全复刻主周期，段的 start/end 时间都是主周期刻度；
+// 但 K 线展示用本周期真实数据——段端点与本周期 bar 时间不对齐处，由 klinechart
+// 的 timeToX 时间插值精确定位（如 60m 图上显示 30m 段）。
+// 辅助周期不参与隐藏规则的级别联立判断：既不能作为更高周期去隐藏低级别段，
+// 也不改变原有级别链顺序（5m→30m、30m→day）。
+const AUX_PERIODS = { '15m': true, '60m': true };
+// 画线算法取数（盯盘/追踪/编辑/中枢识别）必须回落主周期：段 time 是主周期刻度，
+// 需要与主周期 bar 精确匹配（findBarIdxByTime）。K 线展示取数不要用本映射。
+const AUX_TO_MAIN = { '15m': '5m', '60m': '30m' };
+
+// 返回当前周期在证券可用周期列表中的下一个更高级别周期（跳过 15m/60m 辅助周期）
+function getHigherPeriod(period, availablePeriods) {
+  const idx = PERIODS.findIndex((x) => x[0] === period);
+  if (idx < 0) return null;
+  for (let i = idx + 1; i < PERIODS.length; i++) {
+    if (AUX_PERIODS[PERIODS[i][0]]) continue;
+    if (availablePeriods.includes(PERIODS[i][0])) return PERIODS[i][0];
+  }
+  return null;
+}
+
+// 周期链上的「下一更高级别」（跳过 15m/60m 辅助周期），不要求该周期已有数据。
+// 与 getHigherPeriod 的区别：后者要求目标周期在证券周期列表内（用于级别联立/展示），
+// 而递归允许在尚不存在的更高级别上生成新段（如只有 1m/5m/15m 的证券也能从 5m 递归出 30m）。
+function getNextHigherPeriod(period) {
+  const idx = PERIODS.findIndex((x) => x[0] === period);
+  if (idx < 0) return null;
+  for (let i = idx + 1; i < PERIODS.length; i++) {
+    if (AUX_PERIODS[PERIODS[i][0]]) continue;
+    return PERIODS[i][0];
+  }
+  return null;
+}
+
+// 把当日内某个交易时间换算成距 9:30 的分钟数（已扣除午休）
+function marketMinutesFrom930(t) {
+  const dt = new Date(t * 1000);
+  const hm = dt.getHours() * 60 + dt.getMinutes();
+  if (hm < 13 * 60) return hm - (9 * 60 + 30);
+  return (hm - 13 * 60) + 120;
+}
+
+// 给定目标时间 t（通常对应某根高周期 K 线的结束时间），返回该 K 线的开始时间
+function periodBarStart(t, period) {
+  if (period === 'day' || period === 'week' || period === 'month') {
+    const dt = new Date(t * 1000);
+    dt.setHours(0, 0, 0, 0);
+    return Math.floor(dt.getTime() / 1000);
+  }
+  const minutes = { '1m': 1, '5m': 5, '15m': 15, '30m': 30, '60m': 60 }[period];
+  if (!minutes) return t;
+  const mm = marketMinutesFrom930(t);
+  if (mm <= 0) {
+    const dt = new Date(t * 1000);
+    dt.setHours(9, 30, 0, 0);
+    return Math.floor(dt.getTime() / 1000);
+  }
+  const startMm = Math.floor((mm - 1) / minutes) * minutes;
+  const startHm = startMm < 120
+    ? (9 * 60 + 30) + startMm
+    : 13 * 60 + (startMm - 120);
+  const dt = new Date(t * 1000);
+  dt.setHours(Math.floor(startHm / 60), startHm % 60, 0, 0);
+  return Math.floor(dt.getTime() / 1000);
+}
+
+// 计算低级别周期的 hideBefore：优先用更高周期中时间上最新的一段（end 最大），
+// 以其终点对齐到更高周期 K 线起点，使低周期图聚焦到「最新一段覆盖的交易日」。
+// 安全回退：若更高周期数据比当前周期段更新（如 30m 末段 end 晚于 5m 末段 start），
+// 纯按 end 对齐会把当前周期图清空，此时退回旧逻辑——用更高周期所有段的 max(start) 对齐，
+// 保留更多历史段（例如 5m 图从 30m 起点起显示，而非变空或只剩 1 段）。
+function computeHideBefore(higherSegments, higherPeriod, curSegments) {
+  if (!higherPeriod || !higherSegments || !higherSegments.length) return null;
+  // 盯盘段终点为「当前最新价」，若把它当作更高周期的最后一段来算 hideBefore，
+  // 会把低周期段几乎全部隐藏（例如 5m 盯盘导致 1m 只显示盯盘段之后）。各周期盯盘段需排除。
+  // 递归产物（_isRecursive，见 recursiveToHigherPeriod）同理排除：它是人工在低周期上合成出的
+  // 高级别段，不代表行情推进到的最新位置，若参与对齐会把低周期视图的历史段无谓隐藏。
+  const realHigher = higherSegments.filter((s) => !s._isWatch && !s._isTrack && !s._isRecursive);
+  if (!realHigher.length) return null;
+  let lastEnd = 0, maxStart = 0;
+  for (const s of realHigher) {
+    const e = s.end?.time ?? s.start?.time ?? 0;
+    const st = s.start?.time ?? s.end?.time ?? 0;
+    if (e > lastEnd) lastEnd = e;
+    if (st > maxStart) maxStart = st;
+  }
+  const hbEnd = lastEnd ? periodBarStart(lastEnd, higherPeriod) : null;
+  if (hbEnd != null && curSegments && curSegments.length) {
+    let curLastStart = 0;
+    for (const s of curSegments) {
+      const st = s.start?.time ?? s.end?.time ?? 0;
+      if (st > curLastStart) curLastStart = st;
+    }
+    if (hbEnd > curLastStart) return maxStart ? periodBarStart(maxStart, higherPeriod) : hbEnd;
+  }
+  return hbEnd;
+}
+
+const STORE_KEY_PREFIX = 'chan-m-sec-';
+const ALERT_STORE_KEY = 'chan-m-alerts-v1';
+
+// 行情页固定展示的大盘指数
+const INDEX_CODES = [
+  { code: '000001.SH', label: '上证指数' },
+  { code: '399001.SZ', label: '深证成指' },
+  { code: '399006.SZ', label: '创业板指' },
+  { code: '000688.SH', label: '科创50' },
+];
+
+const state = {
+  securities: [],
+  selectedCode: null,
+  selectedPeriod: null,
+  view: 'list', // 'list' | 'periods' | 'detail'
+  rtTimers: {},
+  activeTab: 'dingpan',
+  indexQuotes: {},
+  indexIntraday: {},
+  _rtPrices: {},
+  _currentBars: null,  // 画线算法用 K 线缓存（主周期刻度，盯盘/追踪/编辑）
+  _displayBars: null,  // K 线展示用缓存：{ [`${code}|${period}`]: bars }，辅助周期存本周期真实 K 线
+  searchQuery: '',
+  searchMode: null, // null | 'dingpan' | 'hangqing'：标题栏内搜索是否激活
+  _baseInnerHeight: null, // 无键盘时的基准 window.innerHeight，用于键盘高度检测
+  alerts: [],
+  _alertTimer: null,
+  _alertNotified: new Set(),
+  // 画线方案支持
+  _presets: {}, // code -> [{ id, name }]
+  _currentPresetIdx: {}, // code -> index in _presets[code]
+  // 行情页用户自定义证券
+  _hangqingExtras: [], // [{ code, name }] —— 在行情页搜索添加的证券卡片
+  _extrasIntraday: {}, // { code: { bars, prevClose, dayStart, dayEnd, date } }
+};
+
+const HANGQING_EXTRAS_KEY = 'chanm_hangqing_extras';
+
+// 加载状态：用于区分「正在加载」与「真的没有数据」，避免首屏误报「暂无画线数据」
+const loadState = { loading: false, error: null };
+
+function fmt(sec, period) { return formatTime(sec, period !== 'day'); }
+function fmtNoYear(sec, period) {
+  // 顶部区间显示去掉年份，避免文本过长（如 2024-01-15 → 01-15）
+  return formatTime(sec, period !== 'day').replace(/^\d{4}[-\/]/, '').replace(/\/\d{4}$/, '');
+}
+function setStatus(t) { /* 顶部状态栏已移除，保留函数避免其它调用报错 */ }
+
+// ========== 本地持久化 ==========
+function secStoreKey(code) { return STORE_KEY_PREFIX + code; }
+
+function loadLocalEdits(code) {
+  try {
+    const raw = localStorage.getItem(secStoreKey(code));
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
+// 保存前把当前展示方案的线段同步回 presets 对应方案，
+// 这样刷新后即使先展示默认方案，各方案的本地编辑也不会丢失。
+function syncPresetsToStorage(drawings) {
+  if (!drawings) return;
+  for (const p of Object.keys(drawings)) {
+    const d = drawings[p];
+    if (d && Array.isArray(d.presets) && d.presets.length && d.activePreset) {
+      const pr = d.presets.find((x) => x.id === d.activePreset);
+      if (pr) { pr.segments = d.segments || []; pr.zhongshus = d.zhongshus || []; }
+    }
+  }
+}
+
+// 落盘瘦身：导出数据里每个周期附带的最多 800 根 bars 从未被读取（画图/MACD 一律用实时拉取的
+// state._currentBars），却让单次存档体积膨胀 2~3 倍并逼近 localStorage 5MB 配额。
+// 仅在序列化时剔除，内存中的 drawings 保持不变（刷新后仍由 mergeDrawings 从静态数据补回）。
+function stripBarsForStorage(drawings) {
+  if (!drawings || typeof drawings !== 'object') return drawings;
+  const out = {};
+  for (const p of Object.keys(drawings)) {
+    const d = drawings[p];
+    if (!d || typeof d !== 'object' || !('bars' in d)) { out[p] = d; continue; }
+    const copy = { ...d };
+    delete copy.bars;
+    out[p] = copy;
+  }
+  return out;
+}
+
+// 存档失败提示节流：同一会话内最多 60s 提示一次，避免自动存档连续刷屏
+let _saveFailToastAt = 0;
+
+function saveLocalEdits(code, drawings) {
+  try {
+    syncPresetsToStorage(drawings);
+    localStorage.setItem(secStoreKey(code), JSON.stringify({
+      drawings: stripBarsForStorage(drawings),
+      savedAt: Date.now(),
+    }));
+    return true;
+  } catch (e) {
+    // 常见为 QuotaExceededError：此前被静默吞掉，表现为「盯盘段刷新即丢」且毫无提示
+    console.warn('[chan-m] 本地存档失败', code, e);
+    const now = Date.now();
+    if (now - _saveFailToastAt > 60000) {
+      _saveFailToastAt = now;
+      try { toast('本地存档失败（存储空间不足？），最新画线可能不会被保存'); } catch (_) {}
+    }
+    return false;
+  }
+}
+
+// ===== 自动存档 =====
+// 盯盘段/追踪段由程序自动生成，此前全程只改内存，刷新即丢失（必须最后一次手动操作才顺带落盘）。
+// 生成是逐段串行推进的，一次续接/回修内可能连续多次变更，用 1s 防抖合并成一次写盘；
+// 页面切后台/卸载时由 flushAutoSave() 立即补写，避免防抖窗口内的改动丢失。
+const AUTO_SAVE_DEBOUNCE_MS = 1000;
+const _autoSaveTimers = Object.create(null);
+
+function scheduleAutoSave(code) {
+  if (!code) return;
+  if (_autoSaveTimers[code]) clearTimeout(_autoSaveTimers[code]);
+  _autoSaveTimers[code] = setTimeout(() => flushAutoSave(code), AUTO_SAVE_DEBOUNCE_MS);
+}
+
+// 立即写盘：code 为空则补写所有待写证券
+function flushAutoSave(code) {
+  const codes = code ? [code] : Object.keys(_autoSaveTimers);
+  for (const c of codes) {
+    if (_autoSaveTimers[c]) {
+      clearTimeout(_autoSaveTimers[c]);
+      delete _autoSaveTimers[c];
+    }
+    const sec = state.securities.find((s) => s.code === c);
+    if (sec) saveLocalEdits(c, sec.drawings);
+  }
+}
+
+function loadAlerts() {
+  try {
+    const raw = localStorage.getItem(ALERT_STORE_KEY);
+    const arr = raw ? JSON.parse(raw) : [];
+    // 旧提醒可能缺少 createdAt（未来时态基准），补成载入时刻，避免基于历史数据立即误触发
+    const now = Date.now();
+    return arr.map((a) => { if (a.createdAt == null) a.createdAt = now; return a; });
+  } catch { return []; }
+}
+
+function saveAlerts() {
+  try {
+    localStorage.setItem(ALERT_STORE_KEY, JSON.stringify(state.alerts));
+  } catch {}
+}
+
+function addAlert(alert) {
+  const id = 'alert_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6);
+  const item = {
+    id,
+    code: alert.code,
+    name: alert.name || '',
+    type: alert.type,
+    value: alert.value,
+    period: alert.period || 'day',
+    enabled: true,
+    triggered: false,
+    createdAt: Date.now(),
+    triggeredAt: null,
+  };
+  state.alerts.unshift(item);
+  saveAlerts();
+  return item;
+}
+
+function removeAlert(id) {
+  state.alerts = state.alerts.filter((a) => a.id !== id);
+  saveAlerts();
+}
+
+function toggleAlert(id) {
+  const a = state.alerts.find((x) => x.id === id);
+  if (a) {
+    a.enabled = !a.enabled;
+    if (a.enabled) {
+      a.triggered = false;
+      a.triggeredAt = null;
+      state._alertNotified.delete(id);
+      startAlertMonitor(); // 定时器可能已自清，重新拉起监控
+    }
+    saveAlerts();
+  }
+}
+
+function alertTypeLabel(type) {
+  const map = {
+    price_above: '价格上破',
+    price_below: '价格下破',
+    change_pct_up: '涨幅超过',
+    change_pct_down: '跌幅超过',
+    macd_golden: 'DIF金叉',
+    macd_death: 'DIF死叉',
+    macd_bar_shrink: '红绿柱缩短',
+    macd_red_shrink: '红柱缩短',
+    macd_green_shrink: '绿柱缩短',
+  };
+  return map[type] || type;
+}
+// MACD 类提醒（基于某周期 K 线计算），不需要目标值
+const MACD_ALERT_TYPES = ['macd_golden', 'macd_death', 'macd_bar_shrink', 'macd_red_shrink', 'macd_green_shrink'];
+function isMacdAlert(a) { return MACD_ALERT_TYPES.includes(a.type); }
+// 添加提醒弹窗里展示的类型项
+const ALERT_TYPE_OPTIONS = [
+  ['price_above', '价格上破'],
+  ['price_below', '价格下破'],
+  ['change_pct_up', '涨幅超过'],
+  ['change_pct_down', '跌幅超过'],
+  ['macd_golden', 'DIF金叉'],
+  ['macd_death', 'DIF死叉'],
+  ['macd_red_shrink', '红柱缩短'],
+  ['macd_green_shrink', '绿柱缩短'],
+];
+
+// 合并静态数据和本地编辑：取两者中较新的
+function mergeDrawings(staticData, code) {
+  const local = loadLocalEdits(code);
+  if (!local || !staticData) return staticData || {};
+  const result = {};
+  const allPeriods = new Set([...Object.keys(staticData), ...Object.keys(local.drawings || {})]);
+  for (const p of allPeriods) {
+    const sd = staticData[p];
+    const ld = (local.drawings || {})[p];
+    if (!sd) { result[p] = ld; continue; }
+    if (!ld) { result[p] = sd; continue; }
+    const sdTime = sd.exportedAt || 0;
+    // 本地快照基于的「导出基线」= ld.exportedAt（落盘时原样带过来的静态导出时间戳）。
+    // 注意不能再用 local.savedAt 比大小：盯盘段会自动存档，savedAt 会被不断刷新，
+    // 那样 PC 端重新导出（exportedAt 变新）将永远盖不过手机端的本地快照，新导出就显示不出来。
+    // 正确语义：本地编辑是叠加在某次导出基线上的补丁，只有基线换了（更新的导出）补丁才作废。
+    // 老存档可能没带基线时间，此时退回旧的 savedAt 判断，宁可保留本地编辑也不静默丢弃。
+    const ldTime = ld.exportedAt || local.savedAt || 0;
+    // 本地编辑优先，但 bars（来自导出）只存在于静态数据，需保留以计算 MACD 力度
+    // 同时保留方案信息（presets）来自静态数据
+    result[p] = ldTime >= sdTime
+      ? {
+          ...ld,
+          bars: ld.bars || (sd ? sd.bars : null),
+          presets: (ld.presets && ld.presets.length) ? ld.presets : (sd.presets || null),
+          activePreset: (ld.presets && ld.presets.length) ? (ld.activePreset || 'default') : (sd.activePreset || null),
+          presetName: (ld.presets && ld.presets.length) ? ld.presetName : (sd.presetName || null),
+        }
+      : sd;
+  }
+  return result;
+}
+
+// ========== 清单加载 ==========
+async function loadManifest() {
+  let res;
+  try {
+    res = await fetch('data/manifest.json?v=' + Date.now());
+  } catch (e) {
+    const hint = location.protocol === 'file:'
+      ? '（当前为 file:// 协议，请通过 http:// 访问，或运行 start_chanm.bat）'
+      : '（网络错误：' + (e.message || '未知') + '）';
+    throw new Error('数据清单加载失败' + hint);
+  }
+  if (!res.ok) {
+    throw new Error('数据清单不存在（HTTP ' + res.status + '），请先运行 PC 端导出');
+  }
+  const j = await res.json();
+  if (!j || !Array.isArray(j.securities) || !j.securities.length) {
+    throw new Error('数据清单为空，请先在 PC 端导出画线');
+  }
+  return j.securities;
+}
+
+async function loadAllDrawings() {
+  loadState.loading = true;
+  loadState.error = null;
+  renderDingpanView(); // 立即刷新：若列表仍为空则显示「加载中…」
+  try {
+    const list = await loadManifest();
+    // 收集所有「证券 × 周期」任务，用 Promise.all 并行拉取，避免串行 await 造成的慢加载
+    const securities = list.map((s) => ({
+      code: s.code, name: s.name || null, periods: s.periods, drawings: {},
+      _a0Period: s.a0Period || '30m', // 桌面版默认 A0 为 30m
+    }));
+    // 存储方案信息
+    list.forEach((s) => {
+      if (s.presets && Array.isArray(s.presets) && s.presets.length > 0) {
+        state._presets[s.code] = s.presets;
+        state._currentPresetIdx[s.code] = 0;
+      }
+    });
+    const byCode = Object.fromEntries(securities.map((s) => [s.code, s]));
+    const tasks = [];
+    for (const s of list) {
+      for (const p of s.periods) {
+        tasks.push(loadStaticData(s.code, p).then((data) => ({ code: s.code, p, data })));
+      }
+    }
+    const results = await Promise.all(tasks);
+    const errors = [];
+    for (const { code, p, data } of results) {
+      if (data && (data.segments || data.zhongshus)) {
+        byCode[code].drawings[p] = {
+          segments: data.segments || [],
+          zhongshus: data.zhongshus || [],
+          exportedAt: data.exportedAt || 0,
+          bars: data.bars || null,
+          presets: data.presets || null,
+          activePreset: data.activePreset || null,
+          presetName: data.presetName || null,
+        };
+        // 从导出的数据中读取 A0 级别（优先使用数据文件中的值覆盖 manifest 默认值）
+        if (data.a0Period) {
+          byCode[code]._a0Period = data.a0Period;
+        }
+      } else {
+        errors.push(`${code}_${p}.json`);
+      }
+    }
+    // DEBUG: 打印各证券的 A0 级别
+    for (const sec of securities) {
+      const a0 = sec._a0Period;
+      console.log(`DEBUG A0: ${sec.code} -> ${a0} (${a0 === '30m' ? 'DEFAULT' : 'from data'})`);
+    }
+    // 合并本地编辑（与静态数据取较新者）
+    for (const s of list) {
+      byCode[s.code].drawings = mergeDrawings(byCode[s.code].drawings, s.code);
+    }
+    // 本地递归产物可能在证券周期列表之外的周期（如只有 1m/5m 的证券上递归出的 30m 段）：
+    // 把 drawings 中有内容但不在列表内的周期补回列表（按周期链顺序），
+    // 否则刷新后该级别在周期页消失，数据仍在却看不到。
+    for (const sec of securities) {
+      const ps = sec.periods || (sec.periods = []);
+      const extra = Object.keys(sec.drawings || {}).filter(
+        (p) => !ps.includes(p) && PERIODS.some((x) => x[0] === p)
+          && (((sec.drawings[p] || {}).segments || []).length || ((sec.drawings[p] || {}).zhongshus || []).length)
+      );
+      if (extra.length) {
+        sec.periods = [...ps, ...extra].sort(
+          (a, b) => PERIODS.findIndex((x) => x[0] === a) - PERIODS.findIndex((x) => x[0] === b)
+        );
+      }
+    }
+    // 辅助周期（15m 完全复刻 5m、60m 完全复刻 30m）加载后直接把画线对象指向主周期，
+    // 使运行期对主周期的任何改动（盯盘段/追踪段、编辑、增删、中枢）即时同步到辅助周期，
+    // 而非仅在数据加载时复刻一次、运行期各改各的导致两边不一致（如 5m 新增追踪段后 15m 不显示）。
+    // 两个键若各存有本地编辑，以主周期内容为准，与「完全复刻」语义一致。
+    for (const sec of securities) {
+      for (const [aux, main] of Object.entries(AUX_TO_MAIN)) {
+        if (sec.drawings[aux] && sec.drawings[main]) sec.drawings[aux] = sec.drawings[main];
+      }
+    }
+    let segTotal = 0;
+    for (const sec of securities) {
+      for (const p of Object.keys(sec.drawings)) {
+        segTotal += (sec.drawings[p].segments || []).length;
+      }
+    }
+    // 如果 manifest 中没有方案信息，尝试从数据文件中提取
+    for (const sec of securities) {
+      if (!state._presets[sec.code]) {
+        const periods = Object.keys(sec.drawings);
+        for (const p of periods) {
+          const d = sec.drawings[p];
+          if (d.presets && Array.isArray(d.presets) && d.presets.length > 0) {
+            state._presets[sec.code] = d.presets.map((pr) => ({ id: pr.id, name: pr.name }));
+            state._currentPresetIdx[sec.code] = 0;
+            break;
+          }
+        }
+        // 兜底：即使没有方案数据，也显示"方案1"作为默认方案名
+        if (!state._presets[sec.code] && Object.keys(sec.drawings).length > 0) {
+          state._presets[sec.code] = [{ id: 'default', name: '方案1' }];
+          state._currentPresetIdx[sec.code] = 0;
+        }
+      }
+    }
+    // 合并本地「手动添加」的证券（来自行情页搜索添加）
+    for (const ex of loadWatchlistExtras()) {
+      if (!byCode[ex.code]) {
+        const sec = { code: ex.code, name: ex.name, periods: ['day', '30m', '5m'], drawings: {}, _extra: true, _a0Period: '30m' };
+        securities.push(sec);
+        byCode[ex.code] = sec;
+      }
+    }
+
+    state.securities = securities;
+    // 重新刷新后，各证券的画线先展示默认方案（presets[0]），方案索引归零
+    applyDefaultPresetOnLoad();
+    renderDingpanView();
+    startAllRealtime();
+  } catch (e) {
+    loadState.error = e.message || '导入失败';
+  } finally {
+    loadState.loading = false;
+    renderDingpanView(); // 收尾渲染：加载中 → 列表 / 错误提示
+  }
+}
+
+// 重新刷新后，各证券一律先展示默认方案（presets[0]）：
+// 无论 PC 端导出时选中的是哪个方案，或上次浏览切换到了哪个方案，
+// 刷新后都从默认方案开始，方案索引归零；各方案本地编辑已同步在 presets 中，可随时切回查看。
+function applyDefaultPresetOnLoad() {
+  for (const sec of state.securities) {
+    const presets = state._presets[sec.code] || [];
+    state._currentPresetIdx[sec.code] = 0;
+    if (presets.length === 0) continue;
+    const defaultId = presets[0].id;
+    const defaultName = presets[0].name;
+    for (const p of Object.keys(sec.drawings)) {
+      const d = sec.drawings[p];
+      if (!d || !Array.isArray(d.presets) || d.presets.length === 0) continue;
+      const match = d.presets.find((pr) => pr.id === defaultId);
+      if (match) {
+        d.segments = match.segments || [];
+        d.zhongshus = match.zhongshus || [];
+        d.activePreset = defaultId;
+        d.presetName = defaultName;
+      }
+    }
+  }
+}
+
+// ========== 导航 ==========
+// navigate 仅负责渲染，不写历史；历史由 pushView / goBack 管理（供系统返回键 & 手势使用）
+function navigate(view, code = null, period = null) {
+  state.view = view;
+  state.selectedCode = code;
+  state.selectedPeriod = period;
+  updateHeaderBack();
+  renderDingpanView();
+}
+
+// 进入周期列表/段列表时，在顶部「Chan-M」行左端显示返回图标（<）
+function updateHeaderBack() {
+  const backBtn = document.getElementById('btn-header-back');
+  if (!backBtn) return;
+  const show = state.view === 'periods' || state.view === 'detail';
+  backBtn.hidden = !show;
+}
+
+const VIEW_DEPTH = { list: 0, periods: 1, detail: 2 };
+
+// 前进到更深视图并写入历史记录（从列表进入周期、从周期进入详情）
+function pushView(view, code = null, period = null) {
+  const curDepth = VIEW_DEPTH[state.view] ?? 0;
+  const newDepth = VIEW_DEPTH[view] ?? 0;
+  navigate(view, code, period);
+  if (newDepth > curDepth) history.pushState({ chanmView: view, code, period }, '');
+  else if (newDepth < curDepth) history.back();
+  else history.replaceState({ chanmView: view, code, period }, '');
+}
+
+// 返回上一级：手势、底部返回按钮、安卓/桌面硬件返回键 的统一入口
+function backTarget() {
+  if (state.view === 'detail') return ['periods', state.selectedCode, state.selectedPeriod];
+  if (state.view === 'periods') return ['list', null, null];
+  return null;
+}
+
+function doBack() {
+  const t = backTarget();
+  if (t) {
+    if (t[0] === 'list') listEnterPlayed = false; // 返回列表时允许重播动画
+    navigate(t[0], t[1], t[2]);
+  }
+  return !!t;
+}
+
+// 去重锁：安卓一次滑动可能同时触发「应用内手势」与「系统返回手势」，
+// 二者都走 goBack/popstate，用 350ms 内的锁合并为一次返回，避免连跳两级。
+let lastBackAt = 0;
+
+// 返回上一级：手势、底部返回按钮、安卓/桌面硬件返回键 的统一入口
+function goBack() {
+  const t = backTarget();
+  if (!t) return; // 已在根列表，不拦截，让系统返回（退出/最小化）生效
+  if (history.state && history.state.chanmView) {
+    lastBackAt = Date.now();
+    doBack();        // 立即渲染上一级（提供跟手动画后的即时反馈）
+    history.back();  // 同步历史；随后的 popstate 会被去重跳过
+  } else {
+    doBack();
+  }
+}
+window.goBack = goBack;
+// 供 gesture.js 在边缘滑动时关闭标题栏搜索框（与弹窗关闭逻辑一致）
+window.closeHeaderSearch = closeHeaderSearch;
+
+// 系统/浏览器返回键：popstate 渲染对应视图；与应用内手势去重
+window.addEventListener('popstate', (e) => {
+  // 有弹窗打开时，系统返回手势应先关闭弹窗而非导航回退
+  if (window.__hasActivePopup && window.__hasActivePopup()) {
+    window.__closeActivePopup();
+    // 推回当前视图状态，防止导航回退。
+    // 使用 pushState 而非 go(1) 避免触发新的 popstate 导致页面重渲染。
+    const curState = { chanmView: state.view, code: state.selectedCode, period: state.selectedPeriod };
+    history.pushState(curState, '');
+    return;
+  }
+  if (Date.now() - lastBackAt < 350) { lastBackAt = Date.now(); return; }
+  lastBackAt = Date.now();
+  const s = e.state || {};
+  if (s.chanmView) navigate(s.chanmView, s.code, s.period);
+  else navigate('list');
+});
+
+// ========== 卡片进出场动画 ==========
+const STAGGER = 45; // 相邻卡片的进入延迟(ms)
+let listEnterPlayed = false; // 根列表首次加载的进入动画只播一次
+
+// 卡片自上而下依次进入（右移淡入）
+function staggerEnter(root, selector) {
+  if (!root) return;
+  const items = root.querySelectorAll(selector);
+  if (!items.length) return;
+  items.forEach((el) => el.classList.add('anim-item', 'in-start'));
+  void root.offsetWidth; // 强制回流，固定起始态，避免与进入动画冲突
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    items.forEach((el, i) => {
+      el.style.transitionDelay = (i * STAGGER) + 'ms';
+      el.classList.remove('in-start');
+    });
+    // 动画结束后清除内联 transitionDelay，避免影响后续退场动画
+    const lastDelay = (items.length - 1) * STAGGER;
+    setTimeout(() => {
+      items.forEach((el) => { el.style.transitionDelay = ''; });
+    }, lastDelay + 350);
+  }));
+}
+
+// 返回上一级：手势、底部返回按钮、安卓/桌面硬件返回键 的统一入口
+function resetContainer() {
+  const b = document.getElementById('sec-list');
+  if (!b) return;
+  b.style.transform = '';
+  b.style.transition = '';
+  b.style.boxShadow = '';
+  b.classList.remove('swiping');
+}
+
+function renderDingpanView() {
+  updateHeaderSearchVisibility();
+  resetContainer();
+  removePresetIndicator();
+  removePresetSwipe();
+  if (state.activeTab !== 'dingpan') return;
+  if (state.view === 'list') renderSecurityList(state.searchQuery);
+  else if (state.view === 'periods') renderPeriodList(state.selectedCode);
+  else if (state.view === 'detail') renderPeriodDetail(state.selectedCode, state.selectedPeriod);
+}
+
+// ========== 加载界面诗句 ==========
+// 证券列表为空（加载中或暂无数据）时，展示两首诗替代原来的文字提示。
+function renderPoems(errorMsg) {
+  return `
+    <div class="poem-screen">
+      <div class="poem">
+        <div class="poem-head">善棋道人 ·《绝句》</div>
+        <div class="poem-body">
+          <p>烂柯真诀妙通神，一局曾经几度春。</p>
+          <p>自出洞来无敌手，得饶人处且饶人。</p>
+        </div>
+      </div>
+      <div class="poem">
+        <div class="poem-head">黄庭坚 ·《杂诗七首·其一》</div>
+        <div class="poem-body">
+          <p>此身天地一蘧庐，世事消磨绿鬓疏。</p>
+          <p>毕竟几人真得鹿，不知终日梦为鱼。</p>
+        </div>
+      </div>
+      ${errorMsg ? `<div class="poem-err">${errorMsg}</div>` : ''}
+    </div>`;
+}
+
+// ========== 证券列表渲染 ==========
+function renderSecurityList(filterQuery = '') {
+  const box = $('#sec-list');
+  if (!state.securities.length) {
+    box.innerHTML = renderPoems(loadState.error);
+    return;
+  }
+  const q = String(filterQuery || '').trim().toLowerCase();
+  const filtered = state.securities.filter((sec) => {
+    if (!q) return true;
+    const rt = state._rtPrices?.[sec.code];
+    const name = String(sec.name || rt?.name || '').toLowerCase();
+    return sec.code.toLowerCase().includes(q) || name.includes(q);
+  });
+  if (!filtered.length) {
+    box.innerHTML = '<div class="empty">未找到匹配的证券</div>';
+    return;
+  }
+  box.innerHTML = filtered.map((sec) => {
+    const rt = state._rtPrices?.[sec.code];
+    const name = sec.name || rt?.name || sec.code;
+    const change = fmtIndexChange(rt?.price, rt?.prevClose);
+    const priceText = rt?.price ? formatPrice(sec.code, rt.price) : '';
+    const displayCode = sec.code.toUpperCase();
+    const hasAlert = state.alerts.some((a) => a.code === sec.code && a.enabled && !a.triggered);
+    return `
+    <div class="sec-card" data-code="${sec.code}">
+      <div class="sec-head">
+        <div class="sec-info">
+          <div class="sec-name" data-name="${sec.code}">${name}${hasAlert ? '<span class="sec-alert-dot"></span>' : ''}</div>
+          <div class="sec-meta">${displayCode}</div>
+        </div>
+        <div class="sec-right">
+          <div class="sec-quote" data-rt="${sec.code}">
+            <div class="sec-price">${priceText}</div>
+            <div class="sec-change ${change.cls}">${change.text}</div>
+          </div>
+          <span class="sec-arrow">▸</span>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+  box.querySelectorAll('.sec-card').forEach((card) => {
+    const code = card.dataset.code;
+    const sec = state.securities.find((s) => s.code === code);
+    card.addEventListener('click', () => {
+      if (secCardLongPressFired) { secCardLongPressFired = false; return; }
+      pushView('periods', code);
+    });
+    attachSecCardLongPress(card);
+  });
+  // 仅在首次加载时播一次卡片依次进入动画（搜索/重渲染不再重复）
+  if (!listEnterPlayed) {
+    listEnterPlayed = true;
+    staggerEnter(box, '.sec-card');
+  }
+}
+
+let secCardLongPressFired = false;
+
+function attachSecCardLongPress(card) {
+  let timer = null;
+  let sx = 0, sy = 0;
+  const LONG_MS = 480;
+  const start = (x, y) => {
+    secCardLongPressFired = false;
+    sx = x; sy = y;
+    // 长按卡片不再呼出提醒窗口（提醒改为长按底部「提醒」按钮呼出），仅占位以避免误触
+    timer = setTimeout(() => {
+      secCardLongPressFired = true;
+    }, LONG_MS);
+  };
+  const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  card.addEventListener('pointerdown', (e) => { start(e.clientX, e.clientY); });
+  card.addEventListener('pointermove', (e) => {
+    if (Math.abs(e.clientX - sx) > 10 || Math.abs(e.clientY - sy) > 10) cancel();
+  });
+  card.addEventListener('pointerup', cancel);
+  card.addEventListener('pointercancel', cancel);
+  card.addEventListener('contextmenu', (e) => e.preventDefault());
+}
+
+// 与详情页一致的可见段/中枢计数：剔除被更高级别周期遮挡的隐藏段、隐藏中枢
+function countVisible(sec, period) {
+  const d = sec.drawings[period] || { segments: [], zhongshus: [] };
+  const segments = d.segments || [];
+  const zhongshus = d.zhongshus || [];
+  const higherPeriod = getHigherPeriod(period, sec.periods || []);
+  const higherSegments = (higherPeriod && sec.drawings[higherPeriod]?.segments) || [];
+  const hideBefore = computeHideBefore(higherSegments, higherPeriod, segments);
+  let visibleSegs = segments;
+  if (hideBefore != null) {
+    visibleSegs = segments.filter((s) => (s.start?.time ?? s.end?.time ?? 0) >= hideBefore);
+  }
+  const visibleIds = new Set(visibleSegs.map((s) => s.id));
+  const visibleZs = (zhongshus || []).filter((z) => (z.segmentIds || []).some((id) => visibleIds.has(id)));
+  return { segCount: visibleSegs.length, zsCount: visibleZs.length };
+}
+
+// ========== 周期列表渲染 ==========
+// 合并行：辅助周期卡片并入主周期卡片所在的一行（左半主周期、右半辅助周期），
+// 15m→5m、60m→30m 两组；仅当主周期与辅助周期都存在时合并，否则各自独立成行。
+const DUAL_PERIOD_ROWS = [['5m', '15m'], ['30m', '60m']];
+
+// 行覆盖的周期：合并行为 [主周期, 辅助周期]，普通行为 [周期]
+function rowPeriods(row) {
+  return row.dataset.periodAux ? [row.dataset.period, row.dataset.periodAux] : [row.dataset.period];
+}
+
+// 行当前展示 K 线的周期：合并行由 data-active-period 记录长按/恢复时选中的半区（主辅互斥）
+function rowActivePeriod(row) {
+  return row.dataset.activePeriod || row.dataset.period;
+}
+
+// 行/半区共用的信息块：周期名（含 A0 标签）+ 可见段/中枢统计
+function periodRowInfoHtml(sec, p) {
+  const { segCount, zsCount } = countVisible(sec, p);
+  const isA0 = p === sec._a0Period;
+  return `<div class="period-row-info">
+        <div class="period-row-name">${periodLabel(p)}${isA0 ? `<span class="period-row-tag a0">A0</span>` : ''}</div>
+        <div class="period-row-meta">${segCount} 段 · ${zsCount} 中枢</div>
+      </div>`;
+}
+
+// 合并行两个半区并排，横向只剩百来像素：胶囊用 mini 尺寸，
+// 否则会把「N 段 · M 中枢」挤出去或压成两行。
+function aiChipHtml(p, mini = false) {
+  return `<button class="row-ai-btn${mini ? ' row-ai-btn--mini' : ''}" type="button" data-ai-period="${p}"`
+    + ` aria-label="用 AI 分析${periodLabel(p)}">AI</button>`;
+}
+
+// 普通周期行：整行一个周期
+function periodRowHtml(sec, p) {
+  return `
+    <div class="period-row" data-period="${p}">
+      <div class="period-row-head">
+        ${periodRowInfoHtml(sec, p)}
+        <span class="period-row-tail">${aiChipHtml(p)}<span class="sec-arrow">▸</span></span>
+      </div>
+      <div class="period-row-kline">
+        <canvas class="period-kline-main"></canvas>
+        <canvas class="period-kline-sub"></canvas>
+      </div>
+      <div class="sec-segnav period-row-segnav" hidden></div>
+    </div>`;
+}
+
+// 合并行（如 5m|15m、30m|60m）：左右两半各自可点击/长按，共用下方同一条 K 线区
+function dualPeriodRowHtml(sec, main, aux) {
+  return `
+    <div class="period-row period-row--dual" data-period="${main}" data-period-aux="${aux}">
+      <div class="period-row-head period-row-head--dual">
+        <div class="period-half" data-period="${main}">
+          ${periodRowInfoHtml(sec, main)}
+          <span class="period-row-tail">${aiChipHtml(main)}<span class="sec-arrow">▸</span></span>
+        </div>
+        <div class="period-half" data-period="${aux}">
+          ${periodRowInfoHtml(sec, aux)}
+          <span class="period-row-tail">${aiChipHtml(aux)}<span class="sec-arrow">▸</span></span>
+        </div>
+      </div>
+      <div class="period-row-kline">
+        <canvas class="period-kline-main"></canvas>
+        <canvas class="period-kline-sub"></canvas>
+      </div>
+      <div class="sec-segnav period-row-segnav" hidden></div>
+    </div>`;
+}
+
+function renderPeriodList(code, { keepHeader = false } = {}) {
+  const box = $('#sec-list');
+  const sec = state.securities.find((s) => s.code === code);
+  if (!sec) { navigate('list'); return; }
+
+  // 5m/15m、30m/60m 两组「主+辅」各合并为一行；其余周期各占一行
+  const periods = sec.periods || [];
+  const consumed = new Set();
+  const rows = periods.map((p) => {
+    if (consumed.has(p)) return '';
+    consumed.add(p);
+    const pair = DUAL_PERIOD_ROWS.find(([main, aux]) => main === p && periods.includes(aux));
+    if (pair) {
+      consumed.add(pair[1]);
+      return dualPeriodRowHtml(sec, pair[0], pair[1]);
+    }
+    return periodRowHtml(sec, p);
+  }).join('');
+
+  if (!keepHeader) {
+    const rt = state._rtPrices?.[code];
+    const name = sec.name || rt?.name || code;
+    const displayCode = sec.code.toUpperCase();
+    const change = fmtIndexChange(rt?.price, rt?.prevClose);
+    const priceText = rt?.price ? formatPrice(code, rt.price) : '';
+    box.innerHTML = `
+      <div class="sec-card sec-card--periods" data-code="${code}">
+        <div class="sec-head">
+          <div class="sec-info">
+            <div class="sec-name" data-name="${code}">${name}</div>
+            <div class="sec-meta">${displayCode}</div>
+          </div>
+          <div class="sec-right">
+            <div class="sec-quote" data-rt="${code}">
+              <div class="sec-price">${priceText}</div>
+              <div class="sec-change ${change.cls}">${change.text}</div>
+            </div>
+          </div>
+        </div>
+        <div class="sec-intraday">
+          <canvas id="sec-intraday-chart"></canvas>
+        </div>
+      </div>
+      <div class="period-list">${rows}</div>
+    `;
+    const card = box.querySelector('.sec-card');
+    attachSecIntradayLongPress(card, code);
+    staggerEnter(box, '.sec-card, .period-row');
+  } else {
+    const listEl = box.querySelector('.period-list');
+    if (listEl) {
+      listEl.innerHTML = rows;
+      staggerEnter(listEl, '.period-row');
+    }
+  }
+
+  if (!keepHeader) {
+    // 首次进入周期页：重置行内 K 线展开记录（保持展开状态仅在同一证券内跨刷新生效）
+    state._periodExpanded = new Set();
+    state._periodSegHide = {}; // 行内段号条：按周期记录取消选中的段数
+  }
+
+  box.querySelectorAll('.period-row').forEach((row) => {
+    const periodsOfRow = rowPeriods(row);
+    const p0 = periodsOfRow[0];
+    row.addEventListener('click', (e) => {
+      // K 线区域内的点击（如副图 MACD/成交量切换）与段号条点击不导航、不收放
+      if (e.target.closest('.period-row-kline') || e.target.closest('.period-row-segnav')) return;
+      if (longPressFired) { longPressFired = false; return; } // 长按已进入段详情，吞掉随后的 click
+      if (presetSwipeFired) { presetSwipeFired = false; return; } // 左右滑切换方案后，吞掉随后的 click
+      // 点哪半开哪半的 K 线：合并行左半=主周期（5m/30m）、右半=辅助周期（15m/60m），普通行即本周期。
+      // togglePeriodRowKline 已含三种情形：未展开→展开、点另一半→切换、点当前半区→收起
+      const p = e.target.closest('.period-half')?.dataset.period || p0;
+      togglePeriodRowKline(code, p, row);
+    });
+    attachPeriodRowLongPress(row, code, p0);
+    attachPeriodRowSegNavSwipe(row, code, p0);
+    // 行内「问 AI」：pointerdown 必须拦下，否则按住稍久就触发行级长按（pushView('detail')），
+    // 用户点的是按钮却跳进了另一个页面；click 也要拦，不然还会顺带开合行内 K 线。
+    row.querySelectorAll('.row-ai-btn').forEach((btn) => {
+      btn.addEventListener('pointerdown', (e) => e.stopPropagation());
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openBriefSheet(code, btn.dataset.aiPeriod || rowActivePeriod(row));
+      });
+    });
+    // 保持展开状态：preset 切换/数据刷新重建列表后自动恢复已展开的行内 K 线
+    const openP = periodsOfRow.find((p) => state._periodExpanded?.has(p));
+    if (openP) {
+      row.classList.add('expanded');
+      setRowActivePeriod(row, openP); // 恢复该半区的段号条取消选中状态并高亮半区
+      renderPeriodRowKline(code, openP, row);
+    }
+  });
+  // 在周期列表页绑定左/右滑切换方案手势
+  attachPresetSwipe(box, code);
+  renderPresetIndicator(code);
+}
+
+// A 股交易日 9:30/15:00 的时间戳（本地时间）
+function marketDayBounds(date) {
+  const d = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+  const start = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 9, 30, 0).getTime() / 1000;
+  const end = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 15, 0, 0).getTime() / 1000;
+  return { start, end };
+}
+function isWeekday(date) { const day = date.getDay(); return day >= 1 && day <= 5; }
+function getPrevTradingDay(date) {
+  const d = new Date(date);
+  d.setDate(d.getDate() - 1);
+  while (!isWeekday(d)) d.setDate(d.getDate() - 1);
+  return d;
+}
+
+// 从滚动返回的 m1 分钟线中挑出「当日交易日」的分时数据。
+// 腾讯 m1 接口返回的是最近 N 分钟滚动窗口（交易时段会跨到上一交易日下午），
+// 必须按交易日边界过滤，否则分时图会把昨天+今天拼在一起、绘制错乱。
+// 规则：9 点前/周末显示上一交易日；9:00-9:30 仅 0 轴；开盘后显示当日（无数据回退上一交易日）。
+function pickIntradayBars(raw, now = new Date()) {
+  const { start: todayStart, end: todayEnd } = marketDayBounds(now);
+  const hm = now.getHours() * 60 + now.getMinutes();
+  let bars = [], dayStart = 0, dayEnd = 0;
+  if (hm < 9 * 60 || !isWeekday(now)) {
+    const prevDay = getPrevTradingDay(now);
+    const { start: ps, end: pe } = marketDayBounds(prevDay);
+    bars = raw.filter((b) => b.time >= ps && b.time < pe);
+    dayStart = ps; dayEnd = pe;
+  } else if (hm < 9 * 60 + 30) {
+    dayStart = todayStart; dayEnd = todayEnd;
+  } else {
+    const todayBars = raw.filter((b) => b.time >= todayStart && b.time < todayEnd);
+    if (todayBars.length) {
+      bars = todayBars;
+      dayStart = todayStart; dayEnd = todayEnd;
+    } else {
+      const prevDay = getPrevTradingDay(now);
+      const { start: ps, end: pe } = marketDayBounds(prevDay);
+      bars = raw.filter((b) => b.time >= ps && b.time < pe);
+      dayStart = ps; dayEnd = pe;
+    }
+  }
+  return { bars, dayStart, dayEnd };
+}
+
+// 行情页/周期列表共用：从实时行情或 m1 响应里取昨收价，优先实时行情（与周期列表页一致）
+function resolvePrevClose(code, qt, bars) {
+  const rt = state.indexQuotes?.[code]?.prevClose || state._rtPrices?.[code]?.prevClose;
+  if (rt && rt > 0) return rt;
+  if (qt) {
+    if (Array.isArray(qt) && qt[4]) return +qt[4];
+    if (typeof qt === 'string') { const f = qt.split('~'); if (f[4]) return +f[4]; }
+  }
+  if (bars && bars.length) return bars[0].close;
+  return 0;
+}
+
+// 异步加载并绘制证券卡片中的分时图
+// 规则：交易日 9 点前 / 周末显示上一交易日；9:00-9:30 仅显示 0 轴；开盘后显示当日（无数据则回退上一交易日）
+async function loadAndRenderIntraday(code, canvasOrId = 'sec-intraday-chart') {
+  const canvas = typeof canvasOrId === 'string' ? document.getElementById(canvasOrId) : canvasOrId;
+  if (!canvas) return;
+  const rt = state._rtPrices?.[code];
+  const prevClose = rt?.prevClose;
+  let bars = [];
+  let dayStart = 0, dayEnd = 0;
+
+  try {
+    const res = await fetchBars(code, '1m', 300);
+    const raw = res.bars || [];
+    const now = new Date();
+    const { start: todayStart, end: todayEnd } = marketDayBounds(now);
+    const hm = now.getHours() * 60 + now.getMinutes();
+
+    if (hm < 9 * 60 || !isWeekday(now)) {
+      // 9 点前或周末：显示上一交易日
+      const prevDay = getPrevTradingDay(now);
+      const { start: ps, end: pe } = marketDayBounds(prevDay);
+      bars = raw.filter((b) => b.time >= ps && b.time < pe);
+      dayStart = ps; dayEnd = pe;
+    } else if (hm < 9 * 60 + 30) {
+      // 9:00-9:30：仅 0 轴
+      dayStart = todayStart; dayEnd = todayEnd;
+    } else {
+      // 9:30 后：显示当天（若当天有数据）否则上一交易日
+      const todayBars = raw.filter((b) => b.time >= todayStart && b.time < todayEnd);
+      if (todayBars.length) {
+        bars = todayBars;
+        dayStart = todayStart; dayEnd = todayEnd;
+      } else {
+        const prevDay = getPrevTradingDay(now);
+        const { start: ps, end: pe } = marketDayBounds(prevDay);
+        bars = raw.filter((b) => b.time >= ps && b.time < pe);
+        dayStart = ps; dayEnd = pe;
+      }
+    }
+  } catch {}
+  canvas._intradayBars = bars;
+  canvas._intradayPrevClose = prevClose;
+  canvas._intradayCode = code;
+  canvas._intradayDayStart = dayStart;
+  canvas._intradayDayEnd = dayEnd;
+  requestAnimationFrame(() => renderIntradayChart(canvas, bars, prevClose, { dayStart, dayEnd }));
+}
+
+// 主题切换后重绘所有已加载的分时图
+function repaintIntradayCharts() {
+  // 注意：行情页指数卡片的 canvas 自身带 .index-intraday 类（非容器类），
+  // 需用 canvas.index-intraday 匹配，否则主题切换后不会立即重绘（只能等 5s 轮询重画，表现为变色延迟）。
+  document.querySelectorAll('.sec-intraday canvas, canvas.index-intraday').forEach((canvas) => {
+    const bars = canvas._intradayBars || [];
+    if (bars.length || canvas._intradayDayStart) {
+      const opts = canvas._intradayOpts || {};
+      renderIntradayChart(canvas, bars, canvas._intradayPrevClose, {
+        dayStart: canvas._intradayDayStart,
+        dayEnd: canvas._intradayDayEnd,
+        ...opts,
+      });
+    }
+  });
+}
+
+// 从后台切回前台（或 bfcache 恢复）时重绘所有已展开的图表。
+// 移动端 WebView 长时间在后台会回收 canvas 位图（渲染上下文丢失），而写位图的轮询在后台被
+// document.hidden 拦下，回前台后没有任何自动重绘入口，表现为「K 线图空白，必须重开一次」。
+// 这里统一补一次重绘；klinechart.setupCanvas 已做零尺寸保护，隐藏容器（宽 0）的 canvas
+// 不会被改写，因此重绘不会误清其它视图。
+let _resumeRepaintTimer = 0;
+function repaintChartsOnResume() {
+  if (document.hidden) return;
+  clearTimeout(_resumeRepaintTimer);
+  // 切回瞬间视口/布局可能仍在变化，延后一拍再画，确保取到最终尺寸
+  _resumeRepaintTimer = setTimeout(() => {
+    if (document.hidden) return;
+    repaintIntradayCharts();               // 分时图（详情页/行情页）
+    repaintView(secKlineView);             // 详情页证券卡片 K 线
+    if (isSegmentKlineOpen()) paintKline(); // 段卡片内联 K 线
+    repaintPeriodRowsKline();              // 周期页展开的行内 K 线
+  }, 120);
+}
+
+// 长按证券卡片展开/收起分时图（默认收起）
+function attachSecIntradayLongPress(card, code) {
+  let timer = null;
+  let sx = 0, sy = 0;
+  const LONG_MS = 480;
+  const start = (x, y) => {
+    sx = x; sy = y;
+    timer = setTimeout(() => {
+      timer = null;
+      toggleSecIntraday(card, code);
+    }, LONG_MS);
+  };
+  const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  card.addEventListener('pointerdown', (e) => { start(e.clientX, e.clientY); });
+  card.addEventListener('pointermove', (e) => {
+    if (Math.abs(e.clientX - sx) > 10 || Math.abs(e.clientY - sy) > 10) cancel();
+  });
+  card.addEventListener('pointerup', cancel);
+  card.addEventListener('pointercancel', cancel);
+  card.addEventListener('contextmenu', (e) => e.preventDefault());
+}
+
+function toggleSecIntraday(card, code) {
+  const wrap = card.querySelector('.sec-intraday');
+  if (!wrap) return;
+  const expanded = wrap.classList.toggle('expanded');
+  card.classList.toggle('intraday-expanded', expanded);
+  if (expanded) {
+    const canvas = wrap.querySelector('canvas');
+    if (canvas && !canvas.dataset.loaded) {
+      canvas.dataset.loaded = '1';
+      loadAndRenderIntraday(code, canvas);
+    }
+    try { navigator.vibrate?.(10); } catch {}
+  }
+}
+
+// 长按详情页证券卡片展开/收起该周期 K 线图（默认收起）
+function attachSecKlineLongPress(card, code, period) {
+  let timer = null;
+  let sx = 0, sy = 0;
+  const LONG_MS = 480;
+  const start = (x, y) => {
+    sx = x; sy = y;
+    timer = setTimeout(() => {
+      timer = null;
+      toggleSecKline(card, code, period);
+    }, LONG_MS);
+  };
+  const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  card.addEventListener('pointerdown', (e) => {
+    // K 线图区域的长按交给十字光标处理，不触发展开/收起，避免 480ms 与 350ms 长按冲突
+    if (e.target.closest('.sec-kline')) return;
+    start(e.clientX, e.clientY);
+  });
+  card.addEventListener('pointermove', (e) => {
+    if (Math.abs(e.clientX - sx) > 10 || Math.abs(e.clientY - sy) > 10) cancel();
+  });
+  card.addEventListener('pointerup', cancel);
+  card.addEventListener('pointercancel', cancel);
+  card.addEventListener('contextmenu', (e) => e.preventDefault());
+}
+
+async function toggleSecKline(card, code, period) {
+  secKlineExpanded = !secKlineExpanded;
+  if (!secKlineExpanded) {
+    _secSegHide = 0; // 收起时重置段号条的取消选中状态
+    renderSecSegNav(code, period, []); // 隐藏段号条
+  }
+  syncSecKlineVisible(card);
+  if (secKlineExpanded) {
+    try { navigator.vibrate?.(10); } catch {}
+    const wrap = card.querySelector('.sec-kline');
+    if (wrap) await loadAndRenderSecKline(code, period, wrap);
+  }
+}
+
+// 详情页证券卡片 K 线是否处于展开可见态（用户意图展开 且 卡片未被吸顶折叠）
+function isSecKlineOpen() {
+  const card = document.querySelector('.sec-card--detail');
+  if (!card || !secKlineExpanded) return false;
+  if (card.classList.contains('sec-card--collapsed')) return false;
+  const wrap = card.querySelector('.sec-kline');
+  return !!(wrap && wrap.classList.contains('expanded') && secKlineView);
+}
+
+// 详情页证券卡片 K 线的实际显隐 = 用户意图展开态 && 卡片未被吸顶折叠
+// （吸顶折叠时隐藏 K 线使卡片显示为一行；回到顶部自动恢复展开）
+function syncSecKlineVisible(card) {
+  card = card || document.querySelector('.sec-card--detail');
+  if (!card) return;
+  const wrap = card.querySelector('.sec-kline');
+  if (!wrap) return;
+  const show = secKlineExpanded && !card.classList.contains('sec-card--collapsed');
+  wrap.classList.toggle('expanded', show);
+  card.classList.toggle('intraday-expanded', show);
+}
+
+// 加载并渲染详情页证券卡片内的该周期 K 线图（主图 + 副图 + 十字 + 画线），
+// 数据/切片/可见段逻辑与周期卡片长按弹窗保持一致
+// fresh：true 强制取最新 K 线（展开时）；false 用缓存（段号条滑动重绘，避免每次联网）
+async function loadAndRenderSecKline(code, period, wrap, fresh = true) {
+  const sec = state.securities.find((s) => s.code === code);
+  if (!sec) return;
+  const main = wrap.querySelector('#detail-kline-main');
+  const sub = wrap.querySelector('#detail-kline-sub');
+  if (!main || !sub) return;
+  // K 线展示用本周期真实数据（15m/60m 不再回落主周期）；段端点时间与本周期
+  // bar 不对齐处由 timeToX 时间插值定位。段更新/盯盘算法仍走主周期，互不影响。
+  let bars = [];
+  try {
+    bars = await ensureDisplayBars(code, period, fresh); // 展开时取最新（主周期直接命中轮询缓存）
+  } catch { bars = []; }
+  // 可见段 / 可见中枢（剔除被更高级别周期遮挡的部分），与周期弹窗 periodStats 一致
+  const visibleSegs = getVisibleSegsForPeriod(code, period);
+  const visibleIds = new Set(visibleSegs.map((s) => s.id));
+  const zss = (sec.drawings[period]?.zhongshus || []).filter((z) => (z.segmentIds || []).some((id) => visibleIds.has(id)));
+  // 段号条（1..N 终点号）：右滑从左侧取消选中更早段后，仅渲染选中段（右端固定到最后一段）
+  if (_secSegHide >= visibleSegs.length) _secSegHide = Math.max(0, visibleSegs.length - 1);
+  const shownSegs = visibleSegs.slice(_secSegHide);
+  const zhongshuRects = buildZhongshuRects(zss, shownSegs);
+  renderSecSegNav(code, period, bars.length ? visibleSegs : []);
+  const digits = isETF(code) ? 3 : 2;
+  const commonOpts = {
+    sub: 'macd', period, digits, subH: 96,
+    noSwipe: true, subToggle: true, solidMacd: true, crosshairOnly: true,
+    // 十字态锁定 touch，避免拖动十字时页面跟着滚动
+    onCrossChange: (active) => wrap.classList.toggle('kline-cross-lock', active),
+  };
+  // 已绑定过视图（同一 canvas）时只更新数据并重绘，不重建 renderKlineChart：
+  // 避免重复绑定十字监听，也避免改写全局 _view 影响其它图的十字读数（与行内图/主题切换一致）
+  const reuseView = (sliced, segs) => {
+    if (!secKlineView || secKlineView.main !== main) return false;
+    secKlineView.bars = sliced;
+    secKlineView.segs = segs;
+    secKlineView.zhongshus = zhongshuRects;
+    repaintView(secKlineView);
+    return true;
+  };
+  if (!bars.length || !shownSegs.length) {
+    if (!reuseView([], [])) {
+      secKlineView = renderKlineChart(main, sub, [], { segs: [], zhongshus: zhongshuRects, ...commonOpts });
+    }
+    return;
+  }
+  // no 为段起点端点号（0 基，供图上端点编号），保持全量可见段中的原始编号，不因取消选中前段而重排
+  const viewSegItems = shownSegs.map((s, k) => ({ seg: s, no: _secSegHide + k }));
+  const startTime = shownSegs[0].start.time;
+  const endTime = bars[bars.length - 1].time;
+  // 包含 startTime 前一根 bar，使落在两根 bar 之间的段端点能通过 timeToX 时间插值精确定位
+  const startIdx = Math.max(0, bars.findIndex((b) => b.time >= startTime) - 1);
+  const sliced = bars.slice(startIdx).filter((b) => b.time <= endTime);
+  if (reuseView(sliced, viewSegItems)) return;
+  secKlineView = renderKlineChart(main, sub, sliced, { segs: viewSegItems, zhongshus: zhongshuRects, ...commonOpts });
+}
+
+// 段号条：K 线展开时显示在卡片下方，1..N（段终点端点号，图上端点编号的终点）对应当前可见段。
+// 在条上右滑 = 从左侧多取消选中一段（图上隐藏该段及更早），左滑 = 恢复一段；右端固定到最后一段。
+function renderSecSegNav(code, period, visibleSegs) {
+  const nav = document.getElementById('sec-segnav');
+  if (!nav) return;
+  // 卡片处于吸顶折叠态时 K 线实际不可见（意图态待回到顶部后手动展开），段号条一并隐藏
+  const card = document.querySelector('.sec-card--detail');
+  const collapsed = !!(card && card.classList.contains('sec-card--collapsed'));
+  if (!secKlineExpanded || collapsed || !visibleSegs || visibleSegs.length < 2) {
+    nav.hidden = true;
+    nav.innerHTML = '';
+    return;
+  }
+  nav.hidden = false;
+  nav.classList.toggle('dense', visibleSegs.length > 14); // 段多时缩小字号
+  // 段数超过每行上限时换行（每行 SEG_NAV_PER_ROW 个，后续行按钮宽度与第一行一致）
+  nav.classList.toggle('wrap', visibleSegs.length > SEG_NAV_PER_ROW);
+  nav.innerHTML = visibleSegs
+    .map((s, k) => `<span class="sec-segnum${k < _secSegHide ? ' off' : ''}" data-k="${k}">${k + 1}</span>`)
+    .join('');
+  // 中枢标记：把构成同一中枢的连续段号用主题色框圈在一起
+  const sec = state.securities.find((s2) => s2.code === code);
+  renderZhongshuFrames(nav, visibleSegs, sec?.drawings?.[period]?.zhongshus || []);
+}
+
+// 段号条上的中枢标记：把构成同一中枢的连续段号用主题色圆角框圈在一起——
+// 框外扩 3px（= 段号间隙 6px 的一半），正好落在间隙里，不与相邻段号重叠；
+// 中枢段跨行（换行布局）或中间夹入其它段时，按连续块/行拆成多个框；只框到 1 段时不画。
+function renderZhongshuFrames(nav, visibleSegs, zss) {
+  nav.querySelectorAll('.sec-zs-frame').forEach((el) => el.remove());
+  if (nav.hidden || !zss || !zss.length) return;
+  const numEls = [...nav.querySelectorAll('.sec-segnum')];
+  if (!numEls.length) return;
+  // 一次性读取几何信息（同帧内先读后写，避免多次强制同步布局）；
+  // 换算到 padding edge 坐标（绝对定位包含块的原点），与 CSS left/top 语义一致
+  const navRect = nav.getBoundingClientRect();
+  const bl = nav.clientLeft, bt = nav.clientTop;
+  const geo = numEls.map((el) => {
+    const r = el.getBoundingClientRect();
+    return { l: r.left - navRect.left - bl, t: r.top - navRect.top - bt, w: r.width, h: r.height };
+  });
+  // 段 id → 段号条下标（与编号 1..N 一一对应）
+  const idxOf = new Map();
+  visibleSegs.forEach((s, i) => { if (!idxOf.has(s.id)) idxOf.set(s.id, i); });
+  // 待绘制的框：seg = 段号条下标数组；openL/openR = 拆行后该块在上一行/下一行还有
+  // 同中枢的段（1 段也要画，且靠行尾/行首的一侧开口，表示与另一行的标记同属一个中枢）
+  const groups = [];
+  zss.forEach((z) => {
+    const idxs = [...new Set((z.segmentIds || []).map((id) => idxOf.get(id)).filter((v) => v != null))]
+      .sort((a, b) => a - b);
+    let block = [];
+    const flush = () => {
+      if (!block.length) return;
+      let start = 0;
+      for (let k = 1; k <= block.length; k++) {
+        // 换行处拆框：矩形跨行会把整行剩余宽度都框进来，看不出成组
+        if (k < block.length && geo[block[k]].t === geo[block[start]].t) continue;
+        const seg = block.slice(start, k);
+        // 单段仅在跨行拆开时绘制（如「8 在第一行行尾、9/10 在第二行行首」）；
+        // 孤立单段不画，避免与段号自身边框重叠、看不出含义
+        if (seg.length >= 2 || start > 0 || k < block.length) {
+          groups.push({ seg, openL: start > 0, openR: k < block.length });
+        }
+        start = k;
+      }
+      block = [];
+    };
+    idxs.forEach((i) => {
+      if (block.length && i !== block[block.length - 1] + 1) flush(); // 中间夹着别的段 → 拆开
+      block.push(i);
+    });
+    flush();
+  });
+  groups.forEach(({ seg, openL, openR }) => {
+    const l = Math.min(...seg.map((i) => geo[i].l)) - 3;
+    const t = Math.min(...seg.map((i) => geo[i].t)) - 3;
+    const r = Math.max(...seg.map((i) => geo[i].l + geo[i].w)) + 3;
+    const b = Math.max(...seg.map((i) => geo[i].t + geo[i].h)) + 3;
+    const frame = document.createElement('i');
+    frame.className = 'sec-zs-frame' + (openL ? ' open-l' : '') + (openR ? ' open-r' : '');
+    frame.style.cssText = `left:${l}px;top:${t}px;width:${r - l}px;height:${b - t}px`;
+    nav.appendChild(frame);
+  });
+}
+
+// 段号条滑动手势：跟手连续映射——横向每滑过 0.6 倍段号列宽步进一段（右滑增加取消选中数、
+// 左滑恢复），拖动中实时重绘（rAF 合并同帧多次步进），松手即停。
+// 换行后支持纵向（下滑隐藏更多段、上滑恢复）；一次拖动中可自由换轴：按方向窗口内的净
+// 位移判定主导方向，转向明确即以「当前位置 + 当前选中数」重新锚定并切换，无需松手重来。
+function attachSecSegNavSwipe(code, period) {
+  const nav = document.getElementById('sec-segnav');
+  if (!nav) return;
+  let tracking = false, axis = null, rowStep = 34, raf = 0;
+  // 当前轴的映射锚点：首次定轴 / 拖动中换轴都以此为基准坐标与基准选中数
+  let anchorX = 0, anchorY = 0, anchorHide = 0;
+  let downX = 0, downY = 0, stepPx = 24, maxHide = 0; // 按下点 / 横向步长 / 最大取消数（按下时缓存）
+  // 方向判定窗口：取最近 WIN_MS 内的净位移判断主导轴，单帧抖动不会误切；另一方向净
+  // 位移需超过当前方向 SWITCH_RATIO 倍且大于 SWITCH_MIN 才换轴
+  const win = [];
+  const WIN_MS = 90, SWITCH_MIN = 12, SWITCH_RATIO = 1.25;
+  const apply = (hide) => {
+    if (hide === _secSegHide) return;
+    _secSegHide = hide;
+    try { navigator.vibrate?.(8); } catch {}
+    renderSecSegNav(code, period, getVisibleSegsForPeriod(code, period));
+    if (!raf) {
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        const wrap = document.querySelector('.sec-card--detail .sec-kline');
+        if (wrap) loadAndRenderSecKline(code, period, wrap, false); // 用缓存 bars 重绘
+      });
+    }
+  };
+  nav.addEventListener('pointerdown', (e) => {
+    tracking = true; axis = null;
+    anchorX = downX = e.clientX; anchorY = downY = e.clientY; anchorHide = _secSegHide;
+    // 缓存段号真实列宽与最大取消数（拖动中段列表不变，避免每次移动重复计算）：
+    // 横向步长取 0.6 倍列宽（含 6px 间距），比「整列宽一段」更跟手
+    const els = nav.querySelectorAll('.sec-segnum');
+    const el = els[0];
+    stepPx = el ? Math.max(20, (el.offsetWidth + 6) * 0.6) : 24;
+    // 行步长实测：第二行首个段号与首行首个段号的 offsetTop 差（已含 CSS 行间距）；
+    // 单行时退化为「按钮高 + 6px」。行间距调整只需改 CSS，无需同步这里
+    const el2 = els[SEG_NAV_PER_ROW];
+    rowStep = (el && el2) ? (el2.offsetTop - el.offsetTop) : (el ? el.offsetHeight : 28) + 6;
+    maxHide = Math.max(0, getVisibleSegsForPeriod(code, period).length - 1); // 右端固定：至少保留最后一段
+    win.length = 0; win.push({ x: e.clientX, y: e.clientY, t: e.timeStamp || performance.now() });
+    // 捕获指针：条高较窄，拖动中手指滑出条外也不中断手势（换轴时需要连续跟手）
+    try { nav.setPointerCapture(e.pointerId); } catch {}
+  });
+  nav.addEventListener('pointermove', (e) => {
+    if (!tracking) return;
+    const now = e.timeStamp || performance.now();
+    win.push({ x: e.clientX, y: e.clientY, t: now });
+    while (win.length > 2 && now - win[0].t > WIN_MS) win.shift(); // 仅保留方向窗口内的采样
+    const wdx = e.clientX - win[0].x, wdy = e.clientY - win[0].y;
+    const awx = Math.abs(wdx), awy = Math.abs(wdy);
+    const wrap = nav.classList.contains('wrap');
+    if (!axis) {
+      // 首次定轴：从按下点算起位移超过 6px 后按主方向确定（仅换行后允许纵向），避免斜向滑动误判
+      const dx0 = e.clientX - downX, dy0 = e.clientY - downY;
+      if (Math.abs(dx0) <= 6 && Math.abs(dy0) <= 6) return;
+      axis = (wrap && Math.abs(dy0) > Math.abs(dx0)) ? 'y' : 'x';
+    } else if (wrap) {
+      // 拖动中换轴：按方向窗口内的净位移判定（单帧抖动不会误切）。转向明确后以
+      // 「当前位置 + 当前选中数」重新锚定，手指接着滑即可继续另一种缩放，无需松手重来
+      const next = (awx > SWITCH_MIN && awx > awy * SWITCH_RATIO) ? 'x'
+        : (awy > SWITCH_MIN && awy > awx * SWITCH_RATIO) ? 'y' : axis;
+      if (next !== axis) {
+        axis = next;
+        anchorX = e.clientX; anchorY = e.clientY; anchorHide = _secSegHide;
+        win.length = 0; win.push({ x: e.clientX, y: e.clientY, t: now });
+        return; // 本帧只换轴，下一帧起从新锚点继续跟手
+      }
+    }
+    const dx = e.clientX - anchorX, dy = e.clientY - anchorY;
+    let target;
+    if (axis === 'y') {
+      // 纵向（编号换行/两行及以上）：下滑隐藏更多段（快速聚焦最新段）、上滑恢复，每滑过一行步进一整行
+      target = anchorHide + Math.round(dy / rowStep) * SEG_NAV_PER_ROW;
+    } else {
+      target = anchorHide + Math.round(dx / stepPx);
+    }
+    apply(Math.max(0, Math.min(maxHide, target)));
+  });
+  const end = () => { tracking = false; };
+  nav.addEventListener('pointerup', end);
+  nav.addEventListener('pointercancel', end);
+  // 长按段号 → 在横条下方弹出该段的功能菜单；长按触发后停止滑动跟踪（end）
+  attachSegNavLongPress(nav, code, period, () => getVisibleSegsForPeriod(code, period), end);
+}
+
+// 周期列表页左/右滑切换方案：在内容区（非边缘）向左/右滑动切换方案
+function attachPresetSwipe(container, code) {
+  const presets = state._presets[code] || [];
+  if (presets.length < 2) {
+    removePresetSwipe();
+    return;
+  }
+
+  removePresetSwipe();
+
+  let startX = 0, startY = 0, active = false, pointerId = null;
+  const THRESHOLD = 60;
+  const EDGE = 28; // 边缘区域交给 gesture.js 处理返回
+
+  const onDown = (e) => {
+    // 只处理当前页面内的触摸
+    if (state.view !== 'periods') return;
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    // 边缘区域交给 gesture.js 处理返回
+    if (e.clientX <= EDGE || e.clientX >= window.innerWidth - EDGE) return;
+    // 展开的 K 线区域内滑动交给十字光标、段号条内滑动交给选中段手势，不触发方案切换
+    if (e.target.closest('.period-row-kline') || e.target.closest('.period-row-segnav')) return;
+    presetSwipeFired = false; // 每次新触摸重置方案滑动标志
+    startX = e.clientX;
+    startY = e.clientY;
+    active = true;
+    pointerId = e.pointerId;
+    window.addEventListener('pointermove', onMove, { passive: false });
+    window.addEventListener('pointerup', onUp);
+    window.addEventListener('pointercancel', onUp);
+  };
+
+  const onMove = (e) => {
+    if (!active || e.pointerId !== pointerId) return;
+    const dx = e.clientX - startX;
+    const dy = e.clientY - startY;
+    if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+    // 纵向滑动忽略
+    if (Math.abs(dy) > Math.abs(dx)) { cleanup(); return; }
+    if (e.cancelable) e.preventDefault();
+    if (Math.abs(dx) >= THRESHOLD) {
+      presetSwipeFired = true; // 标记已触发方案滑动，用于吞掉后续 click
+      cleanup();
+      if (dx < 0) {
+        // 左滑 → 下一个方案
+        switchPreset(code, 1);
+      } else {
+        // 右滑 → 上一个方案
+        switchPreset(code, -1);
+      }
+    }
+  };
+
+  const onUp = () => { cleanup(); };
+
+  const cleanup = () => {
+    active = false;
+    window.removeEventListener('pointermove', onMove, { passive: false });
+    window.removeEventListener('pointerup', onUp);
+    window.removeEventListener('pointercancel', onUp);
+  };
+
+  window._presetSwipeHandlers = { down: onDown, cleanup };
+  window.addEventListener('pointerdown', onDown);
+}
+
+function removePresetSwipe() {
+  if (window._presetSwipeHandlers) {
+    window.removeEventListener('pointerdown', window._presetSwipeHandlers.down);
+    window._presetSwipeHandlers.cleanup();
+    window._presetSwipeHandlers = null;
+  }
+}
+
+// 周期列表页方案指示器：固定在底部 tabbar 上方（独立信息条，始终可见，不随
+// 页面滚动消失；列表底部预留等高留白，滚到底时尾部内容不被遮挡）。选中方案
+// 用主题色强调圆点标识，方案名称紧跟强调圆点右侧显示，圆点组只占一行。
+function renderPresetIndicator(code) {
+  const presets = state._presets[code] || [];
+  const idx = state._currentPresetIdx[code] || 0;
+  if (presets.length < 2) { removePresetIndicator(); return; }
+  let el = document.getElementById('preset-indicator');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'preset-indicator';
+    el.className = 'preset-indicator';
+    // 挂 body：指示器为 fixed 定位，挂在 #sec-list 内会被其滑动切换的 transform 带偏
+    document.body.appendChild(el);
+  }
+  el.innerHTML = `
+    <div class="preset-indicator-dots">
+      ${presets.map((p, i) => (i === idx
+        ? `<span class="preset-ind-dot active"></span><span class="preset-ind-name">${p.name || `方案${i + 1}`}</span>`
+        : '<span class="preset-ind-dot"></span>')).join('')}
+    </div>`;
+}
+
+function removePresetIndicator() {
+  const el = document.getElementById('preset-indicator');
+  if (el) el.remove();
+}
+
+// 切换到指定方向的方案（dir=1 下一个，dir=-1 上一个）
+function switchPreset(code, dir) {
+  const presets = state._presets[code] || [];
+  if (presets.length < 2) return;
+  const curIdx = state._currentPresetIdx[code] || 0;
+  const nextIdx = curIdx + dir;
+  // 到第一个/最后一个方案后不再循环
+  if (nextIdx < 0 || nextIdx >= presets.length) return;
+  state._currentPresetIdx[code] = nextIdx;
+
+  // 切换后重新加载该证券所有周期的画线数据
+  const sec = state.securities.find((s) => s.code === code);
+  if (!sec) { renderPeriodList(code); return; }
+
+  const newPreset = presets[nextIdx];
+  // 查找匹配的 preset id，重新设置各周期的 segments/zhongshus
+  const periods = Object.keys(sec.drawings);
+  for (const p of periods) {
+    const d = sec.drawings[p];
+    if (d.presets && Array.isArray(d.presets)) {
+      const match = d.presets.find((pr) => pr.id === newPreset.id);
+      if (match) {
+        d.segments = match.segments || [];
+        d.zhongshus = match.zhongshus || [];
+        d.activePreset = newPreset.id;
+        d.presetName = newPreset.name;
+      }
+    }
+  }
+
+  try { navigator.vibrate?.(10); } catch {}
+  renderPeriodList(code, { keepHeader: true });
+}
+
+// ========== 单击周期行 → 行内展开/切换/收起 K 线；长按 → 该周期段信息页 ==========
+// 每个展开行持有独立闭包视图（ownView），互不干扰；展开记录存于 state._periodExpanded，
+// preset 切换/数据刷新重建列表后自动恢复已展开行。
+// 合并行（5m|15m、30m|60m）左右两半共用同一条 K 线区：单击哪半展开哪个周期的图，
+// 主周期与辅助周期的 K 线不同时出现；再单击同一半收起，单击另一半直接把图切换过去。
+function togglePeriodRowKline(code, period, row) {
+  const wasExpanded = row.classList.contains('expanded');
+  // 合并行内切换半区：保持展开，仅把 K 线切换为另一半的周期（重建视图）
+  if (wasExpanded && rowActivePeriod(row) !== period) {
+    const prev = rowActivePeriod(row);
+    setRowActivePeriod(row, period);
+    state._periodExpanded.delete(prev);
+    state._periodExpanded.add(period);
+    try { navigator.vibrate?.(10); } catch {}
+    renderPeriodRowKline(code, period, row);
+    refreshExpandedPeriodRow(code, period, row);
+    return;
+  }
+  const expanding = !wasExpanded;
+  row.classList.toggle('expanded', expanding);
+  if (expanding) {
+    setRowActivePeriod(row, period); // 选出展示周期并恢复该半区段号条的取消选中状态
+    state._periodExpanded.add(period);
+    try { navigator.vibrate?.(10); } catch {}
+    renderPeriodRowKline(code, period, row);
+    refreshExpandedPeriodRow(code, period, row);
+  } else {
+    state._periodExpanded.delete(period);
+    // 收起时重置段号条的取消选中状态并隐藏（与详情页证券卡片收起行为一致）
+    row._segHide = 0;
+    if (state._periodSegHide) delete state._periodSegHide[period];
+    renderPeriodRowSegNav(row, []);
+    const kline = row.querySelector('.period-row-kline');
+    if (kline) kline.classList.remove('cross-lock');
+  }
+}
+
+// 设置行当前展示的周期（普通行等价于自身周期）：合并行两半共用 K 线区，切换时保存
+// 旧半区的段号条状态、读出另一半的状态，重建视图并高亮当前半区。
+// 说明：renderKlineChart 会向 canvas 绑定十字光标监听（main 上无防重复标记），复用
+// 同一 canvas 换视图会叠加出一整套旧监听，故切换周期时整体重建 canvas 元素。
+function setRowActivePeriod(row, period) {
+  const prev = row.dataset.activePeriod;
+  if (prev === period) return;
+  if (prev && state._periodSegHide) state._periodSegHide[prev] = row._segHide || 0;
+  row.dataset.activePeriod = period;
+  row._segHide = state._periodSegHide?.[period] || 0;
+  row._klView = null;
+  const kline = row.querySelector('.period-row-kline');
+  if (kline) {
+    kline.innerHTML = '<canvas class="period-kline-main"></canvas><canvas class="period-kline-sub"></canvas>';
+    kline.classList.remove('cross-lock');
+  }
+  if (row.dataset.periodAux) {
+    row.querySelectorAll('.period-half').forEach((h) => {
+      h.classList.toggle('active', h.dataset.period === period);
+    });
+  }
+}
+
+// 展开/切换展示周期后，后台按最新 K 线重算该周期的盯盘段/追踪段终点，数据有变化则重绘该行
+function refreshExpandedPeriodRow(code, period, row) {
+  refreshSegmentsForPeriod(code, period).then((changed) => {
+    // 期间可能已收起或切换半区：仅在仍展示该周期时重绘，避免用过期周期的数据覆盖新图
+    if (changed && row.isConnected && row.classList.contains('expanded') && rowActivePeriod(row) === period) {
+      renderPeriodRowKline(code, period, row);
+      if (state.view === 'periods' && state.selectedCode === code) {
+        renderPeriodList(code, { keepHeader: true });
+      }
+    }
+  });
+}
+
+// 构建某周期行内 K 线的切片数据（可见段/中枢、取数范围），与旧弹窗 periodStats 一致。
+// segHide：段号条从左侧取消选中的段数（0=全部显示，右端固定到最后一段），与详情页 _secSegHide 语义一致
+function buildPeriodRowSlice(code, period, bars, segHide = 0) {
+  const sec = state.securities.find((s) => s.code === code);
+  if (!sec) return null;
+  const higherPeriod = getHigherPeriod(period, sec.periods || []);
+  const higherSegments = (higherPeriod && sec.drawings[higherPeriod]?.segments) || [];
+  const allSegs = sec.drawings[period]?.segments || [];
+  const hideBefore = computeHideBefore(higherSegments, higherPeriod, allSegs);
+  let segs = [...allSegs];
+  if (hideBefore != null) segs = segs.filter((s) => (s.start?.time ?? s.end?.time ?? 0) >= hideBefore);
+  const visibleIds = new Set(segs.map((s) => s.id));
+  const zss = (sec.drawings[period]?.zhongshus || []).filter((z) => (z.segmentIds || []).some((id) => visibleIds.has(id)));
+  const visibleSegs = getVisibleSegsForPeriod(code, period);
+  if (segHide >= visibleSegs.length) segHide = Math.max(0, visibleSegs.length - 1);
+  const shownSegs = visibleSegs.slice(segHide);
+  const zhongshuRects = buildZhongshuRects(zss, shownSegs);
+  const digits = isETF(code) ? 3 : 2;
+  if (!bars.length || !shownSegs.length) {
+    return { bars: [], segs: [], zhongshus: zhongshuRects, digits, visibleSegs };
+  }
+  // no 为段起点端点号（0 基，供图上端点编号），保持全量可见段中的原始编号，不因取消选中前段而重排
+  const viewSegItems = shownSegs.map((s, k) => ({ seg: s, no: segHide + k }));
+  const startTime = shownSegs[0].start.time;
+  const endTime = bars[bars.length - 1].time;
+  // 包含 startTime 前一根 bar，使落在两根 bar 之间的段端点能通过 timeToX 时间插值精确定位
+  const startIdx = Math.max(0, bars.findIndex((b) => b.time >= startTime) - 1);
+  const sliced = bars.slice(startIdx).filter((b) => b.time <= endTime);
+  return { bars: sliced, segs: viewSegItems, zhongshus: zhongshuRects, digits, visibleSegs };
+}
+
+// 渲染/刷新某周期行的行内 K 线（主图 + 副图 + 十字 + 中枢/段标注）。
+// 已渲染过的行复用绑定的闭包视图，仅更新数据重绘，避免重复绑定十字光标。
+async function renderPeriodRowKline(code, period, row) {
+  const sec = state.securities.find((s) => s.code === code);
+  if (!sec) return;
+  const kline = row.querySelector('.period-row-kline');
+  if (!kline) return;
+  const main = kline.querySelector('.period-kline-main');
+  const sub = kline.querySelector('.period-kline-sub');
+  if (!main || !sub) return;
+  // 段号条已取消选中的段数：段数减少时收敛到合法范围（右端固定最后一段）
+  const visibleSegs = getVisibleSegsForPeriod(code, period);
+  if ((row._segHide || 0) >= visibleSegs.length) row._segHide = Math.max(0, visibleSegs.length - 1);
+  // K 线展示用本周期真实数据（辅助周期 15m/60m 不再回落主周期）；
+  // 段的盯盘/追踪更新由 refreshSegmentsForPeriod 用主周期 bars 另算，互不影响。
+  let bars;
+  try {
+    // 新展开的行强制取最新；已绑定视图的重绘用缓存（轮询由 refreshPeriodRowsKline 刷新）
+    bars = await ensureDisplayBars(code, period, !row._klView);
+  } catch { bars = []; }
+  // 取数期间行可能已收起或切换展示周期（合并行）：放弃过期渲染
+  if (!row.classList.contains('expanded') || rowActivePeriod(row) !== period) return;
+  // 段号条（1..N 段号）与 K 线同步：右滑取消选中更早段后仅渲染选中段；无数据时隐藏
+  renderPeriodRowSegNav(row, bars.length ? visibleSegs : []);
+  const data = buildPeriodRowSlice(code, period, bars, row._segHide || 0);
+  if (!data) return;
+  if (row._klView) {
+    const v = row._klView;
+    v.bars = data.bars; v.segs = data.segs; v.zhongshus = data.zhongshus;
+    repaintView(v);
+    return;
+  }
+  row._klView = renderKlineChart(main, sub, data.bars, {
+    segs: data.segs, zhongshus: data.zhongshus, sub: 'macd', period, digits: data.digits, subH: 96,
+    noSwipe: true, subToggle: true, solidMacd: true, crosshairOnly: true,
+    ownView: true, // 多行同时展开时各行用闭包视图，避免共享全局 _view 相互覆盖
+    onCrossChange: (active) => kline.classList.toggle('cross-lock', active),
+  });
+}
+
+// 周期行内段号条：与详情页 .sec-segnav 同款——1..N 段号对应当前可见段（段终点端点号），
+// 右滑从左侧取消选中更早段（图上隐藏该段及更早），左滑恢复，右端固定到最后一段；
+// 每行独立维护选中态（row._segHide，行重建后由 state._periodSegHide 恢复），多行同展开互不影响。
+function renderPeriodRowSegNav(row, visibleSegs) {
+  const nav = row.querySelector('.period-row-segnav');
+  if (!nav) return;
+  const hide = row._segHide || 0;
+  if (!row.classList.contains('expanded') || !visibleSegs || visibleSegs.length < 2) {
+    nav.hidden = true;
+    nav.innerHTML = '';
+    return;
+  }
+  nav.hidden = false;
+  nav.classList.toggle('dense', visibleSegs.length > 14); // 段多时缩小字号
+  // 段数超过每行上限时换行（每行 SEG_NAV_PER_ROW 个，后续行按钮宽度与第一行一致）
+  nav.classList.toggle('wrap', visibleSegs.length > SEG_NAV_PER_ROW);
+  nav.innerHTML = visibleSegs
+    .map((s, k) => `<span class="sec-segnum${k < hide ? ' off' : ''}" data-k="${k}">${k + 1}</span>`)
+    .join('');
+  // 中枢标记：把构成同一中枢的连续段号用主题色框圈在一起（合并行取当前展示半区的周期）
+  const p = rowActivePeriod(row) || row.dataset.period;
+  const sec = state.securities.find((s2) => s2.code === state.selectedCode);
+  renderZhongshuFrames(nav, visibleSegs, sec?.drawings?.[p]?.zhongshus || []);
+}
+
+// 行内段号条滑动手势：与详情页 attachSecSegNavSwipe 一致——跟手连续映射，横向每滑过 0.6 倍
+// 段号列宽步进一段（rAF 合并同帧多次步进），拖动中实时重绘该行 K 线，松手即停。
+// 换行后支持纵向（下滑隐藏更多段、上滑恢复）；一次拖动中可自由换轴：按方向窗口内的净
+// 位移判定主导方向，转向明确即以「当前位置 + 当前选中数」重新锚定并切换，无需松手重来。
+function attachPeriodRowSegNavSwipe(row, code, period) {
+  const nav = row.querySelector('.period-row-segnav');
+  if (!nav) return;
+  // 合并行两半共用段号条：周期跟随当前展示的半区（长按切换后自动作用于新周期）
+  const periodOf = () => rowActivePeriod(row) || period;
+  let tracking = false, axis = null, rowStep = 34, raf = 0;
+  // 当前轴的映射锚点：首次定轴 / 拖动中换轴都以此为基准坐标与基准选中数
+  let anchorX = 0, anchorY = 0, anchorHide = 0;
+  let downX = 0, downY = 0, stepPx = 24, maxHide = 0; // 按下点 / 横向步长 / 最大取消数（按下时缓存）
+  // 方向判定窗口：取最近 WIN_MS 内的净位移判断主导轴，单帧抖动不会误切；另一方向净
+  // 位移需超过当前方向 SWITCH_RATIO 倍且大于 SWITCH_MIN 才换轴
+  const win = [];
+  const WIN_MS = 90, SWITCH_MIN = 12, SWITCH_RATIO = 1.25;
+  const apply = (hide) => {
+    if (hide === (row._segHide || 0)) return;
+    row._segHide = hide;
+    if (state._periodSegHide) state._periodSegHide[periodOf()] = hide;
+    try { navigator.vibrate?.(8); } catch {}
+    renderPeriodRowSegNav(row, getVisibleSegsForPeriod(code, periodOf()));
+    if (!raf) {
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        if (row.isConnected && row.classList.contains('expanded')) renderPeriodRowKline(code, periodOf(), row); // 用缓存 bars 重绘
+      });
+    }
+  };
+  nav.addEventListener('pointerdown', (e) => {
+    tracking = true; axis = null;
+    anchorX = downX = e.clientX; anchorY = downY = e.clientY; anchorHide = row._segHide || 0;
+    // 缓存段号真实列宽与最大取消数（拖动中段列表不变，避免每次移动重复计算）：
+    // 横向步长取 0.6 倍列宽（含 6px 间距），比「整列宽一段」更跟手
+    const els = nav.querySelectorAll('.sec-segnum');
+    const el = els[0];
+    stepPx = el ? Math.max(20, (el.offsetWidth + 6) * 0.6) : 24;
+    // 行步长实测：第二行首个段号与首行首个段号的 offsetTop 差（已含 CSS 行间距）；
+    // 单行时退化为「按钮高 + 6px」。行间距调整只需改 CSS，无需同步这里
+    const el2 = els[SEG_NAV_PER_ROW];
+    rowStep = (el && el2) ? (el2.offsetTop - el.offsetTop) : (el ? el.offsetHeight : 28) + 6;
+    maxHide = Math.max(0, getVisibleSegsForPeriod(code, periodOf()).length - 1); // 右端固定：至少保留最后一段
+    win.length = 0; win.push({ x: e.clientX, y: e.clientY, t: e.timeStamp || performance.now() });
+    // 捕获指针：条高较窄，拖动中手指滑出条外也不中断手势（换轴时需要连续跟手）
+    try { nav.setPointerCapture(e.pointerId); } catch {}
+  });
+  nav.addEventListener('pointermove', (e) => {
+    if (!tracking) return;
+    const now = e.timeStamp || performance.now();
+    win.push({ x: e.clientX, y: e.clientY, t: now });
+    while (win.length > 2 && now - win[0].t > WIN_MS) win.shift(); // 仅保留方向窗口内的采样
+    const wdx = e.clientX - win[0].x, wdy = e.clientY - win[0].y;
+    const awx = Math.abs(wdx), awy = Math.abs(wdy);
+    const wrap = nav.classList.contains('wrap');
+    if (!axis) {
+      // 首次定轴：从按下点算起位移超过 6px 后按主方向确定（仅换行后允许纵向），避免斜向滑动误判
+      const dx0 = e.clientX - downX, dy0 = e.clientY - downY;
+      if (Math.abs(dx0) <= 6 && Math.abs(dy0) <= 6) return;
+      axis = (wrap && Math.abs(dy0) > Math.abs(dx0)) ? 'y' : 'x';
+    } else if (wrap) {
+      // 拖动中换轴：按方向窗口内的净位移判定（单帧抖动不会误切）。转向明确后以
+      // 「当前位置 + 当前选中数」重新锚定，手指接着滑即可继续另一种缩放，无需松手重来
+      const next = (awx > SWITCH_MIN && awx > awy * SWITCH_RATIO) ? 'x'
+        : (awy > SWITCH_MIN && awy > awx * SWITCH_RATIO) ? 'y' : axis;
+      if (next !== axis) {
+        axis = next;
+        anchorX = e.clientX; anchorY = e.clientY; anchorHide = row._segHide || 0;
+        win.length = 0; win.push({ x: e.clientX, y: e.clientY, t: now });
+        return; // 本帧只换轴，下一帧起从新锚点继续跟手
+      }
+    }
+    const dx = e.clientX - anchorX, dy = e.clientY - anchorY;
+    let target;
+    if (axis === 'y') {
+      // 纵向（编号换行/两行及以上）：下滑隐藏更多段（快速聚焦最新段）、上滑恢复，每滑过一行步进一整行
+      target = anchorHide + Math.round(dy / rowStep) * SEG_NAV_PER_ROW;
+    } else {
+      target = anchorHide + Math.round(dx / stepPx);
+    }
+    apply(Math.max(0, Math.min(maxHide, target)));
+  });
+  const end = () => { tracking = false; };
+  nav.addEventListener('pointerup', end);
+  nav.addEventListener('pointercancel', end);
+  // 长按段号 → 在横条下方弹出该段的功能菜单；长按触发后停止滑动跟踪（end）
+  attachSegNavLongPress(nav, code, periodOf, () => getVisibleSegsForPeriod(code, periodOf()), end);
+}
+
+// 轮询刷新后同步所有展开行的行内 K 线：按展示周期分组，各周期强制取本周期最新
+// K 线重绘（主周期复用轮询已刷新的 _currentBars，辅助周期取本周期真实数据）。
+// 段/中枢已在轮询中按主周期更新完毕，这里只需重切重绘。
+function refreshPeriodRowsKline(code) {
+  const rowsByPeriod = new Map();
+  document.querySelectorAll('.period-row.expanded').forEach((row) => {
+    const p = rowActivePeriod(row);
+    if (!p || !row._klView) return;
+    if (!rowsByPeriod.has(p)) rowsByPeriod.set(p, []);
+    rowsByPeriod.get(p).push(row);
+  });
+  for (const [p, rows] of rowsByPeriod) {
+    ensureDisplayBars(code, p, true).then((bars) => {
+      if (!bars || !bars.length) return;
+      for (const row of rows) {
+        if (!row.isConnected) continue;
+        const data = buildPeriodRowSlice(code, p, bars, row._segHide || 0);
+        if (!data) continue;
+        renderPeriodRowSegNav(row, data.visibleSegs); // 段增减后同步段号条
+        const v = row._klView;
+        v.bars = data.bars; v.segs = data.segs; v.zhongshus = data.zhongshus;
+        repaintView(v);
+      }
+    }).catch(() => {});
+  }
+}
+
+// 段数据变化后（增删改/中枢识别/盯盘推进等）同步周期页该周期展开行的行内 K 线：
+// 用缓存 bars 重切重绘，使菜单操作立即在行内图上生效（详情页/周期页共用操作入口）
+function refreshPeriodRowKlinesForPeriod(code, period) {
+  if (state.view !== 'periods' || state.selectedCode !== code) return;
+  document.querySelectorAll('.period-row.expanded').forEach((row) => {
+    if (rowActivePeriod(row) !== period || !row._klView) return;
+    renderPeriodRowKline(code, period, row); // 已绑定视图走缓存 bars，不发网络请求
+  });
+}
+
+// 主题切换后同步所有展开行的行内 K 线（repaintView 内部重读 CSS 变量主题色）
+function repaintPeriodRowsKline() {
+  document.querySelectorAll('.period-row.expanded').forEach((row) => {
+    if (row._klView) repaintView(row._klView);
+  });
+}
+
+// 按最新 K 线重算某周期的盯盘段（_isWatch）与追踪段（_isTrack）终点，返回是否有数据变化。
+// 辅助周期的画线即主周期刻度，算法取数回落主周期，保证段端点 time 能在 bars 中精确
+// 定位（否则盯盘段会被误判为「起点不在 bars 中」而降级成普通段）。
+// 注意：本函数只更新画线数据；K 线展示用本周期数据，由 renderPeriodRowKline 另取。
+async function refreshSegmentsForPeriod(code, period) {
+  const sec = state.securities.find((s) => s.code === code);
+  const d = sec?.drawings?.[period];
+  if (!d) return false;
+  const segs = d.segments || [];
+  const hasWatch = segs.some((s) => s._isWatch);
+  const hasTrack = segs.some((s) => s._isTrack);
+  if (!hasWatch && !hasTrack) return false;
+  const fetchPeriod = AUX_TO_MAIN[period] || period;
+  try {
+    const res = await fetchBars(code, fetchPeriod, 800);
+    const bars = res.bars || [];
+    if (!bars.length) return false;
+    computeMACD(bars);
+    if (!state._currentBars || state._currentBars.period === fetchPeriod) {
+      state._currentBars = { code, period: fetchPeriod, bars };
+    }
+    let changed = false;
+    if (hasWatch) {
+      const u = updateWatchSegments(code, period, bars, false);
+      changed = !!(u.changed || u.structural);
+    }
+    if (hasTrack) {
+      const u = updateTrackSegments(code, period, bars);
+      changed = changed || !!u.changed;
+    }
+    return changed;
+  } catch {
+    return false;
+  }
+}
+
+// 长按周期行：按住 480ms 进入该周期的段信息页；移动超过 10px 视为滑动/滚动，取消。
+// 合并行按长按位置区分：左半=主周期、右半=辅助周期。
+function attachPeriodRowLongPress(row, code, period) {
+  let timer = null;
+  let sx = 0, sy = 0, target = period;
+  const LONG_MS = 480;
+  const start = (x, y, p) => {
+    longPressFired = false;
+    sx = x; sy = y;
+    target = p;
+    timer = setTimeout(() => {
+      timer = null;
+      longPressFired = true; // 吞掉随后冒泡的 click，避免又触发行内 K 线的开合
+      try { navigator.vibrate?.(10); } catch {}
+      pushView('detail', code, target);
+    }, LONG_MS);
+  };
+  const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  row.addEventListener('pointerdown', (e) => {
+    // 展开的 K 线区域内的长按交给十字光标、段号条内的长按交给滑动选择，均不触发行收起
+    if (e.target.closest('.period-row-kline') || e.target.closest('.period-row-segnav')) return;
+    // 长按哪半 → 弹入哪个周期的 K 线（合并行左半主周期、右半辅助周期）
+    const p = e.target.closest('.period-half')?.dataset.period || row.dataset.period;
+    start(e.clientX, e.clientY, p);
+  });
+  row.addEventListener('pointermove', (e) => {
+    if (Math.abs(e.clientX - sx) > 10 || Math.abs(e.clientY - sy) > 10) cancel();
+  });
+  row.addEventListener('pointerup', cancel);
+  row.addEventListener('pointercancel', cancel);
+  row.addEventListener('contextmenu', (e) => e.preventDefault());
+}
+
+// 详情页证券卡片：根据卡片实际位置切换折叠态（2 行 → 1 行）
+// 判定依据卡片「吸顶后的实际渲染位置」而非 window.scrollY：
+//   卡片吸顶后其 top 固定在 sticky 位置（top:48），折叠只会缩小高度、不会移动 top，
+//   因此一旦折叠就稳定停留，不会因高度变化而反复横跳（彻底消除抖动）。
+// 同时用 requestAnimationFrame 节流，并加 4px 滞回，避免临界处频繁切换。
+let _detailScrollRaf = 0;
+function onDetailScroll() {
+  if (_detailScrollRaf) return;
+  _detailScrollRaf = requestAnimationFrame(() => {
+    _detailScrollRaf = 0;
+    // 详情页（K 线）与周期列表页（分时图）顶部证券卡片共用同一套吸顶折叠逻辑
+    const card = document.querySelector('.sec-card--detail') || document.querySelector('.sec-card--periods');
+    if (!card) return;
+    // 图表展开时：卡片不吸顶、不折叠，展板随页面滚动保持完整（收起后恢复吸顶折叠）
+    if (card.classList.contains('intraday-expanded')) return;
+    const header = document.querySelector('.wx-header');
+    const stickyTop = (header ? header.offsetHeight : 48) + 1; // 卡片吸顶时的视口 top
+    const top = card.getBoundingClientRect().top;
+    const collapsed = card.classList.contains('sec-card--collapsed');
+    // 已折叠时多给 4px 滞回，防止在阈值边缘来回弹
+    const shouldCollapse = collapsed ? (top <= stickyTop + 4) : (top <= stickyTop);
+    if (shouldCollapse !== collapsed) {
+      card.classList.toggle('sec-card--collapsed', shouldCollapse);
+      if (shouldCollapse) {
+        // 吸顶折叠时隐藏展开的图表（卡片显示为一行）；
+        // 上滑回顶不自动恢复，需手动长按重新展开，避免图表抢占下方内容视野
+        if (card.classList.contains('sec-card--detail')) {
+          if (secKlineExpanded) {
+            secKlineExpanded = false;
+            syncSecKlineVisible(card);
+          }
+        } else {
+          const wrap = card.querySelector('.sec-intraday');
+          if (wrap && wrap.classList.contains('expanded')) {
+            wrap.classList.remove('expanded');
+            card.classList.remove('intraday-expanded');
+          }
+        }
+      }
+    }
+  });
+}
+
+// ========== 周期详情渲染 ==========
+async function renderPeriodDetail(code, period) {
+  const box = $('#sec-list');
+  const sec = state.securities.find((s) => s.code === code);
+  if (!sec) { navigate('list'); return; }
+  // 每次进入详情页都是全新卡片，重置 K 线展开意图与视图引用
+  secKlineExpanded = false;
+  secKlineView = null;
+  _secSegHide = 0;
+  _klineView = null;
+  _klineSub = 'macd';
+  const rt = state._rtPrices?.[code];
+  const name = sec.name || rt?.name || code;
+  const displayCode = sec.code.toUpperCase();
+  const change = fmtIndexChange(rt?.price, rt?.prevClose);
+  const priceText = rt?.price ? formatPrice(code, rt.price) : '';
+  box.innerHTML = `
+    <div class="sec-card sec-card--detail">
+      <div class="sec-head">
+        <div class="sec-info">
+          <div class="sec-name" data-name="${code}">${name}</div>
+          <div class="sec-meta">${displayCode} · ${periodLabel(period)}</div>
+        </div>
+        <div class="sec-right">
+          <div class="sec-quote" data-rt="${code}">
+            <div class="sec-price">${priceText}</div>
+            <div class="sec-change ${change.cls}">${change.text}</div>
+          </div>
+        </div>
+      </div>
+      <div class="sec-intraday sec-kline">
+        <canvas id="detail-kline-main"></canvas>
+        <canvas id="detail-kline-sub"></canvas>
+      </div>
+    </div>
+    <div class="sec-segnav" id="sec-segnav" hidden></div>
+    <div id="period-detail"><div class="empty">加载中…</div></div>
+  `;
+  const card = box.querySelector('.sec-card--detail');
+  attachSecKlineLongPress(card, code, period);
+  attachSecSegNavSwipe(code, period);
+  await loadAndRenderPeriodDetail(code, period);
+  staggerEnter(box, '.sec-card');
+}
+
+async function loadAndRenderPeriodDetail(code, period) {
+  const sec = state.securities.find((s) => s.code === code);
+  const detail = $('#period-detail');
+  if (!sec || !detail) return;
+
+  // 更高周期最新一段终点：用于在低级别周期隐藏过早的段卡片（聚焦到最新一段覆盖的交易日）
+  const higherPeriod = getHigherPeriod(period, sec.periods || []);
+  const higherSegments = (higherPeriod && sec.drawings[higherPeriod]?.segments) || [];
+  // 画线算法（盯盘 catchUp/追踪/力度）用主周期 bars：辅助周期的段是主周期（5m/30m）
+  // 刻度，段起点 time 在 15m/60m bars 里找不到，updateWatchSegments 会把盯盘段误判为
+  // 「起点不在 bars 中」而降级成普通段，并被 scheduleAutoSave 落盘成永久改动。
+  // K 线展示（证券卡片/段弹窗/行内图）用本周期真实数据，走 ensureDisplayBars 另取。
+  const fetchPeriod = AUX_TO_MAIN[period] || period;
+
+  try {
+    const curRes = await fetchBars(code, fetchPeriod, 800);
+    const bars = curRes.bars || [];
+    state._currentBars = { code, period: fetchPeriod, bars };
+    computeMACD(bars);
+    // 先根据最新 K 线更新盯盘段终点（A0 级别）与追踪段终点（非 A0 级别），再重新构建渲染分组
+    // A0 盯盘：进入时先用全量历史K线连续回放补齐中间段（对齐桌面版「打开即画完」）
+    catchUpWatchSegments(code, period, bars);
+    updateTrackSegments(code, period, bars);
+    const d = sec.drawings[period] || { segments: [], zhongshus: [] };
+    const group = { period, label: periodLabel(period), segments: [...d.segments], zhongshus: [...d.zhongshus], loaded: false, error: null };
+    computeStrengths(bars, group.segments, group.zhongshus);
+    group.loaded = true;
+    const hideBefore = computeHideBefore(higherSegments, higherPeriod, group.segments);
+    if (!$('#period-detail')) return;
+    renderSinglePeriodDetail(detail, code, group, hideBefore);
+  } catch (err) {
+    const d = sec.drawings[period] || { segments: [], zhongshus: [] };
+    const group = { period, label: periodLabel(period), segments: [...d.segments], zhongshus: [...d.zhongshus], loaded: false, error: null };
+    group.error = (err && err.message) || '加载失败';
+    if (!$('#period-detail')) return;
+    renderSinglePeriodDetail(detail, code, group, null);
+  }
+}
+
+function renderSinglePeriodDetail(detail, code, g, hideBefore = null, animate = true) {
+  detail.innerHTML = '';
+  const header = document.createElement('div');
+  header.className = 'period-title';
+  let label = g.label;
+  if (g.error) label += ' · 加载失败';
+  else if (!g.loaded) label += ' · 加载中…';
+  header.textContent = label;
+  // 「问 AI」只在结构已算好时出现：加载中/失败时给一张只有「加载中」的简报等于给 AI 喂错话
+  if (g.loaded) {
+    const aiBtn = document.createElement('button');
+    aiBtn.type = 'button';
+    aiBtn.className = 'period-ai-btn';
+    aiBtn.textContent = '问 AI';
+    aiBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      openBriefSheet(code, g.period);
+    });
+    header.appendChild(aiBtn);
+  }
+  if (g.error) {
+    const retry = document.createElement('button');
+    retry.className = 'mini retry-btn';
+    retry.textContent = '重试';
+    retry.style.cssText = 'margin-left:8px;font-size:11px;padding:2px 8px;';
+    retry.onclick = (e) => { e.stopPropagation(); loadAndRenderPeriodDetail(state.selectedCode, g.period); };
+    header.appendChild(retry);
+  }
+  detail.appendChild(header);
+  if (g.loaded || g.error) {
+    // 历时统计按「K线根数 × 周期」计算：辅助周期 bars 实际是主周期数据，
+    // 周期键也要传主周期（15m 段用 5m bars 根数 × 5min），否则历时虚高 3 倍。
+    const durPeriod = AUX_TO_MAIN[g.period] || g.period;
+    renderSegments(detail, g.segments || [], g.zhongshus || [], (t) => fmt(t, g.period), code, false, hideBefore, durPeriod, state._currentBars?.bars || []);
+    attachSegmentCardActions(code, g.period);
+    attachSegmentKlineSubToggle(detail);
+    // 重渲染（实时刷新/编辑）后恢复已展开的段 K 线到新卡片上
+    restoreSegmentKlineExpansion(code, g.period);
+    attachZhongshuEditActions(code, g.period);
+  }
+  if (animate) staggerEnter(detail, '.period-title, .plain-card, .zs-block, .empty');
+}
+
+// ========== 手机端「问 AI」：把当前这张图翻译成一段人话，复制去 WorkBuddy ==========
+// 只做三件事：取现成结果（algo.js 已算好的段/中枢/力度/买卖点）→ 交给 ai_brief.js 拼装 →
+// 展示 + 复制。这里**不做任何判定**，也不从 K 线重新数段，否则就和桌面 L1 变成两套口径。
+//
+// 入参只用 (code, period)：周期行与详情页两个入口都调它，数据自己取，
+// 不依赖「调用前是否进过详情页」（那会让另一个入口静默失效）。
+let _briefBusy = false;
+async function openBriefSheet(code, period) {
+  if (_briefBusy) return;
+  const sec = state.securities.find((s) => s.code === code);
+  if (!sec || !period) return;
+  // 辅助周期（15m/60m）的段是主周期（5m/30m）刻度：力度必须用主周期 K 线算，
+  // 用 15m 的 bars 去找 5m 的段端点会静默算偏。
+  const briefPeriod = AUX_TO_MAIN[period] || period;
+
+  _briefBusy = true;
+  let bars = [];
+  try {
+    bars = (await ensureDisplayBars(code, briefPeriod, false)) || [];
+  } catch (e) {
+    bars = [];
+  } finally {
+    _briefBusy = false;
+  }
+  if (!bars.length) { toast('K 线还没加载完，稍后再试'); return; }
+
+  const rt = state._rtPrices?.[code];
+  const presets = state._presets?.[code] || [];
+  const pIdx = state._currentPresetIdx?.[code] || 0;
+  const presetName = (presets.length > 1 && presets[pIdx])
+    ? (presets[pIdx].name || `方案${pIdx + 1}`)
+    : null;
+  const periodNote = (briefPeriod !== period)
+    ? `你正在看的是 ${periodLabel(period)} 周期。它是辅助周期，画线沿用 ${periodLabel(briefPeriod)} 的刻度，`
+      + `所以下面按 ${periodLabel(briefPeriod)} 的口径描述段与中枢（段的时间点都是 ${periodLabel(briefPeriod)} 的 K 线时刻）。`
+    : '';
+
+  let brief = null;
+  try {
+    // 深拷贝后再跑算法：周期行入口进来时，画布上的段还没被 computeStrengths 装饰过
+    // （行内 K 线不画买卖点、不显示力度）。直接用原对象会得到「力度不可比、零买卖点」
+    // 的假简报；而就地装饰又会把结果写回共享的画布对象，污染其它视图。
+    const segs = JSON.parse(JSON.stringify((sec.drawings?.[period] && sec.drawings[period].segments) || []));
+    const zss = JSON.parse(JSON.stringify((sec.drawings?.[period] && sec.drawings[period].zhongshus) || []));
+    if (segs.length) computeStrengths(bars, segs, zss);
+    brief = buildBrief({
+      code,
+      name: sec.name || rt?.name || code,
+      period: briefPeriod,
+      periodNote,
+      bars,
+      segments: segs,
+      zhongshus: zss,
+      quote: rt ? { price: rt.price, prevClose: rt.prevClose } : null,
+      a0Period: sec._a0Period || null,
+      // 方案名取自列表页同一来源（state._presets + 当前索引）。drawings[period] 上没有
+      // presetName 字段，从那里取会静默变成 null，简报就少了「看的是哪个方案」。
+      presetName,
+    });
+  } catch (err) {
+    toast('生成失败：' + ((err && err.message) || '未知错误'));
+    return;
+  }
+
+  const old = document.getElementById('brief-sheet');
+  if (old) old.remove();
+
+  const sheet = document.createElement('div');
+  sheet.id = 'brief-sheet';
+  sheet.className = 'action-sheet-mask';
+  const warnHtml = (brief.warnings && brief.warnings.length)
+    ? `<div class="brief-warn">⚠ ${escapeHtml(brief.warnings.join('；'))}</div>`
+    : '';
+  sheet.innerHTML = `
+    <div class="action-sheet brief-sheet">
+      <div class="action-sheet-title">
+        <span>问 AI · 结构简报</span>
+        <button class="action-sheet-close" aria-label="关闭">×</button>
+      </div>
+      <div class="brief-body">
+        <div class="brief-hint">点「复制全文」，打开 WorkBuddy 粘贴，再补一句你想问的（例如「现在能不能进」「下一个该盯哪个价位」）。</div>
+        ${warnHtml}
+        <pre class="brief-text" id="brief-text"></pre>
+      </div>
+      <div class="action-sheet-footer brief-footer">
+        <button type="button" class="mini" id="brief-copy">复制全文</button>
+        <button type="button" class="primary" id="brief-share">分享到…</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(sheet);
+  sheet.querySelector('#brief-text').textContent = brief.text;
+
+  const close = () => {
+    sheet.classList.remove('show');
+    setTimeout(() => sheet.remove(), 260);
+  };
+  sheet.querySelector('.action-sheet-close').addEventListener('click', close);
+  sheet.addEventListener('click', (e) => { if (e.target === sheet) close(); });
+
+  sheet.querySelector('#brief-copy').addEventListener('click', async () => {
+    const ok = await copyText(brief.text);
+    toast(ok ? `已复制 ${brief.text.length} 字，去 WorkBuddy 粘贴` : '复制失败，请长按正文手动全选复制');
+  });
+
+  const shareBtn = sheet.querySelector('#brief-share');
+  if (navigator.share && window.isSecureContext) {
+    shareBtn.addEventListener('click', async () => {
+      try {
+        await navigator.share({ title: brief.title, text: brief.text });
+      } catch (e) {
+        // 用户取消不算错误，静默；真失败则退回复制
+        if (e && e.name !== 'AbortError') toast('分享不可用，请用「复制全文」');
+      }
+    });
+  } else {
+    shareBtn.hidden = true;
+    sheet.querySelector('#brief-copy').style.width = '100%';
+  }
+
+  requestAnimationFrame(() => sheet.classList.add('show'));
+}
+
+// 复制纯文本：优先剪贴板 API；局域网 http（非 secure context）下退回 execCommand。
+// 返回是否成功，由调用方决定提示什么。
+async function copyText(text) {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch (e) { /* 落到降级路径 */ }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.cssText = 'position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;';
+    document.body.appendChild(ta);
+    ta.select();
+    ta.setSelectionRange(0, text.length);
+    const ok = document.execCommand('copy');
+    ta.remove();
+    return ok;
+  } catch (e) {
+    return false;
+  }
+}
+
+// 副图点击切换 MACD/成交量（事件委托，段卡片重渲染后依然有效）
+function attachSegmentKlineSubToggle(container) {
+  if (container._subToggleBound) return;
+  container._subToggleBound = true;
+  container.addEventListener('click', (e) => {
+    if (!e.target.classList?.contains('card-kline-sub')) return;
+    if (!_klineView) return;
+    _klineSub = _klineSub === 'macd' ? 'vol' : 'macd';
+    paintKline();
+  });
+}
+
+// 中枢编辑/本地修改后，不重新拉取行情，直接用缓存 bars 重新计算并渲染
+function refreshPeriodDetailWithoutFetch(code, period) {
+  // 段数据可能已变化：先同步周期页展开行的行内 K 线（该页无 #period-detail，由下方逻辑兜底渲染详情页）
+  refreshPeriodRowKlinesForPeriod(code, period);
+  const sec = state.securities.find((s) => s.code === code);
+  const detail = $('#period-detail');
+  if (!sec || !detail) return;
+  const d = sec.drawings[period] || { segments: [], zhongshus: [] };
+  const group = {
+    period,
+    label: periodLabel(period),
+    segments: [...(d.segments || [])],
+    zhongshus: [...(d.zhongshus || [])],
+    loaded: true,
+    error: null,
+  };
+  const higherPeriod = getHigherPeriod(period, sec.periods || []);
+  const higherSegments = (higherPeriod && sec.drawings[higherPeriod]?.segments) || [];
+  const bars = state._currentBars?.bars || [];
+  if (bars.length && group.segments.length) {
+    computeStrengths(bars, group.segments, group.zhongshus);
+  }
+  const hideBefore = computeHideBefore(higherSegments, higherPeriod, group.segments);
+  renderSinglePeriodDetail(detail, code, group, hideBefore, false);
+}
+
+// 长按段卡片：显示覆盖在该卡片上的操作蒙板（编辑 / 删除 / 新增）
+function attachSegmentCardActions(code, period) {
+  const detail = $('#period-detail');
+  if (!detail) return;
+  detail.querySelectorAll('.card').forEach((card) => {
+    attachSegmentLongPress(card, code, period);
+    const avatar = card.querySelector('.card-avatar');
+    if (avatar) attachSegmentAvatarLongPress(card, avatar, code, period);
+  });
+}
+
+// ========== 长按段号 → 段卡片内联展开 K 线（自写 Canvas，零图表库依赖） ==========
+let _klineView = null;   // { code, period, fetchPeriod, anchorSegId, segId, bars, visibleSegs, card }
+let _klineSub = 'macd';  // 'macd' | 'vol'
+// 长按动作触发后抑制紧随其后的 click（部分浏览器长按松手会补发 click），
+// 避免「长按段号展开」后立刻又被「单击收起」逻辑误收
+let _klineClickSuppress = 0;
+
+// 长按段号：展开/收起该段卡片内的 K 线；stopPropagation 阻止冒泡到卡片级长按（避免同时弹出操作蒙板）
+function attachSegmentAvatarLongPress(card, avatar, code, period) {
+  let timer = null;
+  let sx = 0, sy = 0;
+  const LONG_MS = 480;
+  const start = (x, y) => {
+    sx = x; sy = y;
+    timer = setTimeout(() => {
+      toggleSegmentKline(card, code, period);
+      _klineClickSuppress = Date.now() + 350;
+    }, LONG_MS);
+  };
+  const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  avatar.addEventListener('pointerdown', (e) => { e.stopPropagation(); start(e.clientX, e.clientY); });
+  avatar.addEventListener('pointermove', (e) => {
+    if (Math.abs(e.clientX - sx) > 10 || Math.abs(e.clientY - sy) > 10) cancel();
+  });
+  avatar.addEventListener('pointerup', cancel);
+  avatar.addEventListener('pointercancel', cancel);
+  avatar.addEventListener('contextmenu', (e) => e.preventDefault());
+}
+
+// 段卡片 K 线是否处于展开状态（卡片仍在文档中且带 kline-expanded）
+function isSegmentKlineOpen() {
+  return !!(_klineView && _klineView.card && _klineView.card.isConnected
+    && _klineView.card.classList.contains('kline-expanded'));
+}
+
+// 长按段号：同一卡片再次长按收起；否则收起其它已展开卡片后展开本卡片
+function toggleSegmentKline(card, code, period) {
+  if (_klineView && _klineView.card === card) {
+    collapseSegmentKline();
+    return;
+  }
+  expandSegmentKline(card, code, period);
+}
+
+function collapseSegmentKline() {
+  if (_klineView && _klineView.card) {
+    _klineView.card.classList.remove('kline-expanded');
+    _klineView.card.classList.remove('kline-cross-lock');
+  }
+  _klineView = null;
+}
+
+async function expandSegmentKline(card, code, period) {
+  const segId = card.dataset.id;
+  const sec = state.securities.find((s) => s.code === code);
+  if (!sec) return;
+  const d = sec.drawings[period];
+  const seg = (d?.segments || []).find((s) => s.id === segId);
+  if (!seg) return;
+  // 收起其它已展开的卡片，同一时刻仅一张展开
+  if (_klineView && _klineView.card !== card) collapseSegmentKline();
+
+  // K 线展示用本周期真实数据（15m/60m 不再回落主周期）。段 start/end 是主周期刻度，
+  // 与本周期 bar time 不对齐处由 klinechart 的 timeToX 时间插值精确定位，画线照常显示。
+  // 取展示周期数据（主周期复用 _currentBars，辅助周期走 _displayBars 缓存）
+  let bars = null;
+  try { bars = await ensureDisplayBars(code, period); } catch { bars = []; }
+  // 把该周期数据锚定在 _klineView 上，避免被全局 _currentBars（可能被其它周期/弹窗覆盖）污染；
+  // 同时锚定 visibleSegs 快照，避免后台实时刷新重排段后窗口偏离当前段。
+  // fetchPeriod 字段保留原名，语义为「K 线展示周期」（= period 本身）。
+  _klineView = {
+    code, period, fetchPeriod: period,
+    anchorSegId: segId, // 卡片归属段（重渲染后据此找回卡片）
+    segId,              // 当前聚焦段（左右滑切换窗口后更新）
+    bars: bars || [],
+    visibleSegs: getVisibleSegsForPeriod(code, period),
+    card,
+  };
+  card.classList.add('kline-expanded');
+  try { navigator.vibrate?.(10); } catch {}
+  paintKline(true);
+  // 卡片尺寸确定后再绘制一次，修正 canvas 物理像素尺寸
+  requestAnimationFrame(() => paintKline());
+}
+
+// 详情页重渲染（实时刷新/编辑）后，若仍有展开的段 K 线则恢复到新卡片上
+function restoreSegmentKlineExpansion(code, period) {
+  if (!_klineView || _klineView.code !== code || _klineView.period !== period) return;
+  const card = document.querySelector(`.card[data-id="${_klineView.anchorSegId}"]`);
+  if (!card) { collapseSegmentKline(); return; }
+  _klineView.card = card;
+  card.classList.add('kline-expanded');
+  paintKline(true);
+  requestAnimationFrame(() => paintKline());
+}
+
+// 提醒弹窗（action sheet）的关闭入口，供边缘手势退出调用
+window.closeAlertSheet = function () {
+  const el = document.getElementById('alert-sheet');
+  if (el) el.remove();
+};
+
+
+// 取某周期下可见段（应用 hideBefore 过滤），按时间正序排列，与 table.js 一致
+function getVisibleSegsForPeriod(code, period) {
+  const sec = state.securities.find((s) => s.code === code);
+  const d = sec?.drawings?.[period];
+  const segments = d?.segments || [];
+  const higherPeriod = getHigherPeriod(period, sec?.periods || []);
+  const higherSegments = (higherPeriod && sec?.drawings?.[higherPeriod]?.segments) || [];
+  const hideBefore = computeHideBefore(higherSegments, higherPeriod, segments);
+  let visible = [...segments];
+  if (hideBefore != null) {
+    visible = visible.filter((s) => (s.start?.time ?? s.end?.time ?? 0) >= hideBefore);
+  }
+  return visible.sort(
+    (a, b) => (a.end?.time ?? a.start?.time) - (b.end?.time ?? b.start?.time)
+  );
+}
+
+// 根据中枢及其包含段，计算点线矩形坐标（与 model.js 的 toDrawings 逻辑一致）
+function buildZhongshuRects(zss, segs) {
+  const segById = {};
+  segs.forEach((s) => (segById[s.id] = s));
+  return (zss || [])
+    .map((z) => {
+      const zsSegs = (z.segmentIds || [])
+        .map((id) => segById[id])
+        .filter(Boolean);
+      if (zsSegs.length < 3) return null;
+      const sorted = [...zsSegs].sort((a, b) => a.start.time - b.start.time);
+      // 区间直读中枢自带 low/high（= 矩形 points）；不再按构成段端点重算（实测约 21% 不等）
+      const range = zhongshuRangeLowHigh(z, segById);
+      if (!range) return null;
+      const first = sorted[0];
+      const last = sorted[sorted.length - 1];
+      return {
+        startTime: first.start.time,
+        endTime: last.end.time,
+        high: range.high,
+        low: range.low,
+        firstDir: first.direction, // 中枢第一段方向，供矩形取相反色（第一段跌→红）
+      };
+    })
+    .filter(Boolean);
+}
+
+// 取数 + 切片 + 渲染（弹层已存在时仅重绘）
+function paintKline(diag) {
+  if (!_klineView) return;
+  const { code, period, fetchPeriod, segId, card } = _klineView;
+  if (diag) console.log('[paintKline]', { code, period, fetchPeriod, segId, hasBars: !!(_klineView.bars && _klineView.bars.length), visLen: _klineView.visibleSegs?.length, diag });
+  if (!card || !card.isConnected) return;
+  const main = card.querySelector('.card-kline-main');
+  const sub = card.querySelector('.card-kline-sub');
+  if (!main || !sub) return;
+  const sec = state.securities.find((s) => s.code === code);
+  const d = sec?.drawings?.[period];
+  const seg = (d?.segments || []).find((s) => s.id === segId);
+  if (!seg) return;
+  // 优先用打开弹层时锚定的本周期数据；为空则异步取本周期真实 K 线并重绘。
+  // 展示取数用 fetchPeriod（= period 本身；辅助周期也取本周期，段端点靠 timeToX
+  // 时间插值定位），段数据查找用 period（画线键）。不直接用 _currentBars：它存放
+  // 主周期算法数据，辅助周期下与展示周期不同，直接套用会画成主周期 K 线。
+  let bars = _klineView.bars && _klineView.bars.length ? _klineView.bars : null;
+  if (!bars) {
+    if (diag) console.log('[paintKline] bars为空，将异步取本周期数据', { need: fetchPeriod });
+    bars = [];
+    // 异步取正确展示周期数据并重绘，避免回退到其他周期造成跨周期污染
+    ensureDisplayBars(code, fetchPeriod, true).then((b) => {
+      if (_klineView && _klineView.code === code && _klineView.fetchPeriod === fetchPeriod) {
+        _klineView.bars = b;
+        paintKline(true);
+      }
+    });
+  }
+  bars = bars || [];
+  // 构建包含当前段的连续 3 段视图窗口（用于 K 线范围），段子集与卡片一致。
+  // 优先用打开弹层时锚定的 visibleSegs 快照，避免后台实时刷新重排段/改变 hideBefore 后，
+  // 窗口被强制落到前 3 段（起点端点号 0、1、2）而偏离当前段。
+  const visibleSegs = (_klineView.visibleSegs && _klineView.visibleSegs.length)
+    ? _klineView.visibleSegs
+    : getVisibleSegsForPeriod(code, period);
+  const realIdx = {};
+  visibleSegs.forEach((s, k) => (realIdx[s.id] = k));
+
+  const idx = visibleSegs.findIndex((s) => s.id === segId);
+  let viewSeg = seg;
+  // 注意 0 号段：realIdx 为 0 是有效编号，不能用 || 兜底（会被吞成空串）
+  let viewSegItems = [{ seg, no: realIdx[segId] ?? '' }];
+  if (visibleSegs.length > 1 && idx >= 0) {
+    const startIdx = Math.max(0, Math.min(idx - 1, visibleSegs.length - 3));
+    const endIdx = Math.min(startIdx + 2, visibleSegs.length - 1);
+    viewSeg = {
+      start: visibleSegs[startIdx].start,
+      end: visibleSegs[endIdx].end,
+      _isWatch: visibleSegs[endIdx]._isWatch,
+      _isTrack: visibleSegs[endIdx]._isTrack,
+    };
+    viewSegItems = visibleSegs.slice(startIdx, endIdx + 1).map((s) => ({ seg: s, no: realIdx[s.id] }));
+  }
+  const sliced = sliceSegmentBars(bars, viewSeg);
+  const digits = isETF(code) ? 3 : 2;
+  renderKlineChart(main, sub, sliced, {
+    segs: viewSegItems, sub: _klineSub, period, digits, subH: 96,
+    // 与周期列表弹窗一致：noSwipe + crosshairOnly 让主图单独接管手势，避免 bindSubSwipe 双层
+    // 绑定导致横滑切换被吞；onSwipe 保留 K 线弹窗内左右滑切换段的能力。
+    noSwipe: true, crosshairOnly: true, solidMacd: true, onSwipe: switchKlineSegment,
+    // 十字态锁定触摸，避免拖动十字时页面跟着滚动
+    onCrossChange: (active) => card.classList.toggle('kline-cross-lock', active),
+  });
+}
+
+// K 线弹窗内左右滑切换窗口（左滑→下一个 3 段窗口，右滑→上一个 3 段窗口）
+let _klineSwitching = false;
+export function switchKlineSegment(dir) {
+  if (!_klineView || !dir || _klineSwitching) return;
+  const { code, period, segId } = _klineView;
+  const visibleSegs = (_klineView.visibleSegs && _klineView.visibleSegs.length)
+    ? _klineView.visibleSegs
+    : getVisibleSegsForPeriod(code, period);
+  if (!visibleSegs.length) return;
+  const idx = visibleSegs.findIndex((s) => s.id === segId);
+  if (idx < 0) return;
+  const startIdx = Math.max(0, Math.min(idx - 1, visibleSegs.length - 3));
+  // 边界：已在最前/最后窗口时，保持当前段不切换，给用户「滑不动」的反馈
+  if (dir === 'prev' && startIdx === 0) return;
+  if (dir === 'next' && startIdx >= visibleSegs.length - 3) return;
+  const rel = idx - startIdx;
+  const newStartIdx = startIdx + (dir === 'next' ? 1 : -1);
+  const newSegIdx = Math.max(0, Math.min(visibleSegs.length - 1, newStartIdx + rel));
+  const newSegId = visibleSegs[newSegIdx].id;
+
+  _klineSwitching = true;
+  if (!_klineView.card) { _klineSwitching = false; return; }
+  const main = _klineView.card.querySelector('.card-kline-main');
+  const sub = _klineView.card.querySelector('.card-kline-sub');
+  const dur = '.18s';
+  const setBoth = (op, tx, withTransition) => {
+    [main, sub].forEach((el) => {
+      if (!el) return;
+      el.style.transition = withTransition ? `opacity ${dur} ease, transform ${dur} ease` : 'none';
+      el.style.opacity = String(op);
+      el.style.transform = `translateX(${tx}px)`;
+    });
+  };
+  // 旧内容朝切换方向淡出
+  setBoth(0, dir === 'next' ? -36 : 36, true);
+  setTimeout(() => {
+    // 切数据前先归位，避免 canvas 尺寸/坐标受 transform 影响
+    setBoth(0, 0, false);
+    _klineView.segId = newSegId;
+    paintKline();
+    // 新内容从反方向进入
+    setBoth(0, dir === 'next' ? 36 : -36, false);
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      setBoth(1, 0, true);
+      setTimeout(() => {
+        [main, sub].forEach((el) => { if (el) { el.style.transition = ''; el.style.transform = ''; el.style.opacity = ''; } });
+        _klineSwitching = false;
+      }, 230);
+    }));
+  }, 170);
+}
+window.switchKlineSegment = switchKlineSegment;
+
+// 详情页实时刷新：段卡片 K 线处于展开态时，强制取本周期最新 K 线重切重绘（盯盘段专用）。
+// 辅助周期的展示数据与主周期算法数据不同源，不能复用 _currentBars，需按展示周期单独取。
+function refreshKlineSheet() {
+  if (!isSegmentKlineOpen()) return;
+  const { code, period, fetchPeriod } = _klineView;
+  ensureDisplayBars(code, fetchPeriod, true).then((bars) => {
+    // 取数返回后弹窗可能已收起/切换，重新校验归属
+    if (!isSegmentKlineOpen() || !_klineView || _klineView.code !== code || _klineView.period !== period) return;
+    if (bars && bars.length) _klineView.bars = bars;
+    paintKline(true);
+  }).catch(() => {});
+}
+window.refreshKlineSheet = refreshKlineSheet;
+
+let activeCardOverlay = null;
+
+function attachSegmentLongPress(card, code, period) {
+  let timer = null;
+  let sx = 0, sy = 0;
+  let targetEl = null;
+  const LONG_MS = 480;
+  const start = (x, y) => {
+    sx = x; sy = y;
+    timer = setTimeout(() => {
+      _klineClickSuppress = Date.now() + 350;
+      // K 线展开态：长按顶部内容区（非 K 线画布）→ 收起 K 线；长按画布交给十字光标；
+      // 两种情况都不弹出段操作菜单。
+      if (card.classList.contains('kline-expanded')) {
+        if (targetEl && !targetEl.closest('.card-kline')) collapseSegmentKline();
+        return;
+      }
+      showCardOverlay(card, code, period);
+    }, LONG_MS);
+  };
+  const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  card.addEventListener('pointerdown', (e) => { targetEl = e.target; start(e.clientX, e.clientY); });
+  card.addEventListener('pointermove', (e) => {
+    if (Math.abs(e.clientX - sx) > 10 || Math.abs(e.clientY - sy) > 10) cancel();
+  });
+  card.addEventListener('pointerup', cancel);
+  card.addEventListener('pointercancel', cancel);
+  card.addEventListener('contextmenu', (e) => e.preventDefault());
+  // 展开态：单击顶部内容区（非 K 线画布）即收起 K 线；画布点击交给十字光标
+  card.addEventListener('click', (e) => {
+    if (Date.now() < _klineClickSuppress) return;
+    if (!card.classList.contains('kline-expanded')) return;
+    if (e.target.closest('.card-kline')) return;
+    collapseSegmentKline();
+  });
+}
+
+function showCardOverlay(card, code, period) {
+  // 展开 K 线时禁止长按弹出段操作菜单（长按留给十字光标 / 段号收起）
+  if (card.classList.contains('kline-expanded')) return;
+  hideCardOverlay();
+  const segId = card.dataset.id;
+  const overlay = document.createElement('div');
+  overlay.className = 'card-overlay';
+  const render = () => { overlay.innerHTML = buildSegmentActionsHtml(segId, code, period); };
+  render();
+  card.appendChild(overlay);
+  activeCardOverlay = overlay;
+  // 下一帧触发显示动画
+  requestAnimationFrame(() => overlay.classList.add('show'));
+  bindOverlayActions(overlay, segId, code, period);
+  refreshOverlayWhenBarsReady(code, period, overlay, render);
+}
+
+// ========== 中枢识别 / 中枢延伸的判定数据（与桌面规则对齐） ==========
+// 桌面的识别与延伸都以「当前图表」为输入：段内 K 线（重叠区间）与上一级线段
+// （方向约束的参照容器、延伸的中间档位）。移动端对应：
+//   · 段内 K 线 = 本周期算法 K 线（辅助周期回落主周期，段 time 即主周期刻度）；
+//   · 上一级线段 = 下一更高级别周期的段（跳过辅助周期，如 1m→5m、5m→30m）。
+function analysisBars(code, period) {
+  const algPeriod = AUX_TO_MAIN[period] || period;
+  const cb = state._currentBars;
+  if (cb && cb.code === code && cb.period === algPeriod && cb.bars && cb.bars.length) return cb.bars;
+  // 长按菜单补取过的 K 线也留在展示缓存里，可直接复用
+  const db = (state._displayBars || {})[code + '|' + algPeriod];
+  return (db && db.length) ? db : null;
+}
+
+function analysisContainers(code, period) {
+  const sec = state.securities.find((s) => s.code === code);
+  const higherPeriod = getNextHigherPeriod(period);
+  return (higherPeriod && sec?.drawings?.[higherPeriod]?.segments) || [];
+}
+
+// 补取判定用 K 线：写入展示缓存（_displayBars），不覆盖 _currentBars
+// （后者是主周期算法缓存，盯盘/轮询在用，不能被别的周期顶掉）
+async function fetchAnalysisBars(code, period) {
+  const cached = analysisBars(code, period);
+  if (cached) return cached;
+  const algPeriod = AUX_TO_MAIN[period] || period;
+  try {
+    const bars = await ensureDisplayBars(code, algPeriod);
+    return (bars && bars.length) ? bars : null;
+  } catch {
+    return null;
+  }
+}
+
+// 菜单已弹出但判定用 K 线还没到货时补取一次，到货后若菜单仍打开则重渲染（按钮随之出现）
+function refreshOverlayWhenBarsReady(code, period, overlay, render) {
+  if (analysisBars(code, period)) return;
+  fetchAnalysisBars(code, period).then((bars) => {
+    if (!bars || activeCardOverlay !== overlay || !overlay.isConnected) return;
+    render();
+  }).catch(() => {});
+}
+
+// 中枢的「最后一个段」（时间最靠后）id：中枢延伸功能挂在它的段号上
+function zhongshuLastSegmentId(zs, segments) {
+  const byId = {};
+  segments.forEach((s) => { byId[s.id] = s; });
+  const list = (zs.segmentIds || [])
+    .map((id) => byId[id])
+    .filter(Boolean)
+    .sort((a, b) => a.start.time - b.start.time);
+  return list.length ? list[list.length - 1].id : null;
+}
+
+// 长按段是可延伸中枢的最后一段时返回 { zs, info }；否则 null
+// （与桌面 _getSelectedZhongshuExtendInfo 同条件：普通中枢、能定位线段链、未达延伸上限）
+function zhongshuExtendTarget(code, period, segId, bars) {
+  const sec = state.securities.find((s) => s.code === code);
+  const d = sec?.drawings?.[period];
+  if (!d) return null;
+  const segments = d.segments || [];
+  const zs = (d.zhongshus || []).find((z) => zhongshuLastSegmentId(z, segments) === segId);
+  if (!zs) return null;
+  const info = computeZhongshuExtend(segments, zs, { bars, containers: analysisContainers(code, period) });
+  if (!info) return null;
+  return { zs, info };
+}
+
+// 中枢识别/延伸后立即重绘详情页已展开的 K 线（用缓存 bars，不等 15s 轮询；
+// 周期列表页的行内图由 refreshPeriodDetailWithoutFetch 内部同步重绘）
+function repaintOpenSecKline(code, period) {
+  if (state.view !== 'detail' || state.selectedCode !== code) return;
+  if (!isSecKlineOpen()) return;
+  const wrap = document.querySelector('.sec-card--detail .sec-kline');
+  if (wrap) loadAndRenderSecKline(code, period, wrap, false);
+}
+
+// 构建某段的操作按钮 HTML（长按段卡片蒙板 / 段号条长按菜单共用）：
+// 盯盘/追踪段 → 删除/编辑/转为普通段；
+// 普通段 → 删除/编辑/[新增]/[盯盘|追踪]/[中枢识别]/[中枢延伸]/[递归]
+function buildSegmentActionsHtml(segId, code, period) {
+  const sec = state.securities.find((s) => s.code === code);
+  const d = sec?.drawings?.[period];
+  const sorted = [...(d?.segments || [])].sort((a, b) => a.start.time - b.start.time);
+  const idx = sorted.findIndex((s) => s.id === segId);
+  const targetSeg = sorted[idx];
+  const isWatch = targetSeg?._isWatch || false;
+  const isTrack = targetSeg?._isTrack || false;
+  const isLatest = !isWatch && !isTrack && targetSeg && sorted[sorted.length - 1]?.id === segId;
+  const isA0 = period === sec?._a0Period;
+  // 段终点未衔接下一段（下一段起点时间 ≠ 本段终点时间，或本段就是最后一段）时允许「增加段」
+  const nextSeg = idx >= 0 ? sorted[idx + 1] : null;
+  const connectsNext = !!(nextSeg && targetSeg && nextSeg.start?.time === targetSeg.end?.time);
+  const canAdd = !isWatch && !isTrack && !!targetSeg && !connectsNext;
+  // 段内 K 线区间是识别/延伸的判定口径（桌面正式条款），未到货时先不给这两个按钮，
+  // 联网补取完成后由 refreshOverlayWhenBarsReady 重渲染菜单
+  const bars = analysisBars(code, period);
+  const detected = (idx >= 0 && bars)
+    ? detectZhongshu(sorted, idx, bars, { containers: analysisContainers(code, period) })
+    : null;
+  const segById = {};
+  sorted.forEach((s) => { segById[s.id] = s; });
+  const otherZsIds = new Set();
+  (d?.zhongshus || []).forEach((z) => {
+    (z.segmentIds || []).forEach((id) => otherZsIds.add(id));
+  });
+  // 与桌面一致：三段中含盯盘/追踪段时不识别（盯盘段终点随行情移动，中枢构件会跟着抖）
+  const hasMovingSeg = !!(detected && detected.segmentIds.some((id) => {
+    const s = segById[id];
+    return s && (s._isWatch || s._isTrack);
+  }));
+  const canDetect = !isWatch && !isTrack && detected && !hasMovingSeg
+    && detected.segmentIds.every((id) => !otherZsIds.has(id));
+
+  // 中枢延伸（与桌面「一步延伸到上限」同规则）：移动端不便直接选中中枢矩形，
+  // 故把延伸功能赋予「该中枢最后一个段号」的菜单（长按该段号即可看到）。
+  const extendTarget = (!isWatch && !isTrack && bars)
+    ? zhongshuExtendTarget(code, period, segId, bars)
+    : null;
+
+  // 单根段递归：按桌面版「单根点线递归」规则预判该段能否递归为更高一级别段（如 1m → 5m），
+  // 可用时在蒙板上显示「递归」按钮；产物写入更高周期（见 recursiveToHigherPeriod）。
+  // 用周期链推算下一级（getNextHigherPeriod）：更高级别尚无数据时同样可递归（产物会创建该级别）。
+  const higherPeriod = getNextHigherPeriod(period);
+  const higherSegs = (higherPeriod && sec?.drawings?.[higherPeriod]?.segments) || [];
+  const recursiveInfo = (!isWatch && !isTrack && targetSeg && higherPeriod)
+    ? computeRecursiveSegment(sorted, higherSegs, segId)
+    : null;
+  const canRecursive = !!(recursiveInfo && recursiveInfo.ok);
+
+  const detectBtn = canDetect ? `
+    <button class="overlay-btn icon accent" data-act="detect" aria-label="中枢识别">
+      <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="4" y="7" width="16" height="10" rx="2"/>
+        <path d="M4 12 H20"/>
+      </svg>
+    </button>
+  ` : '';
+
+  // 「中枢延伸」按钮（该段是某中枢的最后一段、且该中枢未达延伸上限时显示）：
+  // 一步把中枢右边界延伸到上限（规则同桌面右键「延伸」/Tab，含中间档位）
+  const extendBtn = extendTarget ? `
+    <button class="overlay-btn icon accent" data-act="extend" aria-label="中枢延伸">
+      <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="3" y1="12" x2="14" y2="12"/>
+        <polyline points="10,7 15,12 10,17"/>
+        <line x1="19.5" y1="5" x2="19.5" y2="19"/>
+      </svg>
+    </button>
+  ` : '';
+
+  // 「递归」按钮（可递归时显示）：按桌面版单根点线递归规则，把当前段所属的若干根相连段
+  // 合成一根更高一级别的新段（产物写入更高周期，如 1m 段递归 → 5m 段）
+  const recursiveBtn = canRecursive ? `
+    <button class="overlay-btn icon" data-act="recursive" aria-label="递归为${periodLabel(higherPeriod)}段">
+      <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M5 12 A7 7 0 1 1 12 19"/>
+        <polyline points="8,19 12,19 12,15"/>
+      </svg>
+    </button>
+  ` : '';
+
+  // A0 级别显示「盯盘」按钮，非 A0 级别显示「追踪」按钮
+  const watchBtn = isLatest ? (isA0 ? `
+    <button class="overlay-btn icon" data-act="watch" aria-label="盯盘">
+      <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+        <circle cx="12" cy="12" r="3"/>
+      </svg>
+    </button>
+  ` : `
+    <button class="overlay-btn icon" data-act="track" aria-label="追踪">
+      <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="2"/>
+        <path d="M12 2 L12 6 M12 18 L12 22 M2 12 L6 12 M18 12 L22 12"/>
+        <circle cx="12" cy="12" r="8" stroke-dasharray="3 3"/>
+      </svg>
+    </button>
+  `) : '';
+
+  return (isWatch || isTrack) ? `
+    <button class="overlay-btn icon danger" data-act="del" aria-label="删除">
+      <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="18" y1="6" x2="6" y2="18"/>
+        <line x1="6" y1="6" x2="18" y2="18"/>
+      </svg>
+    </button>
+    <button class="overlay-btn icon" data-act="edit" aria-label="编辑">
+      <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="3" width="18" height="18" rx="4"/>
+        <path d="M15 5 L19 9"/>
+        <path d="M13 7 L17 11"/>
+      </svg>
+    </button>
+    <button class="overlay-btn icon ok" data-act="commit" aria-label="转为普通段并继续">
+      <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="20 6 9 17 4 12"></polyline>
+      </svg>
+    </button>
+  ` : `
+    <button class="overlay-btn icon danger" data-act="del" aria-label="删除">
+      <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2.2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="18" y1="6" x2="6" y2="18"/>
+        <line x1="6" y1="6" x2="18" y2="18"/>
+      </svg>
+    </button>
+    <button class="overlay-btn icon" data-act="edit" aria-label="编辑">
+      <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="1.8" fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="3" width="18" height="18" rx="4"/>
+        <path d="M15 5 L19 9"/>
+        <path d="M13 7 L17 11"/>
+      </svg>
+    </button>
+    ${canAdd ? `
+    <button class="overlay-btn icon" data-act="add" aria-label="新增">
+      <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+        <line x1="12" y1="5" x2="12" y2="19"/>
+        <line x1="5" y1="12" x2="19" y2="12"/>
+      </svg>
+    </button>` : ''}
+    ${watchBtn}
+    ${detectBtn}
+    ${extendBtn}
+    ${recursiveBtn}
+  `;
+}
+
+// 段操作按钮的点击处理与「点击外部关闭」绑定（长按段卡片蒙板 / 段号条长按菜单共用）
+function bindOverlayActions(overlay, segId, code, period) {
+  overlay.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-act]');
+    if (!btn) {
+      hideCardOverlay();
+      return;
+    }
+    e.stopPropagation();
+    hideCardOverlay();
+    handleSegmentAction(btn.dataset.act, segId, code, period);
+  });
+
+  // 点击菜单外部关闭
+  setTimeout(() => {
+    document.addEventListener('pointerdown', closeCardOverlayOnOutside, { once: true, capture: true });
+  }, 0);
+}
+
+// 段号条长按菜单：按钮与长按段卡片同款，弹在段号条下方（fixed 挂 body，
+// 避免被周期行的 overflow:hidden 裁剪），作用于被长按段号对应的段。
+function showSegNavOverlay(nav, numEl, segId, code, period) {
+  hideCardOverlay();
+  const overlay = document.createElement('div');
+  overlay.className = 'card-overlay nav-overlay';
+  // 菜单左侧显示被长按的段号（与横条上的编号一致），让用户确认操作的是哪一段
+  const noText = numEl ? numEl.textContent.trim() : '';
+  // 定位：横向对齐被长按的段号并夹紧在视口内；纵向贴在段号条下方，下方放不下时上翻
+  const position = () => {
+    const navRect = nav.getBoundingClientRect();
+    const numRect = numEl ? numEl.getBoundingClientRect() : navRect;
+    const vw = window.innerWidth, vh = window.innerHeight;
+    const ow = overlay.offsetWidth, oh = overlay.offsetHeight;
+    const left = Math.max(8, Math.min(vw - ow - 8, numRect.left + numRect.width / 2 - ow / 2));
+    let top = navRect.bottom + 6;
+    if (top + oh > vh - 8 && navRect.top - oh - 6 >= 8) top = navRect.top - oh - 6;
+    overlay.style.left = `${Math.round(left)}px`;
+    overlay.style.top = `${Math.round(top)}px`;
+  };
+  // 重渲染（K 线补取到货后按钮增多）时重新定位，避免菜单溢出视口
+  const render = () => {
+    overlay.innerHTML = (noText ? `<span class="nav-overlay-no">${noText}</span>` : '')
+      + buildSegmentActionsHtml(segId, code, period);
+    position();
+  };
+  render();
+  document.body.appendChild(overlay);
+  activeCardOverlay = overlay;
+  position();
+  // 下一帧触发显示动画
+  requestAnimationFrame(() => overlay.classList.add('show'));
+  bindOverlayActions(overlay, segId, code, period);
+  refreshOverlayWhenBarsReady(code, period, overlay, render);
+  // 页面滚动/视口尺寸变化后菜单会与段号条错位，直接关闭
+  window.addEventListener('scroll', hideCardOverlay, { once: true, capture: true, passive: true });
+  window.addEventListener('resize', hideCardOverlay, { once: true });
+}
+
+// 段号条长按段号 → 在横条下方弹出该段的功能菜单（按钮与长按段卡片同款，内容由
+// buildSegmentActionsHtml 按段状态生成）。与整条滑动手势共存：位移超过 10px 视为滑动/
+// 滚动并取消长按；长按触发后回调 stopSwipe 停止滑动跟踪，避免拖动手势继续改可见段。
+function attachSegNavLongPress(nav, code, period, getSegs, stopSwipe) {
+  // period 可为取值函数：周期行的合并行两半共用段号条，长按时需取当前展示的半区周期
+  const periodOf = typeof period === 'function' ? period : () => period;
+  let timer = null;
+  let sx = 0, sy = 0, pressK = -1;
+  const LONG_MS = 480;
+  const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  nav.addEventListener('pointerdown', (e) => {
+    const numEl = e.target.closest('.sec-segnum');
+    if (!numEl) return;
+    pressK = Number(numEl.dataset.k);
+    sx = e.clientX; sy = e.clientY;
+    cancel();
+    timer = setTimeout(() => {
+      timer = null;
+      const seg = getSegs()[pressK]; // 段号索引 → 可见段（与段号渲染顺序一致）
+      if (!seg) return;
+      stopSwipe();
+      showSegNavOverlay(nav, numEl, seg.id, code, periodOf());
+    }, LONG_MS);
+  });
+  nav.addEventListener('pointermove', (e) => {
+    if (Math.abs(e.clientX - sx) > 10 || Math.abs(e.clientY - sy) > 10) cancel();
+  });
+  nav.addEventListener('pointerup', cancel);
+  nav.addEventListener('pointercancel', cancel);
+  nav.addEventListener('contextmenu', (e) => e.preventDefault());
+}
+
+function closeCardOverlayOnOutside(e) {
+  if (activeCardOverlay && !activeCardOverlay.contains(e.target)) {
+    hideCardOverlay();
+  }
+}
+
+function hideCardOverlay() {
+  if (activeCardOverlay) {
+    activeCardOverlay.classList.remove('show');
+    activeCardOverlay.remove();
+    activeCardOverlay = null;
+  }
+  document.removeEventListener('pointerdown', closeCardOverlayOnOutside, { capture: true });
+  // 段号条长按菜单在滚动/视口变化时关闭，监听需同步移除（once 已触发时移除无害）
+  window.removeEventListener('scroll', hideCardOverlay, { capture: true });
+  window.removeEventListener('resize', hideCardOverlay);
+}
+
+// ========== 中枢编辑：长按标题进入编辑态，拖动上下边缘纳入/剔除段 ==========
+let activeZsEdit = null; // { zsId, block, code, period }
+const ZS_DRAG_THRESHOLD = 24;
+
+function attachZhongshuEditActions(code, period) {
+  const detail = $('#period-detail');
+  if (!detail) return;
+  detail.querySelectorAll('.zs-title').forEach((title) => {
+    attachZhongshuTitleLongPress(title, code, period);
+  });
+  // 边缘也支持长按进入编辑态，兼容用户直接长按边缘区域的操作习惯
+  detail.querySelectorAll('.zs-edge').forEach((edge) => {
+    attachZhongshuTitleLongPress(edge, code, period);
+  });
+}
+
+function attachZhongshuTitleLongPress(title, code, period) {
+  let timer = null;
+  let sx = 0, sy = 0;
+  const LONG_MS = 480;
+  const start = (x, y) => {
+    sx = x; sy = y;
+    timer = setTimeout(() => {
+      if (activeZsEdit) return; // 已在编辑态（例如边缘长按与拖动共用事件时避免重复进入）
+      enterZhongshuEditMode(title, code, period);
+    }, LONG_MS);
+  };
+  const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  title.addEventListener('pointerdown', (e) => { start(e.clientX, e.clientY); });
+  title.addEventListener('pointermove', (e) => {
+    if (Math.abs(e.clientX - sx) > 10 || Math.abs(e.clientY - sy) > 10) cancel();
+  });
+  title.addEventListener('pointerup', cancel);
+  title.addEventListener('pointercancel', cancel);
+  title.addEventListener('contextmenu', (e) => e.preventDefault());
+}
+
+function detectZsDomReversed(block, code, period) {
+  const cards = block.querySelectorAll('.card[data-id]');
+  if (cards.length < 2) return false;
+  const sec = state.securities.find((s) => s.code === code);
+  const d = sec?.drawings?.[period];
+  const segMap = {};
+  (d?.segments || []).forEach((s) => { segMap[s.id] = s; });
+  const firstSeg = segMap[cards[0].dataset.id];
+  const lastSeg = segMap[cards[cards.length - 1].dataset.id];
+  if (!firstSeg || !lastSeg) return false;
+  const t1 = firstSeg.end?.time ?? firstSeg.start?.time ?? 0;
+  const t2 = lastSeg.end?.time ?? lastSeg.start?.time ?? 0;
+  return t1 > t2;
+}
+
+function enterZhongshuEditMode(title, code, period) {
+  if (activeZsEdit) exitZhongshuEditMode();
+  const block = title.closest('.zs-block');
+  const zsId = block?.dataset.zsId;
+  if (!zsId || !block) return;
+
+  const reversed = detectZsDomReversed(block, code, period);
+  activeZsEdit = { zsId, block, code, period, reversed };
+  block.classList.add('editing');
+
+  // 编辑态右上角解散中枢按钮
+  const closeBtn = document.createElement('button');
+  closeBtn.className = 'zs-edit-close';
+  closeBtn.type = 'button';
+  closeBtn.setAttribute('aria-label', '解散中枢');
+  closeBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`;
+  closeBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+    dissolveZhongshu(code, period, zsId);
+  });
+  const titleEl = block.querySelector('.zs-title');
+  if (titleEl) titleEl.appendChild(closeBtn);
+
+  block.querySelectorAll('.zs-edge').forEach((edge) => {
+    edge.addEventListener('pointerdown', onZsEdgePointerDown);
+  });
+
+  document.addEventListener('pointerdown', closeZsEditOnOutside, { capture: true });
+}
+
+function exitZhongshuEditMode() {
+  if (!activeZsEdit) return;
+  const { block } = activeZsEdit;
+  block.classList.remove('editing');
+  block.querySelectorAll('.zs-edge').forEach((edge) => {
+    edge.classList.remove('dragging');
+    edge.removeEventListener('pointerdown', onZsEdgePointerDown);
+  });
+  block.querySelectorAll('.zs-edit-close').forEach((b) => b.remove());
+  clearZsPreview();
+  activeZsEdit = null;
+  document.removeEventListener('pointerdown', closeZsEditOnOutside, { capture: true });
+}
+
+function closeZsEditOnOutside(e) {
+  if (!activeZsEdit) return;
+  if (activeZsEdit.block.contains(e.target)) return;
+  e.preventDefault();
+  exitZhongshuEditMode();
+}
+
+function onZsEdgePointerDown(e) {
+  if (!activeZsEdit) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const edgeEl = e.currentTarget;
+  const edge = edgeEl.dataset.edge;
+  const startY = e.clientY;
+  edgeEl.classList.add('dragging');
+
+  const move = (ev) => {
+    if (ev.pointerId !== e.pointerId) return;
+    const dy = ev.clientY - startY;
+    updateZsPreview(edge, dy);
+  };
+  const up = (ev) => {
+    if (ev.pointerId !== e.pointerId) return;
+    window.removeEventListener('pointermove', move);
+    window.removeEventListener('pointerup', up);
+    window.removeEventListener('pointercancel', up);
+    edgeEl.classList.remove('dragging');
+    const dy = ev.clientY - startY;
+    const resolved = resolveZsDragOp(edge, dy);
+    clearZsPreview();
+    if (resolved) applyZsEdit(resolved);
+  };
+
+  window.addEventListener('pointermove', move);
+  window.addEventListener('pointerup', up);
+  window.addEventListener('pointercancel', up);
+}
+
+function resolveZsDragOp(edge, dy) {
+  const reversed = activeZsEdit?.reversed || false;
+  let op = null;
+  let count = 0;
+  if (edge === 'top') {
+    if (dy < -ZS_DRAG_THRESHOLD) { op = reversed ? 'include-next' : 'include-prev'; count = Math.floor(-dy / ZS_DRAG_THRESHOLD); }
+    else if (dy > ZS_DRAG_THRESHOLD) { op = reversed ? 'exclude-last' : 'exclude-first'; count = Math.floor(dy / ZS_DRAG_THRESHOLD); }
+  } else if (edge === 'bottom') {
+    if (dy > ZS_DRAG_THRESHOLD) { op = reversed ? 'include-prev' : 'include-next'; count = Math.floor(dy / ZS_DRAG_THRESHOLD); }
+    else if (dy < -ZS_DRAG_THRESHOLD) { op = reversed ? 'exclude-first' : 'exclude-last'; count = Math.floor(-dy / ZS_DRAG_THRESHOLD); }
+  }
+  if (!op) return null;
+  return { op, count };
+}
+
+// 中枢原始震荡区间 [low, high] —— 统一由 algo.js 的 zhongshuRangeLowHigh 提供。
+// 此处原有一份「按 baseSegmentIds 端点求交集」的本地实现，与 algo.js 同名函数分叉
+// （那边已改为直读中枢自带的 low/high，这边没有），实测与矩形区间约 21% 不等，已删除。
+
+// PC 端规则：段是否已离开中枢区间
+// side: 'right' 检查段终点（右边界延伸）；'left' 检查段起点（左边界延伸）
+function isSegmentLeavingZhongshu(seg, range, side) {
+  if (!range) return false;
+  const isUp = seg.end.price > seg.start.price;
+  if (side === 'right') {
+    if (isUp && seg.end.price < range.low) return true;
+    if (!isUp && seg.end.price > range.high) return true;
+  } else {
+    if (isUp && seg.start.price > range.high) return true;
+    if (!isUp && seg.start.price < range.low) return true;
+  }
+  return false;
+}
+
+// 是否与目标段在时间和价格上相连（容忍极小误差）
+function isSegmentConnected(a, b) {
+  if (!a || !b) return false;
+  return (a.end.time === b.start.time && Math.abs(a.end.price - b.start.price) < 1e-3);
+}
+
+// PC 端延伸规则：候选段可被纳入中枢当且仅当：
+// 1. 与当前边界相连；2. 自身未脱离中枢区间；3. 再外侧一段未脱离（否则候选段是离开段）
+function canIncludeInZhongshu(candidate, range, side, outerSeg) {
+  if (!candidate || !range) return false;
+  if (isSegmentLeavingZhongshu(candidate, range, side)) return false;
+  if (outerSeg && isSegmentLeavingZhongshu(outerSeg, range, side)) return false;
+  return true;
+}
+
+// 模拟一次完整的纳入/剔除操作，返回受影响的段 ID 集合、新 segmentIds、是否解散
+function computeZsEditResult(zs, d, op, count) {
+  const sorted = [...(d.segments || [])].sort((a, b) => a.start.time - b.start.time);
+  const segMap = {};
+  sorted.forEach((s) => { segMap[s.id] = s; });
+
+  // 兼容旧数据：未保存 baseSegmentIds 时按时间取前 3 段作为原始中枢
+  let baseSegmentIds = zs.baseSegmentIds;
+  if (!baseSegmentIds || baseSegmentIds.length !== 3) {
+    baseSegmentIds = zs.segmentIds
+      .map((id) => segMap[id])
+      .filter(Boolean)
+      .sort((a, b) => a.start.time - b.start.time)
+      .slice(0, 3)
+      .map((s) => s.id);
+  }
+
+  const otherZsIds = new Set();
+  (d.zhongshus || []).forEach((z) => {
+    if (z.id === zs.id) return;
+    (z.segmentIds || []).forEach((id) => otherZsIds.add(id));
+  });
+
+  const range = zhongshuRangeLowHigh({ ...zs, baseSegmentIds }, segMap);
+  const baseIds = new Set(baseSegmentIds || []);
+  let resultIds = zs.segmentIds
+    .map((id) => segMap[id])
+    .filter(Boolean)
+    .sort((a, b) => a.start.time - b.start.time)
+    .map((s) => s.id);
+  let changed = false;
+  let dissolve = false;
+
+  for (let step = 0; step < count; step++) {
+    const curIds = new Set(resultIds);
+    let curFirst = -1, curLast = -1;
+    sorted.forEach((s, i) => {
+      if (curIds.has(s.id)) {
+        if (curFirst < 0) curFirst = i;
+        curLast = i;
+      }
+    });
+    if (curFirst < 0) break;
+
+    if (op === 'include-prev') {
+      const prev = sorted[curFirst - 1];
+      const prevPrev = sorted[curFirst - 2] || null;
+      if (prev && !curIds.has(prev.id) && !otherZsIds.has(prev.id) &&
+          isSegmentConnected(prev, sorted[curFirst]) &&
+          canIncludeInZhongshu(prev, range, 'left', prevPrev)) {
+        resultIds.unshift(prev.id);
+        changed = true;
+      } else break;
+    } else if (op === 'include-next') {
+      const next = sorted[curLast + 1];
+      const nextNext = sorted[curLast + 2] || null;
+      if (next && !curIds.has(next.id) && !otherZsIds.has(next.id) &&
+          isSegmentConnected(sorted[curLast], next) &&
+          canIncludeInZhongshu(next, range, 'right', nextNext)) {
+        resultIds.push(next.id);
+        changed = true;
+      } else break;
+    } else if (op === 'exclude-first') {
+      if (resultIds.length <= 3) break;
+      const first = sorted[curFirst];
+      if (first && curIds.has(first.id) && !baseIds.has(first.id)) {
+        resultIds = resultIds.filter((id) => id !== first.id);
+        changed = true;
+      } else break;
+    } else if (op === 'exclude-last') {
+      if (resultIds.length <= 3) break;
+      const last = sorted[curLast];
+      if (last && curIds.has(last.id) && !baseIds.has(last.id)) {
+        resultIds = resultIds.filter((id) => id !== last.id);
+        changed = true;
+      } else break;
+    }
+  }
+
+  return { changed, dissolve, segmentIds: resultIds, baseSegmentIds };
+}
+
+function updateZsPreview(edge, dy) {
+  clearZsPreview();
+  const resolved = resolveZsDragOp(edge, dy);
+  if (!resolved || !activeZsEdit) {
+    updateDragBadge(null, null);
+    return;
+  }
+
+  const { op, count } = resolved;
+  const { code, period, zsId } = activeZsEdit;
+  const sec = state.securities.find((s) => s.code === code);
+  const d = sec?.drawings?.[period];
+  const zs = (d?.zhongshus || []).find((z) => z.id === zsId);
+  if (!zs) {
+    updateDragBadge(null, null);
+    return;
+  }
+
+  const result = computeZsEditResult(zs, d, op, count);
+  const originalIds = new Set(zs.segmentIds || []);
+  const affected = [];
+  if (op.startsWith('include')) {
+    result.segmentIds.forEach((id) => { if (!originalIds.has(id)) affected.push(id); });
+  } else {
+    result.segmentIds.forEach((id) => { originalIds.delete(id); });
+    affected.push(...originalIds);
+  }
+
+  const cls = op.startsWith('include') ? 'zs-preview-include' : 'zs-preview-exclude';
+  affected.forEach((id) => {
+    const card = document.querySelector(`.card[data-id="${id}"]`);
+    if (card) card.classList.add(cls);
+  });
+
+  updateDragBadge(edge, dy, affected.length);
+}
+
+function updateDragBadge(edge, dy, effectiveCount) {
+  if (!activeZsEdit) return;
+  const edgeEl = edge ? activeZsEdit.block.querySelector(`.zs-edge[data-edge="${edge}"]`) : null;
+  if (!edgeEl) {
+    if (activeZsEdit) activeZsEdit.block.querySelectorAll('.zs-drag-badge').forEach((b) => b.remove());
+    return;
+  }
+  const resolved = resolveZsDragOp(edge, dy);
+  let badge = edgeEl.querySelector('.zs-drag-badge');
+  if (!resolved || effectiveCount <= 0) {
+    if (badge) badge.remove();
+    return;
+  }
+  if (!badge) {
+    badge = document.createElement('span');
+    badge.className = 'zs-drag-badge';
+    edgeEl.appendChild(badge);
+  }
+  const label = resolved.op.startsWith('include') ? '纳入' : '剔除';
+  badge.textContent = `${label} ${effectiveCount} 段`;
+}
+
+function clearZsPreview() {
+  document.querySelectorAll('.zs-preview-include, .zs-preview-exclude').forEach((el) => {
+    el.classList.remove('zs-preview-include', 'zs-preview-exclude');
+  });
+  if (activeZsEdit) {
+    activeZsEdit.block.querySelectorAll('.zs-drag-badge').forEach((b) => b.remove());
+  }
+}
+
+function applyZsEdit(resolved) {
+  if (!activeZsEdit || !resolved) return;
+  const { op, count } = resolved;
+  const { code, period, zsId } = activeZsEdit;
+  const sec = state.securities.find((s) => s.code === code);
+  const d = sec?.drawings?.[period];
+  const zs = (d?.zhongshus || []).find((z) => z.id === zsId);
+  if (!zs || !d) return;
+
+  const result = computeZsEditResult(zs, d, op, count);
+  if (!result.changed) return;
+
+  zs.segmentIds = result.segmentIds;
+  zs.baseSegmentIds = result.baseSegmentIds;
+  if (result.dissolve) {
+    d.zhongshus = (d.zhongshus || []).filter((z) => z.id !== zs.id);
+  }
+
+  try { navigator.vibrate?.(12); } catch {}
+  exitZhongshuEditMode();
+  saveLocalEdits(code, sec.drawings);
+  refreshPeriodDetailWithoutFetch(code, period);
+}
+
+// 解散中枢：移除中枢结构，内部段恢复为普通段
+function dissolveZhongshu(code, period, zsId) {
+  const sec = state.securities.find((s) => s.code === code);
+  const d = sec?.drawings?.[period];
+  if (!d) return;
+  d.zhongshus = (d.zhongshus || []).filter((z) => z.id !== zsId);
+  try { navigator.vibrate?.(12); } catch {}
+  exitZhongshuEditMode();
+  saveLocalEdits(code, sec.drawings);
+  refreshPeriodDetailWithoutFetch(code, period);
+}
+
+async function handleSegmentAction(act, segId, code, period) {
+  const sec = state.securities.find((s) => s.code === code);
+  if (!sec) return;
+  const d = sec.drawings[period];
+  if (!d) return;
+  const targetSeg = (d.segments || []).find((s) => s.id === segId);
+
+  if (act === 'add') {
+    addSegment(code, period, segId);
+  } else if (act === 'watch') {
+    if (!targetSeg) return;
+    addWatchSegment(code, period, segId);
+  } else if (act === 'track') {
+    if (!targetSeg) return;
+    addTrackSegment(code, period, segId);
+  } else if (act === 'detect') {
+    if (!targetSeg) return;
+    // 判定口径是「段内 K 线区间」，本周期 K 线未加载时先补取一次
+    const bars = await fetchAnalysisBars(code, period);
+    if (!bars) {
+      alert('行情数据加载失败，请检查网络后重试');
+      return;
+    }
+    const sorted = [...(d.segments || [])].sort((a, b) => a.start.time - b.start.time);
+    const idx = sorted.findIndex((s) => s.id === segId);
+    const detected = idx >= 0
+      ? detectZhongshu(sorted, idx, bars, { containers: analysisContainers(code, period) })
+      : null;
+    if (!detected) {
+      alert('该段无法识别中枢（需连续三段段内 K 线有重叠，且方向满足本级别约束）');
+      return;
+    }
+    const segById = {};
+    sorted.forEach((s) => { segById[s.id] = s; });
+    if (detected.segmentIds.some((id) => segById[id]?._isWatch || segById[id]?._isTrack)) {
+      alert('三段中含盯盘/追踪段，无法识别中枢（终点随行情移动）');
+      return;
+    }
+    const otherZsIds = new Set();
+    (d.zhongshus || []).forEach((z) => {
+      (z.segmentIds || []).forEach((id) => otherZsIds.add(id));
+    });
+    if (detected.segmentIds.some((id) => otherZsIds.has(id))) {
+      alert('选中的段已存在于其它中枢中');
+      return;
+    }
+    d.zhongshus = d.zhongshus || [];
+    d.zhongshus.push(makeZhongshu(detected.segmentIds, detected.baseSegmentIds));
+    saveLocalEdits(code, sec.drawings);
+    refreshPeriodDetailWithoutFetch(code, period);
+    repaintOpenSecKline(code, period);
+    toast('已识别中枢');
+  } else if (act === 'extend') {
+    // 中枢延伸（该段号是其所属中枢的最后一段）：一步延伸到上限（含中间档位），
+    // 规则同桌面右键「延伸」/Tab；只改中枢的段集合，区间上下沿用原始 3 段不变
+    const bars = await fetchAnalysisBars(code, period);
+    if (!bars) {
+      alert('行情数据加载失败，请检查网络后重试');
+      return;
+    }
+    const target = zhongshuExtendTarget(code, period, segId, bars);
+    if (!target) {
+      toast('该中枢不满足延伸条件或已达上限');
+      return;
+    }
+    target.zs.segmentIds = target.info.segmentIds;
+    saveLocalEdits(code, sec.drawings);
+    refreshPeriodDetailWithoutFetch(code, period);
+    repaintOpenSecKline(code, period);
+    toast(target.info.toStop ? '中枢已延伸至档位' : '中枢已延伸至上限');
+  } else if (act === 'recursive') {
+    if (!targetSeg) return;
+    recursiveToHigherPeriod(code, period, segId);
+  } else if (act === 'edit') {
+    if (!targetSeg) return;
+    const wasWatch = targetSeg._isWatch;
+    const wasTrack = targetSeg._isTrack;
+    // 盯盘段编辑过程中暂停实时自动延伸，避免被行情拉回
+    if (wasWatch) targetSeg._watchManualEnd = true;
+    const sorted = [...(d.segments || [])].sort((a, b) => a.start.time - b.start.time);
+    const idx = sorted.findIndex((s) => s.id === segId);
+    // 起点即为上一段终点（之前连接着段）→ 起点不可编辑
+    const startLocked = idx > 0 && sorted[idx - 1].end.time === targetSeg.start.time;
+    openEditor(targetSeg, async (newStart, newEnd) => {
+      let bars;
+      try {
+        bars = await ensureBars(code, period);
+      } catch {
+        alert('行情数据加载失败，请检查网络后重新编辑');
+        return;
+      }
+      const sBar = barAtTime(bars, newStart);
+      const eBar = barAtTime(bars, newEnd);
+      const direction = targetSeg.direction;
+      targetSeg.start.time = newStart;
+      targetSeg.start.price = endpointPrice(sBar, true, direction) ?? targetSeg.start.price;
+      targetSeg.end.time = newEnd;
+      targetSeg.end.price = endpointPrice(eBar, false, direction) ?? targetSeg.end.price;
+      targetSeg.direction = direction;
+      // 编辑完成：恢复自动延伸；且盯盘段/追踪段编辑后变为普通段，并基于新的终点自动生成新的盯盘/追踪段
+      delete targetSeg._watchManualEnd;
+      if (wasWatch) {
+        delete targetSeg._isWatch;
+        delete targetSeg._watchMaxSpan;
+        createWatchFromSource(targetSeg, bars, d.segments || [], period);
+      } else if (wasTrack) {
+        delete targetSeg._isTrack;
+        delete targetSeg._trackDirection;
+        const made = createTrackFromSource(targetSeg, bars, period);
+        if (made.created) {
+          (d.segments || []).push(made.seg);
+        }
+      }
+      saveLocalEdits(code, sec.drawings);
+      refreshPeriodDetailWithoutFetch(code, period);
+    }, null, startLocked, () => {
+      // 取消编辑：若为盯盘段则恢复实时自动延伸
+      if (targetSeg) delete targetSeg._watchManualEnd;
+    });
+  } else if (act === 'commit') {
+    // 盯盘段/追踪段经 ✓ 确认：
+    //   A0 盯盘段 → 对齐桌面版「持续生成」逻辑（含修复链）
+    //   非 A0 追踪段 → 冻结为普通段，基于最新行情创建下一段追踪
+    if (!targetSeg || (!targetSeg._isWatch && !targetSeg._isTrack)) return;
+    if (targetSeg._isTrack) {
+      // 追踪段确认：冻结为普通段，基于最新行情起点创建下一段追踪
+      let bars;
+      try {
+        bars = await ensureBars(code, period);
+      } catch {
+        alert('行情数据加载失败，请检查网络后重试');
+        return;
+      }
+      const segs = d.segments || [];
+      degradeTrack(targetSeg);
+      const made = createTrackFromSource(targetSeg, bars, period);
+      if (made.created) {
+        segs.push(made.seg);
+        toast('已确认追踪段，继续追踪下一段');
+      } else {
+        // 无足够行情数据时，保持追踪段
+        targetSeg._isTrack = true;
+        toast('行情不足，保持当前追踪段');
+      }
+      saveLocalEdits(code, sec.drawings);
+      refreshPeriodDetailWithoutFetch(code, period);
+      return;
+    }
+    // 盯盘段经 ✓ 确认：对齐桌面版「持续生成」逻辑。
+    // 与自动路径走同一套逻辑门槛（判定1 本段百分百画完 → 判定2 下一段能接吗 → 判定3 下一段充分发展了吗）：
+    // 本段未画完(null) → 提示「仍在确认中」，不动作；
+    // 下一段还没长成(wait) → 提示「行情还没长成」，不动作；
+    // 能接(continue) → 冻结为普通段并自动生成下一段盯盘；
+    // 确定接不上(fix) → ①死胡同回溯（删b、收紧a）；失败降级 ②死胡同自修（收紧b自己）；
+    //                   再失败降级 ③死胡同兜底（下调「下一段试算」的滑窗窗口）；
+    //                   再失败降级 ④强缺口兜底（b 右侧跨交易日强反向缺口成立时取缺口后极值）；
+    //                   四层全失败才保持当前盯盘段不动。
+    // 与自动路径刻意保留的差异：手动不设闸2（10根新K线）间隔节流、一次只推进一段。
+    if (!targetSeg || !targetSeg._isWatch) return;
+    let bars;
+    try {
+      bars = await ensureBars(code, period);
+    } catch {
+      alert('行情数据加载失败，请检查网络后重试');
+      return;
+    }
+    const segs = d.segments || [];
+    const startIdx = findBarIdxByTime(bars, targetSeg.start.time);
+    if (startIdx < 0) {
+      toast('行情数据不足，无法推进盯盘段');
+      refreshPeriodDetailWithoutFetch(code, period);
+      return;
+    }
+    const maxSpanOverride = (targetSeg._watchMaxSpan != null && targetSeg._watchMaxSpan >= DEFAULT_CANDIDATE_SPAN_MIN)
+      ? targetSeg._watchMaxSpan : undefined;
+    // 判定链与自动路径完全一致（同一函数）
+    const verdict = evalAutoContinue(segs, targetSeg, bars, startIdx, maxSpanOverride);
+    if (verdict === null) {
+      toast('本段仍在确认中，暂不能推进');
+      refreshPeriodDetailWithoutFetch(code, period);
+      return;
+    }
+    if (verdict === 'wait') {
+      toast('行情还没长成，暂不推进');
+      refreshPeriodDetailWithoutFetch(code, period);
+      return;
+    }
+    if (verdict === 'fix') {
+      // —— 修复链：先死胡同回溯（最优解：删b，收紧a）——
+      const roll = rollbackResult(segs, targetSeg, bars);
+      if (roll.ok) {
+        const prev = roll.prevSeg;
+        d.segments = segs.filter((s) => s.id !== targetSeg.id);
+        prev.end = { time: Math.floor(roll.newEnd.time), price: roll.newEnd.price };
+        prev.direction = prev.direction || segDirection(prev);
+        prev._isWatch = true;
+        prev._watchMaxSpan = roll.tempMax;
+        toast('已回溯收紧前段，继续盯盘');
+        saveLocalEdits(code, sec.drawings);
+        refreshPeriodDetailWithoutFetch(code, period);
+        return;
+      }
+      // —— 死胡同回溯失败，降级死胡同自修（兜底：收紧b自己）——
+      const t = tightenCurrentResult(targetSeg, bars, startIdx);
+      if (t.ok) {
+        targetSeg.end = { time: Math.floor(t.newEnd.time), price: t.newEnd.price };
+        targetSeg._watchMaxSpan = t.tempMax;
+        targetSeg._watchFixCount = (targetSeg._watchFixCount || 0) + 1;
+        targetSeg._watchLastFixTime = Math.floor(bars[bars.length - 1].time);
+        toast('已死胡同自修当前段，继续盯盘');
+        saveLocalEdits(code, sec.drawings);
+        refreshPeriodDetailWithoutFetch(code, period);
+        return;
+      }
+      // —— 第三层：死胡同兜底（下调「下一段试算」的滑窗窗口，避免人工介入）——
+      if (applyDeadEndFallback(period, segs, targetSeg, bars)) {
+        toast('已下调下一段试算窗口，继续盯盘');
+        saveLocalEdits(code, sec.drawings);
+        refreshPeriodDetailWithoutFetch(code, period);
+        return;
+      }
+      // —— 第四层：强缺口兜底（b 右侧跨交易日强反向缺口成立时，c 取缺口后极值）——
+      if (applyStrongGapFallback(period, segs, targetSeg, bars)) {
+        toast('已按强缺口落下一段，继续盯盘');
+        saveLocalEdits(code, sec.drawings);
+        refreshPeriodDetailWithoutFetch(code, period);
+        return;
+      }
+      // 修复链全部失败，保持当前盯盘段不动
+      toast('已是最后一段，无法修复');
+      refreshPeriodDetailWithoutFetch(code, period);
+      return;
+    }
+    // verdict === 'continue'：冻结当前盯盘段并续接生成下一段；下一段若未生成则保持当前为盯盘段
+    const frozenId = targetSeg.id;
+    degradeWatch(targetSeg);
+    const made = createWatchFromSource(targetSeg, bars, segs, period);
+    if (made.reason === 'narrow') {
+      // 窄胡同：源段已被收紧并激活为盯盘段，无需额外操作
+      saveLocalEdits(code, sec.drawings);
+      refreshPeriodDetailWithoutFetch(code, period);
+      toast('已收紧前段，继续盯盘');
+      return;
+    }
+    if (!made.created) {
+      const frozen = segs.find((s) => s.id === frozenId);
+      if (frozen) frozen._isWatch = true;
+      toast(made.reason === 'already_done' ? '已是最后一段（后续行情不足），保持当前盯盘段' : '已是最后一段，无法续接下一段');
+    }
+    saveLocalEdits(code, sec.drawings);
+    refreshPeriodDetailWithoutFetch(code, period);
+    // 接受后生成的新盯盘段正常渲染即可（不再调用 showCardOverlay，避免进入
+    // 「长按显示按钮」态；也不再自动弹出 K 线图，由用户自行操作）。
+  } else if (act === 'del') {
+    if (!targetSeg) return;
+    if (!confirm('确定删除此段？')) return;
+    d.segments = d.segments.filter((s) => s.id !== segId);
+    (d.zhongshus || []).forEach((z) => {
+      z.segmentIds = (z.segmentIds || []).filter((id) => id !== segId);
+      if (z.baseSegmentIds) {
+        z.baseSegmentIds = z.baseSegmentIds.filter((id) => id !== segId);
+      }
+    });
+    d.zhongshus = (d.zhongshus || []).filter((z) => (z.segmentIds || []).length >= 3);
+    saveLocalEdits(code, sec.drawings);
+    refreshPeriodDetailWithoutFetch(code, period);
+  }
+}
+
+// ========== 实时行情 ==========
+function startAllRealtime() {
+  // 清理证券实时行情定时器，保留大盘指数定时器
+  Object.entries(state.rtTimers).forEach(([key, timer]) => {
+    if (key !== '_index') clearInterval(timer);
+  });
+  const indexTimer = state.rtTimers._index;
+  state.rtTimers = indexTimer ? { _index: indexTimer } : {};
+  state._rtPrices = {};
+  const codes = state.securities.map((s) => s.code);
+  if (!codes.length) return;
+
+  const tick = async () => {
+    try {
+      const results = await fetchRealtimeMulti(codes);
+      state._rtPrices = results;
+      for (const code of Object.keys(results)) {
+        const quoteEl = document.querySelector(`.sec-quote[data-rt="${code}"]`);
+        if (quoteEl) {
+          const r = results[code];
+          const change = fmtIndexChange(r.price, r.prevClose);
+          quoteEl.innerHTML = `<div class="sec-price">${r.price ? formatPrice(code, r.price) : ''}</div><div class="sec-change ${change.cls}">${change.text}</div>`;
+        }
+        const nameEl = document.querySelector(`[data-name="${code}"]`);
+        const sec = state.securities.find((s) => s.code === code);
+        if (nameEl && results[code].name && !(sec && sec.name)) nameEl.textContent = results[code].name;
+      }
+    } catch {}
+  };
+  tick();
+  state.rtTimers._all = setInterval(tick, 5000);
+  startDetailRealtime();
+}
+
+// 盯盘实时刷新的轮询间隔（毫秒）：分钟线变化快用 15s，日/周线变化慢用 60s，避免无效轮询
+function watchInterval(period) {
+  return (period === 'day' || period === 'week') ? 60000 : 15000;
+}
+
+// 盯盘实时刷新：定时拉取最新 K 线，更新盯盘段/追踪段终点，并让已展开的 K 线图跟上行情。
+// 定时器固定 15s 触发，但按「取数周期」分别做时间戳节流：日/周线实际约 60s 才真正发请求。
+function startDetailRealtime() {
+  if (state.rtTimers._detail) return;
+  state.rtTimers._detail = setInterval(async () => {
+    if (document.hidden) return;
+    // 触发场景（每轮可同时命中多个周期）：
+    //  1) 详情页盯盘 tab（段卡片页）：更新盯盘段/追踪段终点；
+    //  2) 段卡片页长按段号展开的 K 线（_klineView 存在且已展开）；
+    //  3) 周期列表页展开的行内 K 线：每一行按自己的展示周期独立取数/节流/重绘。
+    // 周期页不再只看「第一个展开行」，也不再被该行有没有盯盘段/追踪段卡住——
+    // 否则只要展开的周期没有盯盘/追踪段，行内图在交易时段就完全不刷新（须离开再进详情才更新）。
+    const klineOpen = isSegmentKlineOpen();
+    let code = null;
+    let isWatchScope = false;
+    let targets = []; // 本轮候选的展示周期（画线键）
+    if (state.view === 'detail' && state.activeTab === 'dingpan') {
+      code = state.selectedCode;
+      isWatchScope = true;
+      targets = [state.selectedPeriod];
+    } else if (klineOpen) {
+      code = _klineView.code;
+      targets = [_klineView.period]; // 段数据键：辅助周期已别名到主周期，读取的即是主周期的盯盘/追踪段
+    } else if (state.view === 'periods') {
+      code = state.selectedCode;
+      targets = [...new Set(
+        [...document.querySelectorAll('.period-row.expanded')]
+          .map((row) => rowActivePeriod(row)) // 合并行取当前展示的半区周期
+          .filter(Boolean),
+      )];
+      if (!targets.length) return;
+    } else {
+      return;
+    }
+    targets = targets.filter(Boolean);
+    if (!targets.length) return;
+    const sec = state.securities.find((s) => s.code === code);
+    if (!sec) return;
+
+    const now = Date.now();
+    const lastFetch = state._lastWatchFetch || (state._lastWatchFetch = {});
+    // 取数周期：辅助周期（15m/60m）回落主周期（5m/30m）——盯盘/追踪段是主周期刻度，
+    // 必须用主周期 bars 精确更新终点。K 线展示（弹窗/行内图）由 refreshKlineSheet /
+    // refreshPeriodRowsKline 按展示周期另取本周期真实数据。
+    // 按取数周期分组并分别节流：同一取数周期只请求一次（如 5m 行与 15m 行同时展开时共用 5m）。
+    const groups = new Map(); // fetchPeriod → 展示周期（画线键）
+    for (const p of targets) {
+      const fp = AUX_TO_MAIN[p] || p;
+      if (!groups.has(fp)) groups.set(fp, p);
+    }
+    const due = [...groups].filter(([fp]) => now - (lastFetch[fp] || 0) >= watchInterval(fp) - 200);
+    if (!due.length) return;
+
+    for (const [fetchPeriod, period] of due) {
+      lastFetch[fetchPeriod] = Date.now(); // 先记账：请求失败也按周期节流，避免每轮重试
+      const d = sec.drawings[period];
+      // 更新盯盘段（A0 级别使用复杂算法）和追踪段（非 A0 级别使用简化算法）
+      const hasWatch = !!(d && (d.segments || []).some((s) => s._isWatch));
+      const hasTrack = !!(d && (d.segments || []).some((s) => s._isTrack));
+      try {
+        const res = await fetchBars(code, fetchPeriod, 800);
+        const bars = res.bars || [];
+        state._currentBars = { code, period: fetchPeriod, bars };
+        computeMACD(bars);
+        let changed = false;
+        if (hasWatch) {
+          const u = updateWatchSegments(code, period, bars, false);
+          changed = !!(u.changed || u.structural);
+        }
+        if (hasTrack) {
+          const u = updateTrackSegments(code, period, bars);
+          changed = changed || !!u.changed;
+        }
+        // 详情页：段数据变化、或没有盯盘段/追踪段（需用新 bars 重算力度展示）时才重绘
+        if (isWatchScope && (changed || (!hasWatch && !hasTrack))) refreshPeriodDetailWithoutFetch(code, period);
+      } catch {}
+    }
+    // K 线展示：段卡片内联 K 线与周期页所有展开行按各自展示周期用最新 bars 重切重绘
+    // （没有盯盘段/追踪段的周期同样要跟上行情）
+    if (klineOpen) refreshKlineSheet();
+    if (state.view === 'periods' && state.selectedCode === code) refreshPeriodRowsKline(code);
+    // 详情页证券卡片长按展开的 K 线：纳入轮询，用最新 K 线重切重绘
+    if (isWatchScope && isSecKlineOpen()) {
+      const wrap = document.querySelector('.sec-card--detail .sec-kline');
+      if (wrap) loadAndRenderSecKline(code, state.selectedPeriod, wrap, true);
+    }
+  }, 15000);
+}
+
+// ========== 大盘指数行情 ==========
+function fmtIndexChange(price, prevClose) {
+  if (!prevClose || prevClose <= 0 || !Number.isFinite(price)) return { text: '—', cls: '' };
+  const change = price - prevClose;
+  const pct = (change / prevClose) * 100;
+  const sign = change > 0 ? '+' : '';
+  return {
+    text: `${sign}${pct.toFixed(2)}%`,
+    cls: change > 0 ? 'up' : change < 0 ? 'down' : '',
+  };
+}
+
+async function refreshIndexQuotes() {
+  try {
+    const codes = INDEX_CODES.map((i) => i.code);
+    // 行情页自定义证券也纳入价格轮询
+    if (state._hangqingExtras && state._hangqingExtras.length) {
+      codes.push(...state._hangqingExtras.map((s) => s.code));
+    }
+    const results = await fetchRealtimeMulti(codes);
+    state.indexQuotes = results || {};
+    renderHangqingView();
+  } catch {}
+}
+
+function startIndexRealtime() {
+  if (state.rtTimers._index) return;
+  refreshIndexQuotes();
+  state.rtTimers._index = setInterval(refreshIndexQuotes, 5000);
+}
+
+// ========== 算力 ==========
+function computeStrengths(bars, segments, zhongshus) {
+  const sorted = [...segments].sort((a, b) => a.start.time - b.start.time);
+  let prevDir = null;
+  sorted.forEach((s) => {
+    s._strength = segmentStrength(bars, s, prevDir);
+    if (s.direction !== 'horizontal') prevDir = s.direction;
+  });
+  computeZhongshuStrength(bars, segments, zhongshus);
+  detectOneBuySell(segments, zhongshus);
+  detectTwoAndThreeBuySell(segments, zhongshus);
+  detectStrengthIndicators(segments, zhongshus);
+}
+
+// ========== 新增段 ==========
+function barAtTime(bars, t) {
+  if (!bars || !bars.length) return null;
+  let nearest = bars[0];
+  let min = Math.abs(bars[0].time - t);
+  for (const b of bars) {
+    const d = Math.abs(b.time - t);
+    if (d < min) { min = d; nearest = b; }
+  }
+  return nearest;
+}
+
+function priceAtTime(bars, t) {
+  const bar = barAtTime(bars, t);
+  return bar ? bar.close : null;
+}
+
+// 按段涨跌方向，返回某根 K 线在起点/终点处应取的价格：
+//   上涨段：起点=最低价(low)，终点=最高价(high)
+//   下跌段：起点=最高价(high)，终点=最低价(low)
+//   水平段：取收盘价(close)
+function endpointPrice(bar, isStart, direction) {
+  if (!bar) return null;
+  if (direction === 'up') return isStart ? bar.low : bar.high;
+  if (direction === 'down') return isStart ? bar.high : bar.low;
+  return bar.close;
+}
+
+// 算法用 K 线（盯盘/追踪/编辑/新增段/中枢识别）：辅助周期的画线即主周期刻度，
+// 段 time 必须与主周期 bar 精确匹配（findBarIdxByTime 为精确查找），故回落主周期。
+// _currentBars 始终缓存「主周期算法数据」；展示取数请用 ensureDisplayBars。
+async function ensureBars(code, period) {
+  const algPeriod = AUX_TO_MAIN[period] || period;
+  if (state._currentBars && state._currentBars.code === code && state._currentBars.period === algPeriod) {
+    return state._currentBars.bars;
+  }
+  const res = await fetchBars(code, algPeriod, 800);
+  const bars = res.bars || [];
+  computeMACD(bars);
+  state._currentBars = { code, period: algPeriod, bars };
+  return bars;
+}
+
+// 展示用 K 线（证券卡片图/段弹窗/行内图）：一律取当前周期真实数据。
+// 主周期直接复用算法缓存 _currentBars（轮询已刷新）；辅助周期取本周期真实 K 线，
+// 段端点与本周期 bar 不对齐处由 klinechart 的 timeToX 时间插值定位。
+// fresh=true 强制重新拉取（轮询刷新）；辅助周期结果缓存于 state._displayBars。
+async function ensureDisplayBars(code, period, fresh = false) {
+  const cb = state._currentBars;
+  if (cb && cb.code === code && cb.period === period && cb.bars && cb.bars.length) {
+    return cb.bars;
+  }
+  const dc = state._displayBars || (state._displayBars = {});
+  const key = code + '|' + period;
+  if (!fresh && dc[key] && dc[key].length) return dc[key];
+  const res = await fetchBars(code, period, 800);
+  const bars = res.bars || [];
+  if (bars.length) {
+    computeMACD(bars);
+    dc[key] = bars;
+  }
+  return dc[key] || bars;
+}
+
+function oppositeDirection(dir) {
+  return dir === 'up' ? 'down' : 'up';
+}
+
+async function addSegment(code, period, afterSegId) {
+  const sec = state.securities.find((s) => s.code === code);
+  if (!sec) return;
+  let bars;
+  try {
+    bars = await ensureBars(code, period);
+  } catch (e) {
+    alert('行情数据加载失败，请检查网络后重试');
+    return;
+  }
+  const d = sec.drawings[period] || { segments: [], zhongshus: [] };
+  const segs = d.segments || [];
+  // 指定了源段（长按某段点「+」）则从该段终点续接；否则取终点时间最晚的段
+  const prevSeg = (afterSegId && segs.find((s) => s.id === afterSegId))
+    || (segs.length
+      ? [...segs].sort((a, b) => (b.end?.time ?? b.start?.time) - (a.end?.time ?? a.start?.time))[0]
+      : null);
+  // 若源段之后还有段（中间缺口），默认终点取下一段的起点时间，便于补齐缺口
+  const sorted = [...segs].sort((a, b) => a.start.time - b.start.time);
+  const prevIdx = prevSeg ? sorted.findIndex((s) => s.id === prevSeg.id) : -1;
+  const nextSeg = prevIdx >= 0 ? sorted[prevIdx + 1] : null;
+  const now = Math.floor(Date.now() / 1000);
+  const defaults = {
+    startTime: prevSeg ? prevSeg.end.time : now - 3600,
+    endTime: nextSeg ? nextSeg.start.time : now,
+  };
+  openEditor(null, (startTime, endTime) => {
+    if (endTime <= startTime) { alert('终点必须晚于起点'); return; }
+    // 先确定方向（无前段时用收盘价判断趋势），再按涨跌方向取对应端点高低价
+    const sBar = barAtTime(bars, startTime);
+    const eBar = barAtTime(bars, endTime);
+    const direction = prevSeg
+      ? oppositeDirection(prevSeg.direction)
+      : (eBar && sBar && eBar.close >= sBar.close ? 'up' : 'down');
+    const sPrice = endpointPrice(sBar, true, direction) ?? 0;
+    const ePrice = endpointPrice(eBar, false, direction) ?? 0;
+    const seg = {
+      id: 's_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6),
+      kind: 'segment',
+      period,
+      direction,
+      start: { time: startTime, price: sPrice },
+      end: { time: endTime, price: ePrice },
+    };
+    d.segments = [...segs, seg];
+    sec.drawings[period] = d;
+    saveLocalEdits(code, sec.drawings);
+    refreshPeriodDetailWithoutFetch(code, period);
+  }, defaults);
+}
+
+// ===== 单根段递归（对齐桌面版「单根点线递归」）=====
+// 在当前周期 P 的某根段上执行递归：按 computeRecursiveSegment 的规则（入口 B/C/C'）计算出一根
+// 新段，产物写入更高一级周期 P'（如 A0=1分钟 时在 1 分钟段上递归，形成 5 分钟新段）。
+// 桌面版产物是同一画布上的高一档线型（点线→虚线）；移动端没有线型级别概念，改用周期承载级别。
+function recursiveToHigherPeriod(code, period, segId) {
+  const sec = state.securities.find((s) => s.code === code);
+  if (!sec) return;
+  const higherPeriod = getNextHigherPeriod(period);
+  if (!higherPeriod) {
+    toast('已是最高级别，无法递归');
+    return;
+  }
+  const d = sec.drawings[period] || { segments: [], zhongshus: [] };
+  if (!sec.drawings[higherPeriod]) {
+    sec.drawings[higherPeriod] = { segments: [], zhongshus: [] };
+  }
+  const hd = sec.drawings[higherPeriod];
+  hd.segments = hd.segments || [];
+  hd.zhongshus = hd.zhongshus || [];
+  const info = computeRecursiveSegment(d.segments || [], hd.segments, segId);
+  if (!info.ok) {
+    toast('该段不满足递归条件');
+    return;
+  }
+  // 幂等：更高周期已存在相同端点的段时不再重复生成（避免重复点击产生重叠段）
+  const dup = hd.segments.some((s) => s && s.start && s.end
+    && s.start.time === info.start.time && Math.abs(s.start.price - info.start.price) < 1e-3
+    && s.end.time === info.end.time && Math.abs(s.end.price - info.end.price) < 1e-3);
+  if (dup) {
+    toast(`已存在相同的${periodLabel(higherPeriod)}段，无需重复递归`);
+    return;
+  }
+  const newSeg = {
+    id: 's_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6),
+    kind: 'segment',
+    period: higherPeriod,
+    direction: info.end.price >= info.start.price ? 'up' : 'down',
+    start: { time: info.start.time, price: info.start.price },
+    end: { time: info.end.time, price: info.end.price },
+    // 递归产物标记：不参与低周期 hideBefore 对齐（见 computeHideBefore）
+    _isRecursive: true,
+  };
+  hd.segments.push(newSeg);
+  // 递归出的更高级别可能不在证券周期列表（如只有 1m/5m/15m 的证券从 5m 递归出 30m）：
+  // 补入列表（按周期链顺序），使该级别在周期页可见可进入；刷新后由 loadAllDrawings 的补全逻辑恢复。
+  if (!(sec.periods || []).includes(higherPeriod)) {
+    sec.periods = [...(sec.periods || []), higherPeriod].sort(
+      (a, b) => PERIODS.findIndex((x) => x[0] === a) - PERIODS.findIndex((x) => x[0] === b)
+    );
+  }
+  try { navigator.vibrate?.(12); } catch {}
+  saveLocalEdits(code, sec.drawings);
+  toast(`已递归生成${periodLabel(higherPeriod)}段`);
+  refreshPeriodDetailWithoutFetch(code, period);
+}
+
+// ===== 盯盘段：选点 / 创建 / 动态更新 / 自动续接（对齐桌面版 watch 逻辑） =====
+
+let _watchEndCache = null;   // 盯盘段终点缓存：仅行情数据变化时重算，避免每帧 O(N²)
+let _watchScopeKey = null;   // 当前盯盘 scope（code|period），切换时清空派生缓存
+
+// 降级盯盘段为普通段（清除盯盘标记，保留为普通段）
+function degradeWatch(seg) {
+  delete seg._isWatch;
+  delete seg._watchDirection;
+  delete seg._watchMaxSpan;
+  delete seg._watchManualEnd;
+  delete seg._watchFallbackTriedAt; // 兜底重试闸一并清除（该段不再参与修复链）
+  delete seg._watchGapTriedAt;      // 强缺口兜底重试闸同理
+}
+
+// 从源段 sourceSeg 的终点创建/续接盯盘段；含窄胡同回溯（把源段自身收紧并转为盯盘段）。
+// overrideEnd：直接给定新段终点（{ time, price }），跳过选点与窄胡同——仅供死胡同兜底
+//   用「降级窗口」选出的终点落段；常规调用不传，行为完全不变。
+// 直接修改 segs（d.segments）。返回 { created, reason, seg }。
+function createWatchFromSource(sourceSeg, bars, segs, period, overrideEnd) {
+  const right = segRight(sourceSeg);
+  if (!right) return { created: false, reason: 'invalid' };
+  const startIdx = findBarIdxByTime(bars, right.time);
+  if (startIdx < 0) return { created: false, reason: 'no_start' };
+  const direction = oppositeDir(sourceSeg.direction || segDirection(sourceSeg));
+  const startPrice = right.price;
+  const foundB = overrideEnd
+    ? { endInfo: overrideEnd, _reason: 'found' }
+    : calcNaturalDuanEndFull(bars, startIdx, startPrice, direction);
+  // 窄胡同回溯：右侧行情充足(avail>=9)且 b 长档未命中时，先把源段收紧并转为盯盘段
+  // （兜底给定 overrideEnd 时跳过：终点已确定，不需要再收紧源段）
+  if (!overrideEnd && bars.length - startIdx >= 9) {
+    const bLongHit = !!(foundB && foundB.endInfo && foundB.matchedTier && foundB.matchedTier.indexOf('长档') === 0);
+    if (!bLongHit) {
+      const narrow = narrowAlleyResult(sourceSeg, segs, bars);
+      if (narrow.ok) {
+        // 把源段收紧并激活为新盯盘段（对齐 _commitWatchRecompute）
+        sourceSeg.end = { time: Math.floor(narrow.newEnd.time), price: narrow.newEnd.price };
+        sourceSeg.direction = sourceSeg.direction || segDirection(sourceSeg);
+        sourceSeg._isWatch = true;
+        sourceSeg._watchMaxSpan = narrow.tempMax;
+        return { created: false, reason: 'narrow' };
+      }
+    }
+  }
+  if (!foundB || !foundB.endInfo || foundB.endInfo.barIdx <= startIdx) {
+    return { created: false, reason: (foundB && foundB._reason) || 'rule_not_found' };
+  }
+  // 同一源段只能有一个盯盘段，先移除旧的（避免重复）
+  for (let i = segs.length - 1; i >= 0; i--) {
+    const s = segs[i];
+    if (s !== sourceSeg && s._isWatch && s._watchSourceId === sourceSeg.id) segs.splice(i, 1);
+  }
+  const seg = {
+    id: 'w_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6),
+    kind: 'segment',
+    period,
+    direction,
+    start: { time: Math.floor(right.time), price: right.price },
+    end: { time: Math.floor(foundB.endInfo.time), price: foundB.endInfo.price },
+    _isWatch: true,
+    _watchSourceId: sourceSeg.id,
+  };
+  segs.push(seg);
+  return { created: true, reason: 'found', seg: seg };
+}
+
+// 死胡同兜底（修复链第三层）：病因是「活跃段 b 之后的下一段」按标准滑窗半径 N(10→7)
+// 找不到终点。做法：不动 b 自己，只把「下一段试算」的滑窗下限逐级下调（6→…→2），
+// 收到第一个能通过验收的窗口即停，然后用该窗口选出的终点落为新的盯盘段。
+// 与桌面版 _deadEndFallback 对应；移动版无 undo 概念，故无 keepUndo 分支。
+// 返回 true=已提交（b 已冻结、新盯盘段已落），false=无解（已在 b 上记重试闸）。
+function applyDeadEndFallback(period, segs, watchSeg, bars) {
+  if (!watchSeg || !bars || !bars.length) return false;
+  const lastBarTime = Math.floor(bars[bars.length - 1].time);
+  // 兜底重试闸：本根K线上已试过且无解 → 不再重试，等实质新行情
+  if (watchSeg._watchFallbackTriedAt === lastBarTime) return false;
+  const fb = deadEndFallbackResult(watchSeg, bars);
+  if (!fb.ok) {
+    watchSeg._watchFallbackTriedAt = lastBarTime;
+    return false;
+  }
+  // 冻结 b（不自动激活），再用兜底窗口选出的终点落下一段盯盘
+  degradeWatch(watchSeg);
+  const made = createWatchFromSource(watchSeg, bars, segs, period, fb.newEnd);
+  if (!made.created) {
+    // 落段失败（c′ 终点已在 b 右端点之后，实际不会发生）→ 恢复 b 为盯盘段，保持原状
+    watchSeg._isWatch = true;
+    return false;
+  }
+  if (made.seg) made.seg._watchFallbackWindow = fb.window;
+  return true;
+}
+
+// 强缺口兜底（修复链第四层）：b 之后要画的 c 按标准规则找不到终点（跨数空白带），
+// 且 ①回溯、②自修、③死胡同兜底 均已失败。此时若 b 右侧出现「跨交易日强反向缺口」，
+// 则把缺口视作 c 的核心动能，c 终点直接取缺口后第一个显著极值，并以「突破 b 起点价」作
+// 力度校验；校验通过即落段，不做 d 验收。
+// 与桌面版 _strongGapFallback 对应；移动版无 undo 概念，故无 keepUndo 分支。
+// 返回 true=已提交（b 已冻结、新盯盘段已落），false=无解（已在 b 上记重试闸）。
+function applyStrongGapFallback(period, segs, watchSeg, bars) {
+  if (!watchSeg || !bars || !bars.length) return false;
+  const lastBarTime = Math.floor(bars[bars.length - 1].time);
+  // 重试闸：本根K线上已试过且无解 → 不再重试，等实质新行情
+  if (watchSeg._watchGapTriedAt === lastBarTime) return false;
+  const gf = strongGapFallbackResult(watchSeg, bars);
+  if (!gf.ok) {
+    watchSeg._watchGapTriedAt = lastBarTime;
+    return false;
+  }
+  // 冻结 b（不自动激活），再用缺口后极值落下一段盯盘
+  degradeWatch(watchSeg);
+  const made = createWatchFromSource(watchSeg, bars, segs, period, gf.newEnd);
+  if (!made.created) {
+    // 落段失败（c 终点必在 b 右端点之后，实际不会发生）→ 恢复 b 为盯盘段，保持原状
+    watchSeg._isWatch = true;
+    return false;
+  }
+  if (made.seg) made.seg._watchGapFallback = true;
+  return true;
+}
+
+// 根据最新行情更新所有盯盘段终点；含失效降级、终点缓存、自动续接/四层修复链。
+// 返回 { changed, structural }；structural=发生了冻结/续接/回修等结构性变化，需重渲染。
+function updateWatchSegments(code, period, bars, refresh = true) {
+  const sec = state.securities.find((s) => s.code === code);
+  if (!sec) return { changed: false, structural: false };
+  const d = sec.drawings[period];
+  if (!d) return { changed: false, structural: false };
+  if (!bars || !bars.length) bars = state._currentBars?.bars || [];
+  if (!bars || !bars.length) return { changed: false, structural: false };
+  const segs = d.segments || [];
+  if (!segs.length) return { changed: false, structural: false };
+  // scope 切换（证券/周期变化）时清空派生缓存
+  const scopeKey = code + '|' + period;
+  if (_watchScopeKey !== scopeKey) {
+    _watchScopeKey = scopeKey;
+    _watchEndCache = null;
+    resetWatchCaches();
+  }
+  let changed = false, structural = false;
+
+  // 1) 失效降级：非最右端/右端点被占用/起点不在bars中 → 降级为普通段
+  for (const s of segs) {
+    if (!s._isWatch) continue;
+    if (!isRightmostAndUnoccupied(s, segs) || findBarIdxByTime(bars, s.start.time) < 0) {
+      degradeWatch(s);
+      changed = structural = true;
+    }
+  }
+  // 2) 唯一活跃盯盘段 = 仍标记 _isWatch 的那条（失效的已降级）
+  const activeWatch = segs.find((s) => s._isWatch);
+  if (!activeWatch) {
+    if (changed) {
+      d.segments = segs;
+      if (refresh) refreshPeriodDetailWithoutFetch(code, period);
+    }
+    // 盯盘段被降级为普通段也是数据变更，需落盘，否则刷新后回到「仍是盯盘段」的旧快照
+    if (changed || structural) scheduleAutoSave(code);
+    return { changed: changed, structural: structural };
+  }
+  // 3) 手动接管（编辑中）暂停自动延伸
+  if (activeWatch._watchManualEnd) {
+    if (changed) {
+      d.segments = segs;
+      if (refresh) refreshPeriodDetailWithoutFetch(code, period);
+    }
+    if (changed || structural) scheduleAutoSave(code);
+    return { changed: changed, structural: structural };
+  }
+  const startIdx = findBarIdxByTime(bars, activeWatch.start.time);
+  let recomputed = false;
+  if (startIdx >= 0) {
+    const direction = activeWatch.direction || segDirection(activeWatch);
+    const maxSpanOverride = (activeWatch._watchMaxSpan != null && activeWatch._watchMaxSpan >= DEFAULT_CANDIDATE_SPAN_MIN)
+      ? activeWatch._watchMaxSpan : undefined;
+    const lastBar = bars[bars.length - 1];
+    const cacheKey = activeWatch.id + '|' + bars.length + '|' + Math.floor(lastBar.time) + '|' + lastBar.high + '|' + lastBar.low + '|' + (maxSpanOverride != null ? maxSpanOverride : '');
+    let foundEnd;
+    if (_watchEndCache && _watchEndCache.key === cacheKey) {
+      foundEnd = _watchEndCache.result;
+    } else {
+      foundEnd = calcNaturalDuanEndFull(bars, startIdx, activeWatch.start.price, direction, maxSpanOverride);
+      _watchEndCache = { key: cacheKey, result: foundEnd };
+      recomputed = true;
+    }
+    const endInfo = foundEnd ? foundEnd.endInfo : null;
+    if (endInfo && endInfo.barIdx > startIdx) {
+      const nt = Math.floor(endInfo.time);
+      if (activeWatch.end.time !== nt || activeWatch.end.price !== endInfo.price) {
+        activeWatch.end = { time: nt, price: endInfo.price };
+        changed = true;
+      }
+    }
+    // 4) 自动续接 / 四层修复链（仅重建触发时判定）
+    if (recomputed) {
+      const verdict = evalAutoContinue(segs, activeWatch, bars, startIdx, maxSpanOverride);
+      if (verdict === 'continue') {
+        // 冻结当前盯盘段并续接下一段；续接失败则恢复为盯盘段
+        const frozenId = activeWatch.id;
+        degradeWatch(activeWatch);
+        const made = createWatchFromSource(activeWatch, bars, segs, period);
+        if (!made.created) {
+          const frozen = segs.find((s) => s.id === frozenId);
+          if (frozen) frozen._isWatch = true;
+        }
+        changed = structural = true;
+      } else if (verdict === 'fix') {
+        // 自动修复链（与「✓ 确认」一致，仅多「充分发展」前置闸门）：
+        // 闸2覆盖整个修复链（回溯+死胡同自修+死胡同兜底）：两次修复间至少间隔 AUTO_CONTINUE_FIX_GAP 根新K线
+        let fixOk = true;
+        if (activeWatch._watchLastFixTime != null) {
+          const lastFixIdx = findBarIdxByTime(bars, activeWatch._watchLastFixTime);
+          if (lastFixIdx >= 0 && (bars.length - 1 - lastFixIdx) < AUTO_CONTINUE_FIX_GAP) fixOk = false;
+        }
+        if (fixOk) {
+          // —— 修复链：先死胡同回溯（最优解：删b，收紧a）——
+          const roll = rollbackResult(segs, activeWatch, bars);
+          if (roll.ok) {
+            const prev = roll.prevSeg;
+            // 原地删除 b（保持 segs 与 d.segments 引用一致，防结尾 d.segments = segs 恢复已删段）
+            const bIdx = segs.indexOf(activeWatch);
+            if (bIdx >= 0) segs.splice(bIdx, 1);
+            prev.end = { time: Math.floor(roll.newEnd.time), price: roll.newEnd.price };
+            prev.direction = prev.direction || segDirection(prev);
+            prev._isWatch = true;
+            prev._watchMaxSpan = roll.tempMax;
+            prev._watchFixCount = (prev._watchFixCount || 0) + 1;
+            prev._watchLastFixTime = Math.floor(bars[bars.length - 1].time);
+            changed = structural = true;
+          } else {
+            // —— 回溯失败，降级死胡同自修（兜底：收紧b自己）——
+            const t = tightenCurrentResult(activeWatch, bars, startIdx);
+            if (t.ok) {
+              activeWatch.end = { time: Math.floor(t.newEnd.time), price: t.newEnd.price };
+              activeWatch._watchMaxSpan = t.tempMax;
+              activeWatch._watchFixCount = (activeWatch._watchFixCount || 0) + 1;
+              activeWatch._watchLastFixTime = Math.floor(bars[bars.length - 1].time);
+              changed = structural = true;
+            } else {
+              // —— 第三层：死胡同兜底（下调「下一段试算」的滑窗窗口，避免人工介入）——
+              if (applyDeadEndFallback(period, segs, activeWatch, bars)) {
+                changed = structural = true;
+              } else if (applyStrongGapFallback(period, segs, activeWatch, bars)) {
+                // —— 第四层：强缺口兜底（b 右侧跨交易日强反向缺口成立时，c 取缺口后极值）——
+                changed = structural = true;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+  if (changed || structural) {
+    d.segments = segs;
+    if (refresh) refreshPeriodDetailWithoutFetch(code, period);
+  }
+  // 终点延伸 / 自动续接 / 死胡同自修产生的段一律自动落盘（此前只改内存，刷新即丢）
+  if (changed || structural) scheduleAutoSave(code);
+  return { changed: changed || structural, structural: structural };
+}
+
+// 打开进入详情页时，用全量历史K线连续回放，把从上次保存段到当前走势前沿的中间段
+// 一次补齐（对齐桌面版「打开即画完」）：反复调用 updateWatchSegments，每轮最多续接一段，
+// 直到无结构性变化（已到最新走势前沿，或当前盯盘段仍在长/等待）为止。
+// 仅复用 A0 盯盘段的既有算法，不触碰非 A0「追踪段」与卡片级联隐藏逻辑。
+function catchUpWatchSegments(code, period, bars) {
+  let u = { changed: false, structural: false };
+  let guard = 0;
+  do {
+    u = updateWatchSegments(code, period, bars, false);
+    guard += 1;
+  } while (u.structural && guard < 200);
+  return u;
+}
+
+// watch 按钮入口：从某最近画线源段创建盯盘段
+async function addWatchSegment(code, period, sourceSegId) {
+  const sec = state.securities.find((s) => s.code === code);
+  if (!sec) return;
+  let bars;
+  try {
+    bars = await ensureBars(code, period);
+  } catch (e) {
+    alert('行情数据加载失败，请检查网络后重试');
+    return;
+  }
+  const d = sec.drawings[period] || { segments: [], zhongshus: [] };
+  const segs = d.segments || [];
+  const sourceSeg = segs.find((s) => s.id === sourceSegId);
+  if (!sourceSeg) return;
+  if (segRight(sourceSeg) && findBarIdxByTime(bars, segRight(sourceSeg).time) < 0) {
+    toast('未找到起点对应K线');
+    return;
+  }
+  const made = createWatchFromSource(sourceSeg, bars, segs, period);
+  sec.drawings[period] = d;
+  saveLocalEdits(code, sec.drawings);
+  refreshPeriodDetailWithoutFetch(code, period);
+  if (!made.created && made.reason !== 'narrow') {
+    toast(made.reason === 'already_done' ? '盯盘已完成/后续K线不足，暂不生成' : '按当前规则未找到显著极值，暂不生成盯盘段');
+  } else if (made.reason === 'narrow') {
+    toast('已收紧前段，继续盯盘');
+  }
+}
+
+// ===== 追踪段：非 A0 级别的简化盯盘逻辑 =====
+
+// 降级追踪段为普通段（清除追踪标记，保留为普通段）
+function degradeTrack(seg) {
+  delete seg._isTrack;
+  delete seg._trackDirection;
+}
+
+// 追踪段终点：取 [起点K线, 最新K线] 区间内的极值（向下段取最低价，向上段取最高价）。
+// 多根 K 线同价时取最早出现的那根，避免终点在等价点之间左右跳动。
+// 返回 { time, price } 或 null。
+function trackExtremeEnd(bars, startIdx, direction) {
+  if (!bars || !bars.length) return null;
+  const from = Math.max(0, Math.min(startIdx || 0, bars.length - 1));
+  let bestIdx = -1;
+  let bestPrice = NaN;
+  for (let i = from; i < bars.length; i++) {
+    const p = direction === 'down' ? bars[i].low : bars[i].high;
+    if (!Number.isFinite(p)) continue;
+    if (bestIdx < 0 || (direction === 'down' ? p < bestPrice : p > bestPrice)) {
+      bestIdx = i;
+      bestPrice = p;
+    }
+  }
+  if (bestIdx < 0) return null;
+  return { time: Math.floor(bars[bestIdx].time), price: bestPrice };
+}
+
+// 从源段 sourceSeg 的终点创建追踪段（非 A0 简化版）。
+// 追踪段起点连接源段终点，终点 = [起点K线, 最新K线] 区间极值(向下段最低价/向上段最高价)。
+// 返回 { created, seg }。
+function createTrackFromSource(sourceSeg, bars, period) {
+  const right = segRight(sourceSeg);
+  if (!right) return { created: false };
+  const startIdx = findBarIdxByTime(bars, right.time);
+  if (startIdx < 0 || startIdx >= bars.length - 1) return { created: false };
+  const direction = oppositeDir(sourceSeg.direction || segDirection(sourceSeg));
+  const end = trackExtremeEnd(bars, startIdx, direction);
+  if (!end) return { created: false };
+  const seg = {
+    id: 't_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 6),
+    kind: 'segment',
+    period,
+    direction,
+    start: { time: Math.floor(right.time), price: right.price },
+    end,
+    _isTrack: true,
+    _trackSourceId: sourceSeg.id,
+  };
+  return { created: true, seg };
+}
+
+// 追踪按钮入口：从某最近段创建追踪段
+async function addTrackSegment(code, period, sourceSegId) {
+  const sec = state.securities.find((s) => s.code === code);
+  if (!sec) return;
+  let bars;
+  try {
+    bars = await ensureBars(code, period);
+  } catch (e) {
+    alert('行情数据加载失败，请检查网络后重试');
+    return;
+  }
+  const d = sec.drawings[period] || { segments: [], zhongshus: [] };
+  const segs = d.segments || [];
+  const sourceSeg = segs.find((s) => s.id === sourceSegId);
+  if (!sourceSeg) return;
+  if (segRight(sourceSeg) && findBarIdxByTime(bars, segRight(sourceSeg).time) < 0) {
+    toast('未找到起点对应K线');
+    return;
+  }
+  // 同一源段只能有一个追踪段，先移除旧的
+  for (let i = segs.length - 1; i >= 0; i--) {
+    const s = segs[i];
+    if (s !== sourceSeg && s._isTrack && s._trackSourceId === sourceSeg.id) segs.splice(i, 1);
+  }
+  const made = createTrackFromSource(sourceSeg, bars, period);
+  if (made.created) {
+    segs.push(made.seg);
+  }
+  sec.drawings[period] = d;
+  saveLocalEdits(code, sec.drawings);
+  refreshPeriodDetailWithoutFetch(code, period);
+  if (!made.created) {
+    toast('行情不足，暂不生成追踪段');
+  }
+}
+
+// 更新非 A0 周期追踪段终点（取 [起点K线, 最新K线] 区间的极值，回撤不再缩短已追踪到的极值）
+function updateTrackSegments(code, period, bars) {
+  const sec = state.securities.find((s) => s.code === code);
+  if (!sec) return { changed: false };
+  const d = sec.drawings[period];
+  if (!d) return { changed: false };
+  if (!bars || !bars.length) return { changed: false };
+  const segs = d.segments || [];
+  let changed = false;
+  for (const s of segs) {
+    if (!s._isTrack) continue;
+    const direction = s.direction || segDirection(s);
+    let startIdx = s.start ? findBarIdxByTime(bars, s.start.time) : -1;
+    if (startIdx < 0) startIdx = 0; // 起点 K 线已被挤出窗口时退化为整段区间
+    const end = trackExtremeEnd(bars, startIdx, direction);
+    if (!end) continue;
+    if (s.end.price !== end.price || s.end.time !== end.time) {
+      s.end = { time: end.time, price: end.price };
+      changed = true;
+    }
+  }
+  if (changed) {
+    d.segments = segs;
+    scheduleAutoSave(code); // 追踪段终点同样由程序自动延伸，需落盘
+  }
+  return { changed };
+}
+
+// ========== 底部 tabbar 视口适配（修复小米等安卓机页面切换时 tabbar 被遮挡/裁切） ==========
+let _tabbarReady = false;
+let _tabbarAdjustTimer = null;
+let _lastBottomOffset = -1;
+
+function adjustTabbarOffset(immediate = false) {
+  const tabbar = document.querySelector('.wx-tabbar');
+  if (!tabbar) return;
+
+  // 软键盘打开期间交给 syncWithKeyboard 直接定位，避免与 transform 互相覆盖
+  if (document.body.classList.contains('keyboard-open')) return;
+
+  const vv = window.visualViewport;
+  let bottomOffset = 0;
+  if (vv) {
+    // layout viewport 高度与 visual viewport 底部之间的差值，
+    // 即为被底部浏览器工具栏/手势条遮挡的高度。
+    bottomOffset = window.innerHeight - (vv.offsetTop + vv.height);
+  }
+
+  // 偏移量变化小于 1px 则忽略，避免微小抖动
+  if (Math.abs(bottomOffset - _lastBottomOffset) < 1 && _tabbarReady) return;
+  _lastBottomOffset = bottomOffset;
+
+  const applyOffset = () => {
+    if (bottomOffset > 1) {
+      // 将 tabbar 整体上移，使其始终位于可视区域底部；
+      // CSS 中 bottom 已基于 safe-area-inset-bottom，这里再叠加动态工具栏偏移。
+      // 保留 translateZ(0) 维持合成层，减少重绘抖动。
+      tabbar.style.transform = `translateY(${-bottomOffset}px) translateZ(0)`;
+    } else {
+      tabbar.style.transform = '';
+    }
+
+    // 首次校准完成后显示 tabbar，避免首屏位置跳动/溢出
+    if (!_tabbarReady) {
+      _tabbarReady = true;
+      requestAnimationFrame(() => {
+        tabbar.classList.add('ready');
+      });
+    }
+  };
+
+  if (immediate || !_tabbarReady) {
+    // 首次校准立即执行，不做防抖，尽快让 tabbar 就位并显示
+    applyOffset();
+  } else {
+    // 防抖：避免 visualViewport 频繁变化（如滚动、地址栏收起动画）导致的连续跳动
+    if (_tabbarAdjustTimer) clearTimeout(_tabbarAdjustTimer);
+    _tabbarAdjustTimer = setTimeout(applyOffset, 50);
+  }
+}
+
+function initTabbarViewportFix() {
+  // 首次立即校准并显示
+  adjustTabbarOffset(true);
+
+  const vv = window.visualViewport;
+  if (vv) {
+    vv.addEventListener('resize', () => adjustTabbarOffset(false));
+    vv.addEventListener('scroll', () => adjustTabbarOffset(false));
+    // 软键盘弹起/收起的关键事件源
+    vv.addEventListener('resize', () => syncWithKeyboard());
+  }
+  window.addEventListener('resize', () => adjustTabbarOffset(false));
+  window.addEventListener('resize', () => syncWithKeyboard());
+  window.addEventListener('orientationchange', () => { adjustTabbarOffset(true); syncWithKeyboard(); });
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) {
+      // 从后台切回时，视口可能已变化，立即校准
+      adjustTabbarOffset(true);
+      syncWithKeyboard();
+      repaintChartsOnResume(); // 后台期间 canvas 位图可能被系统回收，回前台补一次重绘
+    }
+  });
+  // 兜底：部分 WebView/浏览器切回前台不派发 visibilitychange（或走 bfcache 恢复、窗口重新聚焦），
+  // 这些入口同样补一次图表重绘（函数内部有防抖与 document.hidden 判定，重复触发无副作用）。
+  window.addEventListener('pageshow', repaintChartsOnResume);
+  window.addEventListener('focus', repaintChartsOnResume);
+  // 输入获得焦点：键盘弹起。输入失去焦点：键盘收起。
+  document.addEventListener('focusin', (e) => {
+    if (!e.target || (e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA')) return;
+    // 多个时机同步，捕获键盘动画的中间帧
+    [120, 280, 500, 800, 1200].forEach((ms) => setTimeout(syncWithKeyboard, ms));
+  });
+  document.addEventListener('focusout', (e) => {
+    if (!e.target || (e.target.tagName !== 'INPUT' && e.target.tagName !== 'TEXTAREA')) return;
+    [120, 320, 600].forEach((ms) => setTimeout(syncWithKeyboard, ms));
+  });
+  // 初始加载后多次校准，覆盖 MIUI 等延迟报告安全区/工具栏的场景
+  // 时间间隔递增，给浏览器稳定时间，避免频繁调整
+  [80, 200, 500, 1000].forEach((ms) => setTimeout(() => adjustTabbarOffset(false), ms));
+  // 首屏兜底同步一次 + 记录基准内高（用于键盘检测兜底）
+  state._baseInnerHeight = window.innerHeight;
+  setTimeout(syncWithKeyboard, 200);
+  window.addEventListener('resize', () => {
+    // 非键盘状态下更新基准 high，键盘状态由 syncWithKeyboard 管控
+    if (!document.body.classList.contains('keyboard-open')) {
+      state._baseInnerHeight = window.innerHeight;
+    }
+  });
+}
+
+// 软键盘适配：把底部菜单贴住键盘顶部，同时去掉 body 底部占位避免空白
+// 键盘高度：优先 visualViewport（iOS），兜底 screen.availHeight – innerHeight（Android）
+function getKeyboardHeight() {
+  const innerH = window.innerHeight;
+  const vv = window.visualViewport;
+  if (vv && vv.height > 0 && vv.offsetTop !== undefined) {
+    const vvBottom = (vv.offsetTop || 0) + vv.height;
+    return Math.max(0, innerH - vvBottom);
+  }
+  // Android 端更可靠：键盘弹起时 innerHeight 会缩小
+  let h = Math.max(0, (screen.availHeight || 0) - innerH);
+  if (h < 30 && state._baseInnerHeight) {
+    h = Math.max(0, state._baseInnerHeight - innerH);
+  }
+  // 太小则当作没键盘，反向更新基准值
+  if (h < 30) state._baseInnerHeight = innerH;
+  return h;
+}
+
+function syncWithKeyboard() {
+  const tabbar = document.querySelector('.wx-tabbar');
+  if (!tabbar) return;
+  const keyboardH = getKeyboardHeight();
+  const opened = keyboardH > 80;
+  document.body.classList.toggle('keyboard-open', opened);
+  if (opened) {
+    tabbar.style.bottom = keyboardH + 'px';
+    tabbar.style.transform = '';
+    tabbar.style.top = 'auto';
+  } else {
+    tabbar.style.bottom = '';
+    tabbar.style.top = '';
+    tabbar.style.transform = '';
+    // 让 adjustTabbarOffset 接管，处理浏览器工具栏/手势条偏移
+    adjustTabbarOffset(true);
+  }
+}
+
+// ========== Tab 切换 ==========
+function switchTab(name) {
+  state.activeTab = name;
+  // 切换到非 dingpan tab 时，不再处于周期/详情子视图，隐藏返回按钮
+  if (name !== 'dingpan') {
+    state.view = 'list';
+    state.selectedCode = null;
+    state.selectedPeriod = null;
+    updateHeaderBack();
+  }
+  removePresetIndicator();
+  removePresetSwipe();
+  $$('.wx-tab').forEach((t) => t.classList.remove('active'));
+  const tabEl = document.querySelector(`.wx-tab[data-tab="${name}"]`);
+  if (tabEl) tabEl.classList.add('active');
+
+  const views = {
+    dingpan: '#sec-list',
+    hangqing: '#hangqing-view',
+    alert: '#alert-view',
+    workbench: '#workbench-view',
+    wo: '#wo-view',
+  };
+  Object.entries(views).forEach(([key, sel]) => {
+    const el = document.querySelector(sel);
+    if (el) el.style.display = key === name ? '' : 'none';
+  });
+
+  if (name === 'dingpan') renderDingpanView();
+  if (name === 'hangqing') { renderHangqingView(); startIndexRealtime(); }
+  if (name === 'alert') renderAlertView();
+  if (name === 'workbench') renderWorkbenchView();
+  if (name === 'wo') renderWoView();
+  if (name !== 'hangqing') {
+    state._marketResults = null;
+    const r = document.getElementById('hg-search-results');
+    if (r) { r.hidden = true; r.innerHTML = ''; }
+  }
+  updateHeaderSearchVisibility();
+
+  // 页面内容切换后，底部工具栏/安全区可能变化，重新校准 tabbar
+  requestAnimationFrame(() => adjustTabbarOffset());
+  setTimeout(adjustTabbarOffset, 100);
+}
+
+function renderHangqingView() {
+  const el = $('#hangqing-view');
+  if (!el) return;
+
+  const cards = INDEX_CODES.map((idx) => {
+    const rt = state.indexQuotes[idx.code];
+    const price = rt?.price ? rt.price.toFixed(2) : '—';
+    const change = fmtIndexChange(rt?.price, rt?.prevClose);
+    return `
+      <div class='index-card' data-code='${idx.code}'>
+        <div class='index-card-head'>
+          <div class='index-name'>${idx.label}</div>
+          <div class='index-code-row'>
+            <span class='index-code'>${idx.code.toUpperCase()}</span>
+            <span class='index-change ${change.cls}'>${change.text}</span>
+          </div>
+        </div>
+        <div class='index-card-price'>
+          <div class='index-price'>${price}</div>
+        </div>
+        <div class='index-card-chart'>
+          <canvas class='index-intraday' data-code='${idx.code}'></canvas>
+        </div>
+      </div>`;
+  }).join('');
+
+  // 行情页用户自定义证券卡片
+  const extras = state._hangqingExtras || [];
+  const extraCards = extras.map((s) => {
+    const rt = state.indexQuotes[s.code];
+    const price = rt?.price ? rt.price.toFixed(2) : '—';
+    const change = fmtIndexChange(rt?.price, rt?.prevClose);
+    return `
+      <div class='index-card custom' data-code='${s.code}'>
+        <button class='index-delete-btn' type='button' aria-label='删除' data-code='${s.code}' hidden>&times;</button>
+        <div class='index-card-head'>
+          <div class='index-name'>${escapeHtml(s.name)}</div>
+          <div class='index-code-row'>
+            <span class='index-code'>${s.code.toUpperCase()}</span>
+            <span class='index-change ${change.cls}'>${change.text}</span>
+          </div>
+        </div>
+        <div class='index-card-price'>
+          <div class='index-price'>${price}</div>
+        </div>
+        <div class='index-card-chart'>
+          <canvas class='index-intraday custom-intraday' data-code='${s.code}'></canvas>
+        </div>
+      </div>`;
+  }).join('');
+
+  el.innerHTML = `<div class='index-grid' id='hg-cards'>${cards}${extraCards}</div><div id='hg-search-results' class='hg-search-results' hidden></div>`;
+
+  attachMarketSearchResults();
+  // 绑定自定义卡片的长按删除
+  attachHangqingLongPress();
+
+  // 若正处于行情搜索态，保留搜索结果（避免 5s 指数刷新覆盖）
+  const hq = (state.searchQuery || '').trim();
+  const inHangqingSearch = hq && state.activeTab === 'hangqing' && state.searchMode === 'hangqing';
+  if (inHangqingSearch) {
+    if (state._marketResults && state._marketResults !== 'loading') renderMarketResults(state._marketResults);
+    else runMarketSearch(hq);
+  } else {
+    state._marketResults = null;
+    const rr = document.getElementById('hg-search-results');
+    if (rr) { rr.hidden = true; rr.innerHTML = ''; }
+  }
+
+  // 搜索态下 cards 被 display:none，canvas.clientWidth=0 会导致 setupCanvas 的 w
+  // fallback 到 320，canvas 物理宽 320*dpr 与 css 宽 100% 不匹配。关闭搜索后 cards
+  // 重新显示，图像被异常拉伸成"绿色长条"。修复：搜索态跳过分时图绘制，关闭
+  // 搜索时再统一重绘（见 closeHeaderSearch）。
+  if (!inHangqingSearch) {
+    // 默认指数分时图
+    for (const code of Object.keys(state.indexIntraday)) {
+      const c = state.indexIntraday[code];
+      const canvas = document.querySelector(`.index-intraday[data-code="${code}"]`);
+      if (canvas) renderIndexIntraday(canvas, c);
+    }
+    // 自定义证券分时图
+    for (const s of extras) {
+      const c = state._extrasIntraday[s.code];
+      if (!c) continue;
+      const canvas = document.querySelector(`.custom-intraday[data-code="${s.code}"]`);
+      if (canvas) renderIndexIntraday(canvas, c);
+    }
+  }
+  loadIndexIntraday();
+  // 异步拉取自定证券分时数据（有缓存则同步绘制）
+  extras.forEach((s) => loadExtrasIntraday(s.code));
+}
+
+// 为自定义证券拉取分时数据
+async function loadExtrasIntraday(code) {
+  const canvas = document.querySelector(`.custom-intraday[data-code="${code}"]`);
+  if (!canvas) return;
+  try {
+    const cached = state._extrasIntraday[code];
+    // 交易时段内 60s 内已完成过一次抓取则不重复拉取（避免频繁请求被限频），
+    // 但保留「当日」判定以便次日自动刷新。非交易时段数据不常变，缓存更久。
+    const now = Date.now();
+    if (cached && cached.date === tradingDateStr() && now - (cached.fetchedAt || 0) < 60000) {
+      renderIndexIntraday(canvas, cached);
+      return;
+    }
+    const { bars, qt } = await fetchBars(code, '1m', 241);
+    const { bars: dayBars, dayStart, dayEnd } = pickIntradayBars(bars, new Date());
+    const prevClose = resolvePrevClose(code, qt, dayBars);
+    const c = { bars: dayBars, prevClose, dayStart, dayEnd, date: tradingDateStr(), fetchedAt: now };
+    state._extrasIntraday[code] = c;
+    renderIndexIntraday(canvas, c);
+  } catch (e) {
+    console.warn('loadExtrasIntraday failed', code, e);
+  }
+}
+
+// 自定义卡片长按出现删除按钮
+function attachHangqingLongPress() {
+  const cards = document.querySelectorAll('#hangqing-view .index-card.custom');
+  cards.forEach((card) => {
+    if (card._longPressBound) return;
+    card._longPressBound = true;
+    let timer = null, sx = 0, sy = 0;
+    const LONG_MS = 450;
+    card.addEventListener('pointerdown', (e) => {
+      sx = e.clientX; sy = e.clientY;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        const editing = document.querySelector('#hangqing-view .index-card.custom.editing');
+        if (editing && editing !== card) {
+          editing.classList.remove('editing');
+          editing.querySelector('.index-delete-btn')?.setAttribute('hidden', '');
+        }
+        card.classList.add('editing');
+        card.querySelector('.index-delete-btn')?.removeAttribute('hidden');
+        if (navigator.vibrate) { try { navigator.vibrate(15); } catch (e) {} }
+      }, LONG_MS);
+    });
+    card.addEventListener('pointermove', (e) => {
+      if (Math.abs(e.clientX - sx) > 12 || Math.abs(e.clientY - sy) > 12) {
+        if (timer) { clearTimeout(timer); timer = null; }
+      }
+    });
+    card.addEventListener('pointerup', () => { if (timer) { clearTimeout(timer); timer = null; } });
+    card.addEventListener('pointercancel', () => { if (timer) { clearTimeout(timer); timer = null; } });
+    card.addEventListener('contextmenu', (e) => e.preventDefault());
+  });
+}
+
+function tradingDateStr() {
+  const dt = new Date();
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+}
+
+function renderIndexIntraday(canvas, c) {
+  // 防止 hidden 状态下被绘制：cards 被 display:none 时，canvas.clientWidth=0，
+  // setupCanvas 的 w 会 fallback 到 320，导致关闭搜索后 canvas 物理宽 320*dpr
+  // 与 css 宽 100% 不匹配，图像被异常拉伸。不可见时跳过，repaintHangqingIntraday
+  // 在 cards 重新显示后会补绘。
+  if (canvas.clientWidth === 0 || canvas.offsetParent === null) {
+    canvas._pendingIntraday = c;
+    return;
+  }
+  canvas._intradayBars = c.bars;
+  canvas._intradayPrevClose = c.prevClose;
+  canvas._intradayDayStart = c.dayStart;
+  canvas._intradayDayEnd = c.dayEnd;
+  canvas._intradayOpts = { height: 56 };
+  renderIntradayChart(canvas, c.bars, c.prevClose, { dayStart: c.dayStart, dayEnd: c.dayEnd, height: 56 });
+}
+
+// 重绘所有 hangqing 视图内已缓存的分时图（用于搜索态切换回正常态后补绘）
+function repaintHangqingIntraday() {
+  for (const code of Object.keys(state.indexIntraday)) {
+    const canvas = document.querySelector(`#hangqing-view .index-intraday[data-code="${code}"]`);
+    if (!canvas) continue;
+    const c = state.indexIntraday[code];
+    if (c) {
+      canvas._pendingIntraday = null;
+      renderIndexIntraday(canvas, c);
+    }
+  }
+  // 自定义证券分时图补绘
+  for (const code of Object.keys(state._extrasIntraday)) {
+    const canvas = document.querySelector(`#hangqing-view .custom-intraday[data-code="${code}"]`);
+    if (!canvas) continue;
+    const c = state._extrasIntraday[code];
+    if (c) {
+      canvas._pendingIntraday = null;
+      renderIndexIntraday(canvas, c);
+    }
+  }
+}
+
+async function loadIndexIntraday() {
+  for (const idx of INDEX_CODES) {
+    const code = idx.code;
+    const canvas = document.querySelector(`.index-intraday[data-code="${code}"]`);
+    if (!canvas) continue;
+    try {
+      const cached = state.indexIntraday[code];
+      const now = Date.now();
+      if (cached && cached.date === tradingDateStr() && now - (cached.fetchedAt || 0) < 60000) {
+        renderIndexIntraday(canvas, cached);
+        continue;
+      }
+      const { bars, qt } = await fetchBars(code, '1m', 241);
+      const { bars: dayBars, dayStart, dayEnd } = pickIntradayBars(bars, new Date());
+      const prevClose = resolvePrevClose(code, qt, dayBars);
+      const c = { bars: dayBars, prevClose, dayStart, dayEnd, date: tradingDateStr(), fetchedAt: now };
+      state.indexIntraday[code] = c;
+      renderIndexIntraday(canvas, c);
+    } catch (e) {
+      // 静默失败：不影响行情页其它内容
+      console.warn('loadIndexIntraday failed', code, e);
+    }
+  }
+}
+
+function renderAlertView() {
+  const el = $('#alert-view');
+  if (!el) return;
+  const alerts = state.alerts;
+  if (!alerts.length) {
+    el.innerHTML = `
+      <div class="alert-header">
+        <div class="alert-title">提醒</div>
+      </div>
+      <div class="empty">暂无提醒<br><span style="font-size:13px;color:var(--wx-muted);">在盯盘列表长按证券可添加提醒</span></div>
+    `;
+    return;
+  }
+  const enabledCount = alerts.filter((a) => a.enabled && !a.triggered).length;
+  const triggeredCount = alerts.filter((a) => a.triggered).length;
+  el.innerHTML = `
+    <div class="alert-header">
+      <div class="alert-title">价格提醒</div>
+      <div class="alert-stats">
+        <span class="alert-stat active">监控中 ${enabledCount}</span>
+        <span class="alert-stat done">已触发 ${triggeredCount}</span>
+      </div>
+    </div>
+    <div class="alert-list">
+      ${alerts.map((a) => {
+        const rt = state._rtPrices?.[a.code];
+        const curPrice = rt?.price;
+        const name = a.name || rt?.name || a.code;
+        const typeText = alertTypeLabel(a.type);
+        let valueText = '';
+        if (!isMacdAlert(a)) {
+          if (a.type === 'price_above' || a.type === 'price_below') {
+            valueText = formatPrice(a.code, a.value);
+          } else {
+            valueText = (a.value > 0 ? '+' : '') + a.value.toFixed(2) + '%';
+          }
+        }
+        const statusCls = a.triggered ? 'triggered' : (a.enabled ? 'active' : 'disabled');
+        const statusText = a.triggered ? '已触发' : (a.enabled ? '监控中' : '已关闭');
+        const curText = curPrice != null ? `当前：${formatPrice(a.code, curPrice)}` : '';
+        return `
+          <div class="alert-card ${statusCls}" data-id="${a.id}">
+            <div class="alert-card-head">
+              <div class="alert-card-info">
+                <div class="alert-card-name">${name}</div>
+                <div class="alert-card-code">${a.code.toUpperCase()}</div>
+              </div>
+              <div class="alert-card-status ${statusCls}">${statusText}</div>
+            </div>
+            <div class="alert-card-body">
+              <div class="alert-card-condition">
+                <span class="alert-type-tag">${typeText}</span>
+                ${valueText ? `<span class="alert-target-value">${valueText}</span>` : ''}
+                ${isMacdAlert(a) ? `<span class="alert-period-tag">· ${periodLabel(a.period)}</span>` : ''}
+              </div>
+              <div class="alert-card-cur">${curText}</div>
+            </div>
+            <div class="alert-card-actions">
+              <button class="alert-action-btn toggle-btn" data-act="toggle">${a.enabled ? '关闭' : '开启'}</button>
+              <button class="alert-action-btn delete-btn" data-act="delete">删除</button>
+            </div>
+          </div>
+        `;
+      }).join('')}
+    </div>
+  `;
+  el.querySelectorAll('.alert-card').forEach((card) => {
+    const id = card.dataset.id;
+    card.querySelector('[data-act="toggle"]').onclick = (e) => {
+      e.stopPropagation();
+      toggleAlert(id);
+      renderAlertView();
+    };
+    card.querySelector('[data-act="delete"]').onclick = (e) => {
+      e.stopPropagation();
+      removeAlert(id);
+      renderAlertView();
+    };
+  });
+}
+
+// ========== 添加提醒弹窗 ==========
+let _alertSheetCode = null;
+
+function openAddAlertSheet(code, name, period) {
+  // 未指定证券时（长按底部「提醒」按钮呼出），默认取盯盘列表首个证券
+  if (!code && state.securities && state.securities.length) {
+    code = state.securities[0].code;
+    if (name == null) name = state.securities[0].name;
+  }
+  _alertSheetCode = code;
+  const sec = state.securities.find((s) => s.code === code);
+  const rt = state._rtPrices?.[code];
+  let curPrice = rt?.price;
+  const displayName = name || sec?.name || rt?.name || code;
+  const availPeriods = (sec && sec.periods && sec.periods.length) ? sec.periods : PERIODS.map((p) => p[0]);
+  let selectedPeriod = (period && availPeriods.includes(period)) ? period : (availPeriods[0] || 'day');
+
+  const existing = document.getElementById('alert-sheet');
+  if (existing) existing.remove();
+
+  const sheet = document.createElement('div');
+  sheet.id = 'alert-sheet';
+  sheet.className = 'action-sheet-mask';
+  const typeOptsHtml = ALERT_TYPE_OPTIONS.map(([t, label], i) =>
+    `<button class="alert-type-opt${i === 0 ? ' active' : ''}" data-type="${t}">${label}</button>`
+  ).join('');
+  const periodOptsHtml = availPeriods.map((p) =>
+    `<button class="alert-period-opt${p === selectedPeriod ? ' active' : ''}" data-period="${p}">${periodLabel(p)}</button>`
+  ).join('');
+  // 证券选择器：允许在盯盘列表中切换目标证券（默认首个）
+  const secOptsHtml = (state.securities && state.securities.length)
+    ? state.securities.map((s) =>
+        `<option value="${s.code}"${s.code === code ? ' selected' : ''}>${s.name || s.code} (${s.code})</option>`
+      ).join('')
+    : `<option value="${code}">${displayName}</option>`;
+  const secSelectHtml = (state.securities && state.securities.length > 1)
+    ? `<div class="alert-sec-group">
+         <div class="alert-input-label">证券</div>
+         <select id="alert-sec-select" class="alert-sec-select">${secOptsHtml}</select>
+       </div>`
+    : '';
+  sheet.innerHTML = `
+    <div class="action-sheet">
+      <div class="action-sheet-title">
+        <span id="alert-title-name">${displayName}</span>
+        <button class="action-sheet-close" aria-label="关闭">×</button>
+      </div>
+      <div class="alert-sheet-body">
+        ${secSelectHtml}
+        <div class="alert-type-group">
+          <div class="alert-type-label">提醒类型</div>
+          <div class="alert-type-options">${typeOptsHtml}</div>
+        </div>
+        <div class="alert-period-group" id="alert-period-group" style="display:none;">
+          <div class="alert-input-label">周期</div>
+          <div class="alert-period-options">${periodOptsHtml}</div>
+        </div>
+        <div class="alert-input-group" id="alert-value-group">
+          <div class="alert-input-label">目标值</div>
+          <div class="alert-input-row">
+            <input type="number" id="alert-input-value" step="0.001" placeholder="${curPrice != null ? '当前价 ' + formatPrice(code, curPrice) : '请输入'}">
+            <span id="alert-input-unit">元</span>
+          </div>
+        </div>
+        <div class="alert-quick-row" id="alert-quick-group">
+          <button class="alert-quick-btn" data-pct="1">+1%</button>
+          <button class="alert-quick-btn" data-pct="3">+3%</button>
+          <button class="alert-quick-btn" data-pct="5">+5%</button>
+          <button class="alert-quick-btn" data-pct="-1">-1%</button>
+          <button class="alert-quick-btn" data-pct="-3">-3%</button>
+          <button class="alert-quick-btn" data-pct="-5">-5%</button>
+        </div>
+      </div>
+      <div class="action-sheet-footer">
+        <button id="alert-add-confirm" class="primary">添加提醒</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(sheet);
+
+  let selectedType = ALERT_TYPE_OPTIONS[0][0];
+
+  const updateTypeUI = () => {
+    const macd = isMacdAlert({ type: selectedType });
+    sheet.querySelector('#alert-period-group').style.display = macd ? 'block' : 'none';
+    sheet.querySelector('#alert-value-group').style.display = macd ? 'none' : 'block';
+    sheet.querySelector('#alert-quick-group').style.display = macd ? 'none' : 'flex';
+    const unitEl = sheet.querySelector('#alert-input-unit');
+    unitEl.textContent = selectedType.startsWith('change_pct') ? '%' : '元';
+  };
+
+  sheet.querySelectorAll('.alert-type-opt').forEach((btn) => {
+    btn.onclick = () => {
+      sheet.querySelectorAll('.alert-type-opt').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      selectedType = btn.dataset.type;
+      updateTypeUI();
+      const input = sheet.querySelector('#alert-input-value');
+      if (selectedType.startsWith('change_pct')) {
+        input.placeholder = '如 3.00';
+        input.step = '0.01';
+      } else {
+        input.placeholder = curPrice != null ? '当前价 ' + formatPrice(code, curPrice) : '请输入';
+        input.step = isETF(code) ? '0.001' : '0.01';
+      }
+    };
+  });
+
+  // 周期按钮用事件委托绑定（切换证券后会重建按钮，委托可自动生效）
+  const periodWrap = sheet.querySelector('#alert-period-group .alert-period-options');
+  if (periodWrap) {
+    periodWrap.onclick = (e) => {
+      const btn = e.target.closest('.alert-period-opt');
+      if (!btn) return;
+      periodWrap.querySelectorAll('.alert-period-opt').forEach((b) => b.classList.remove('active'));
+      btn.classList.add('active');
+      selectedPeriod = btn.dataset.period;
+    };
+  }
+
+  sheet.querySelectorAll('.alert-quick-btn').forEach((btn) => {
+    btn.onclick = () => {
+      const pct = parseFloat(btn.dataset.pct);
+      const input = sheet.querySelector('#alert-input-value');
+      if (curPrice != null) {
+        const target = curPrice * (1 + pct / 100);
+        input.value = formatPrice(code, target);
+        sheet.querySelectorAll('.alert-type-opt').forEach((b) => b.classList.remove('active'));
+        if (pct > 0) {
+          selectedType = 'price_above';
+          sheet.querySelector('[data-type="price_above"]').classList.add('active');
+        } else {
+          selectedType = 'price_below';
+          sheet.querySelector('[data-type="price_below"]').classList.add('active');
+        }
+        updateTypeUI();
+      }
+    };
+  });
+
+  sheet.querySelector('.action-sheet-close').onclick = () => sheet.remove();
+  sheet.onclick = (e) => { if (e.target === sheet) sheet.remove(); };
+
+  // 切换证券：更新 code / 名称 / 当前价 / 周期选项
+  const secSel = sheet.querySelector('#alert-sec-select');
+  if (secSel) {
+    secSel.onchange = () => {
+      const newCode = secSel.value;
+      code = newCode;
+      _alertSheetCode = newCode;
+      const ns = state.securities.find((s) => s.code === newCode);
+      const nrt = state._rtPrices?.[newCode];
+      curPrice = nrt?.price;
+      displayName = ns?.name || nrt?.name || newCode;
+      const titleEl = sheet.querySelector('#alert-title-name');
+      if (titleEl) titleEl.textContent = displayName;
+      const input = sheet.querySelector('#alert-input-value');
+      if (input) input.placeholder = curPrice != null ? '当前价 ' + formatPrice(code, curPrice) : '请输入';
+      // 重建周期选项（不同证券周期集合可能不同）
+      availPeriods = (ns && ns.periods && ns.periods.length) ? ns.periods : PERIODS.map((p) => p[0]);
+      if (!availPeriods.includes(selectedPeriod)) selectedPeriod = availPeriods[0] || 'day';
+      const pg = sheet.querySelector('#alert-period-group');
+      if (pg) {
+        pg.querySelector('.alert-period-options').innerHTML = availPeriods.map((p) =>
+          `<button class="alert-period-opt${p === selectedPeriod ? ' active' : ''}" data-period="${p}">${periodLabel(p)}</button>`
+        ).join('');
+      }
+    };
+  }
+
+  sheet.querySelector('#alert-add-confirm').onclick = () => {
+    if (isMacdAlert({ type: selectedType })) {
+      addAlert({ code, name: displayName, type: selectedType, value: 0, period: selectedPeriod });
+    } else {
+      const input = sheet.querySelector('#alert-input-value');
+      const val = parseFloat(input.value);
+      if (isNaN(val) || val <= 0) {
+        alert('请输入有效的目标值');
+        return;
+      }
+      addAlert({ code, name: displayName, type: selectedType, value: val, period: selectedPeriod });
+    }
+    sheet.remove();
+    if (state.activeTab === 'alert') renderAlertView();
+    startAlertMonitor();
+  };
+
+  requestAnimationFrame(() => sheet.classList.add('show'));
+}
+
+// ========== 通知横幅 ==========
+function showAlertNotification(alertItem, curPrice) {
+  const existing = document.getElementById('alert-notification');
+  if (existing) existing.remove();
+
+  const name = alertItem.name || alertItem.code;
+  const typeText = alertTypeLabel(alertItem.type);
+  let valueText = '';
+  if (!isMacdAlert(alertItem)) {
+    if (alertItem.type === 'price_above' || alertItem.type === 'price_below') {
+      valueText = formatPrice(alertItem.code, alertItem.value);
+    } else {
+      valueText = (alertItem.value > 0 ? '+' : '') + alertItem.value.toFixed(2) + '%';
+    }
+  }
+  const curText = curPrice != null ? `当前价 ${formatPrice(alertItem.code, curPrice)}` : '';
+  const descText = isMacdAlert(alertItem)
+    ? `${periodLabel(alertItem.period)}周期`
+    : `目标 ${valueText} · ${curText}`;
+
+  const el = document.createElement('div');
+  el.id = 'alert-notification';
+  el.className = 'alert-notification';
+  el.innerHTML = `
+    <div class="alert-notif-icon">🔔</div>
+    <div class="alert-notif-body">
+      <div class="alert-notif-title">${name} · ${typeText}</div>
+      <div class="alert-notif-desc">${descText}</div>
+    </div>
+    <button class="alert-notif-close" aria-label="关闭">×</button>
+  `;
+  document.body.appendChild(el);
+
+  el.querySelector('.alert-notif-close').onclick = () => {
+    el.classList.remove('show');
+    setTimeout(() => el.remove(), 300);
+  };
+  el.onclick = () => {
+    el.classList.remove('show');
+    setTimeout(() => el.remove(), 300);
+    switchTab('alert');
+  };
+
+  try {
+    if (navigator.vibrate) navigator.vibrate([100, 50, 100]);
+  } catch {}
+
+  requestAnimationFrame(() => {
+    el.classList.add('show');
+    setTimeout(() => {
+      el.classList.remove('show');
+      setTimeout(() => el.remove(), 300);
+    }, 5000);
+  });
+}
+
+// ========== 提醒检测与监控 ==========
+function checkAlerts(rtPrices) {
+  const triggered = [];
+  for (const alert of state.alerts) {
+    if (!alert.enabled || alert.triggered) continue;
+    if (state._alertNotified.has(alert.id)) continue;
+    if (isMacdAlert(alert)) continue; // MACD 类由 checkMacdAlerts 处理
+    const rt = rtPrices[alert.code];
+    if (!rt || !rt.price || !rt.prevClose) continue;
+
+    let hit = false;
+    switch (alert.type) {
+      case 'price_above':
+        hit = rt.price >= alert.value;
+        break;
+      case 'price_below':
+        hit = rt.price <= alert.value;
+        break;
+      case 'change_pct_up': {
+        const pct = ((rt.price - rt.prevClose) / rt.prevClose) * 100;
+        hit = pct >= alert.value;
+        break;
+      }
+      case 'change_pct_down': {
+        const pct = ((rt.price - rt.prevClose) / rt.prevClose) * 100;
+        hit = pct <= -Math.abs(alert.value);
+        break;
+      }
+    }
+
+    if (hit) {
+      alert.triggered = true;
+      alert.triggeredAt = Date.now();
+      state._alertNotified.add(alert.id);
+      triggered.push({ alert, curPrice: rt.price });
+    }
+  }
+  if (triggered.length) {
+    saveAlerts();
+    triggered.forEach(({ alert, curPrice }) => showAlertNotification(alert, curPrice));
+    if (state.activeTab === 'alert') renderAlertView();
+  }
+  return triggered;
+}
+
+function startAlertMonitor() {
+  // 价格类提醒（基于实时价，5 秒轮询）
+  if (!state._alertTimer) {
+    const priceActive = state.alerts.some((a) => a.enabled && !a.triggered && !isMacdAlert(a));
+    if (priceActive) {
+      state._alertTimer = setInterval(async () => {
+        if (document.hidden) return;
+        const activeAlerts = state.alerts.filter((a) => a.enabled && !a.triggered && !isMacdAlert(a));
+        if (!activeAlerts.length) { clearInterval(state._alertTimer); state._alertTimer = null; return; }
+        const codes = [...new Set(activeAlerts.map((a) => a.code))];
+        if (!codes.length) return;
+        try {
+          const rt = await fetchRealtimeMulti(codes);
+          if (rt) {
+            state._rtPrices = { ...state._rtPrices, ...rt };
+            checkAlerts(rt);
+            if (state.activeTab === 'alert') renderAlertView();
+            if (state.activeTab === 'dingpan' && state.view === 'list') renderSecurityList(state.searchQuery);
+          }
+        } catch {}
+      }, 5000);
+    }
+  }
+  // MACD 类提醒（基于 K 线，低频轮询）
+  startMacdMonitor();
+}
+
+function startMacdMonitor() {
+  if (state._macdTimer) return;
+  const macdActive = state.alerts.some((a) => a.enabled && !a.triggered && isMacdAlert(a));
+  if (!macdActive) return;
+  state._macdTimer = setInterval(async () => {
+    if (document.hidden) return;
+    const activeMacd = state.alerts.filter((a) => a.enabled && !a.triggered && isMacdAlert(a));
+    if (!activeMacd.length) { clearInterval(state._macdTimer); state._macdTimer = null; return; }
+    try { await checkMacdAlerts(activeMacd); } catch {}
+  }, 60000);
+  // 添加后立即检查一次，避免等待首个间隔
+  (async () => {
+    try {
+      await checkMacdAlerts(state.alerts.filter((a) => a.enabled && !a.triggered && isMacdAlert(a)));
+    } catch {}
+  })();
+}
+
+function stopAlertMonitor() {
+  if (state._alertTimer) { clearInterval(state._alertTimer); state._alertTimer = null; }
+  if (state._macdTimer) { clearInterval(state._macdTimer); state._macdTimer = null; }
+}
+
+// 按 code|period 缓存 K 线，避免在轮询周期内重复请求
+const _macdBarsCache = {};
+
+// 检测最近一根已收盘 K 线上的 DIF/DEA 穿越（金叉/死叉）
+function detectMacdCross(macd, lastIdx, golden) {
+  const i = lastIdx;
+  const d0 = macd[i].dif, e0 = macd[i].dea, d1 = macd[i - 1].dif, e1 = macd[i - 1].dea;
+  if (d0 == null || e0 == null || d1 == null || e1 == null) return false;
+  if (golden) return d1 < e1 && d0 >= e0; // DIF 上穿 DEA
+  return d1 > e1 && d0 <= e0;             // DIF 下穿 DEA
+}
+
+// 检测红绿柱缩短：柱子先伸长到峰值 i，i+1 比 i 短；
+// 用户强调必须等 i+2 这根走完才能确认 i+1 比 i 短，故要求 i+2 已收盘（存在）才判定。
+// mode: 'red' 仅红柱(正)峰值缩短；'green' 仅绿柱(负)峰值缩短；'both' 任意方向（兼容旧提醒）。
+function detectMacdBarShrink(macd, lastIdx, alert, mode) {
+  const mag = (k) => Math.abs(macd[k].macd);
+  // 未来时态：仅检测「提醒创建之后」才走出的 K 线上的缩短，避免基于历史数据创建即误触发
+  const createdSec = (alert.createdAt || 0) / 1000;
+  // 从最近处向前找最近的「峰值+缩短」事件
+  for (let i = lastIdx - 2; i >= 1; i--) {
+    if (macd[i].macd == null || macd[i - 1].macd == null ||
+        macd[i + 1].macd == null || macd[i + 2].macd == null) continue;
+    // 仅关注创建提醒之后出现的缩短（未来时态）：峰值柱时间晚于创建时间才纳入判定
+    if (macd[i].time != null && macd[i].time <= createdSec) continue;
+    if (mag(i) <= mag(i - 1)) continue;       // i 不是局部峰值
+    if (mag(i) <= mag(i + 1)) continue;       // i 不是局部峰值
+    if (mag(i + 1) >= mag(i)) continue;       // i+1 不比 i 短
+    const isRed = macd[i].macd > 0;           // 峰值柱颜色：正为红，负为绿
+    if (mode === 'red' && !isRed) continue;
+    if (mode === 'green' && isRed) continue;
+    const peakKey = (macd[i + 1].time != null) ? (alert.code + '|' + alert.period + '|' + macd[i + 1].time) : (alert.code + '|' + alert.period + '|' + i);
+    if (alert._lastShrinkKey === peakKey) return false; // 本次缩短已报过，停止寻找更早的
+    alert._lastShrinkKey = peakKey;
+    return true;
+  }
+  return false;
+}
+
+// 拉取各 code|period 的 K 线，计算 MACD 并检测金叉/死叉/红绿柱缩短
+async function checkMacdAlerts(alerts) {
+  const groups = {};
+  for (const a of alerts) {
+    const key = a.code + '|' + a.period;
+    (groups[key] = groups[key] || []).push(a);
+  }
+  const triggered = [];
+  for (const key of Object.keys(groups)) {
+    const [code, period] = key.split('|');
+    let bars;
+    const cached = _macdBarsCache[key];
+    const now = Date.now();
+    if (cached && now - cached.t < 120000) {
+      bars = cached.bars;
+    } else {
+      try { const res = await fetchBars(code, period); bars = res.bars; } catch { continue; }
+      if (!bars || !bars.length) continue;
+      _macdBarsCache[key] = { bars, t: now };
+    }
+    const macd = computeMACD(bars);
+    if (!macd || macd.length < 35) continue;
+    const lastClosed = bars.length - 2; // 最近一根已收盘 K 线（最后一根可能尚未收盘）
+    if (lastClosed < 34) continue;
+    for (const a of groups[key]) {
+      if (a.triggered || !a.enabled) continue;
+      let hit = false;
+      if (a.type === 'macd_golden') hit = detectMacdCross(macd, lastClosed, true);
+      else if (a.type === 'macd_death') hit = detectMacdCross(macd, lastClosed, false);
+      else if (a.type === 'macd_bar_shrink') hit = detectMacdBarShrink(macd, lastClosed, a, 'both');
+      else if (a.type === 'macd_red_shrink') hit = detectMacdBarShrink(macd, lastClosed, a, 'red');
+      else if (a.type === 'macd_green_shrink') hit = detectMacdBarShrink(macd, lastClosed, a, 'green');
+      if (hit) {
+        a.triggered = true;
+        a.triggeredAt = Date.now();
+        state._alertNotified.add(a.id);
+        triggered.push(a);
+      }
+    }
+  }
+  if (triggered.length) {
+    saveAlerts();
+    triggered.forEach((a) => showAlertNotification(a, state._rtPrices?.[a.code]?.price));
+    if (state.activeTab === 'alert') renderAlertView();
+  }
+}
+
+// 把导出时间戳格式化为 “MM-DD HH:mm”
+function fmtExportTime(ts) {
+  if (!ts) return '';
+  const d = new Date(ts);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
+function renderWorkbenchView() {
+  const el = $('#workbench-view');
+  if (!el) return;
+  if (!state.securities.length) {
+    el.innerHTML = '<div class="empty">请先加载画线数据</div>';
+    return;
+  }
+  let totalSegs = 0, totalZs = 0;
+  let bsCount = 0;
+  let latestExport = 0;
+  state.securities.forEach((sec) => {
+    Object.values(sec.drawings).forEach((d) => {
+      totalSegs += (d.segments || []).length;
+      totalZs += (d.zhongshus || []).length;
+      (d.segments || []).forEach((s) => { if (s._buySell) bsCount++; });
+      if (d.exportedAt && d.exportedAt > latestExport) latestExport = d.exportedAt;
+    });
+  });
+  const exportTip = latestExport
+    ? `<span class="zs-title-right">导出 ${fmtExportTime(latestExport)}</span>`
+    : '<span class="zs-title-right muted">未导出</span>';
+  el.innerHTML = `
+    <div class="wx-list">
+      <div class="zs-block">
+        <div class="zs-title">数据概览${exportTip}</div>
+        <div class="card">
+          <div class="card-body">
+            <div class="card-desc">证券：${state.securities.length} 只</div>
+            <div class="card-desc">段：${totalSegs} 条</div>
+            <div class="card-desc">中枢：${totalZs} 个</div>
+            <div class="card-desc">买卖点：${bsCount} 个</div>
+          </div>
+        </div>
+      </div>
+      <div class="zs-block">
+        <div class="zs-title">导出</div>
+        <div class="card">
+          <div class="card-body">
+            <div class="card-desc">将所有修改导出为 JSON 文件，可回传桌面端</div>
+            <div class="card-actions">
+              <button class="mini" id="btn-export-all">导出全部</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  $('#btn-export-all').onclick = () => {
+    const all = state.securities.map((sec) => ({
+      code: sec.code,
+      drawings: sec.drawings,
+    }));
+    const blob = new Blob([JSON.stringify(all, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `chan-m-export-${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+  };
+}
+
+function renderWoView() {
+  const el = $('#wo-view');
+  if (!el) return;
+  el.innerHTML = `
+    <div class="wx-list">
+      <div class="zs-block">
+        <div class="zs-title">关于 Chan-M</div>
+        <div class="card">
+          <div class="card-body">
+            <div class="card-desc">手机端缠论盯盘工具</div>
+            <div class="card-desc">数据源：腾讯财经</div>
+            <div class="card-desc">画线数据：从桌面端 Chan 导出</div>
+          </div>
+        </div>
+      </div>
+      <div class="zs-block">
+        <div class="zs-title">数据管理</div>
+        <div class="card">
+          <div class="card-body">
+            <div class="card-desc">清除所有本地编辑数据</div>
+            <div class="card-actions">
+              <button class="mini danger" id="btn-clear-all">清除本地数据</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  $('#btn-clear-all').onclick = () => {
+    if (!confirm('确定清除所有本地编辑数据？静态数据不会受影响。')) return;
+    state.securities.forEach((sec) => {
+      localStorage.removeItem(secStoreKey(sec.code));
+    });
+    alert('已清除，请重新加载。');
+    location.reload();
+  };
+}
+
+// ========== 搜索 ==========
+function onSearchInput(e) {
+  state.searchQuery = e.target.value;
+  // 行情页：搜索 A 股市场并添加证券；盯盘页：筛选当前证券
+  if (state.activeTab === 'hangqing') {
+    runMarketSearch(state.searchQuery);
+    return;
+  }
+  if (state.activeTab !== 'dingpan') switchTab('dingpan');
+  if (state.view !== 'list') navigate('list');
+  renderSecurityList(state.searchQuery);
+}
+
+// 仅在标题栏搜索激活时给 header 加 search-active 类，显示内置搜索框
+function updateHeaderSearchVisibility() {
+  const header = document.querySelector('.wx-header');
+  if (!header) return;
+  const active = !!state.searchMode;
+  header.classList.toggle('search-active', active);
+  // 同步 body class：fixed 导航栏顶上腾空高度
+  document.body.classList.toggle('search-header-fixed', active);
+  // 若搜索态所属 tab 与当前激活 tab 不一致（用户已切走），自动关闭搜索
+  if (state.searchMode && state.searchMode !== state.activeTab) closeHeaderSearch();
+}
+
+// ----- A 股行情搜索（行情页搜索框）-----
+const WATCHLIST_EXTRA_KEY = 'chanm_watchlist_extras';
+let marketSearchToken = 0;
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+function toast(msg) {
+  let el = document.getElementById('chanm-toast');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'chanm-toast';
+    el.className = 'chanm-toast';
+    document.body.appendChild(el);
+  }
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(el._t);
+  el._t = setTimeout(() => el.classList.remove('show'), 1800);
+}
+
+function loadWatchlistExtras() {
+  try { return JSON.parse(localStorage.getItem(WATCHLIST_EXTRA_KEY)) || []; }
+  catch (e) { return []; }
+}
+
+function saveWatchlistExtras() {
+  try {
+    const extras = state.securities.filter((s) => s._extra).map((s) => ({ code: s.code, name: s.name }));
+    localStorage.setItem(WATCHLIST_EXTRA_KEY, JSON.stringify(extras));
+  } catch (e) { /* ignore */ }
+}
+
+// 行情页用户自定义证券：load / save / add / remove
+function loadHangqingExtras() {
+  try { return JSON.parse(localStorage.getItem(HANGQING_EXTRAS_KEY)) || []; }
+  catch (e) { return []; }
+}
+function saveHangqingExtras() {
+  try {
+    const extras = (state._hangqingExtras || []).map((s) => ({ code: s.code, name: s.name }));
+    localStorage.setItem(HANGQING_EXTRAS_KEY, JSON.stringify(extras));
+  } catch (e) { /* ignore */ }
+}
+function addSecurityToHangqing(code, name) {
+  if ((state._hangqingExtras || []).some((s) => s.code === code)) {
+    toast(`「${name}」已在行情页`);
+    return false;
+  }
+  if (!state._hangqingExtras) state._hangqingExtras = [];
+  state._hangqingExtras.push({ code, name });
+  saveHangqingExtras();
+  toast(`已添加「${name}」到行情页`);
+  // renderHangqingView 会自动拉取分时数据和价格
+  if (state.activeTab === 'hangqing') renderHangqingView();
+  return true;
+}
+function removeSecurityFromHangqing(code) {
+  if (!state._hangqingExtras) return;
+  const s = state._hangqingExtras.find((x) => x.code === code);
+  state._hangqingExtras = state._hangqingExtras.filter((x) => x.code !== code);
+  saveHangqingExtras();
+  if (s) toast(`已移除「${s.name}」`);
+  if (state.activeTab === 'hangqing') renderHangqingView();
+}
+
+// ========== 本地离线证券库（移动端首选，避免依赖可达的后端 / 被 CORS 拦截的东方财富）==========
+let _A_SHARE_DB = null;        // { items: [[code, name, market, category], ...] }
+let _A_SHARE_DB_PROMISE = null;
+
+async function loadAshareDb() {
+  if (_A_SHARE_DB) return _A_SHARE_DB;
+  if (_A_SHARE_DB_PROMISE) return _A_SHARE_DB_PROMISE;
+  _A_SHARE_DB_PROMISE = (async () => {
+    try {
+      const res = await fetch('data/securities.json?v=' + Date.now());
+      if (!res.ok) throw new Error('http ' + res.status);
+      const data = await res.json();
+      _A_SHARE_DB = data && Array.isArray(data.items) ? data : null;
+    } catch (e) {
+      _A_SHARE_DB = null;
+    } finally {
+      _A_SHARE_DB_PROMISE = null;
+    }
+    return _A_SHARE_DB;
+  })();
+  return _A_SHARE_DB_PROMISE;
+}
+
+// 在本地库中按代码前缀 / 名称子串匹配（同步，毫秒级）。
+// 返回 code 统一为专业展示格式（000001.SZ），与后端结果一致，
+// 以便后续 fetchBars/toApiCode 正确拼接腾讯接口代码（sz000001）。
+function searchAshareDb(kw) {
+  if (!_A_SHARE_DB || !_A_SHARE_DB.items) return [];
+  const q = kw.toLowerCase();
+  const out = [];
+  for (const it of _A_SHARE_DB.items) {
+    const code = it[0], name = it[1], market = it[2];
+    if (code.indexOf(q) === 0 || name.toLowerCase().indexOf(q) >= 0) {
+      out.push({ code: `${code}.${market.toUpperCase()}`, name, market, category: it[3] });
+      if (out.length >= 40) break;
+    }
+  }
+  return out;
+}
+
+async function searchAshare(kw) {
+  kw = (kw || '').trim();
+  if (!kw) return [];
+
+  // 0) 首选：本地离线证券库（移动端无后端 / 东方财富被 CORS 拦截时唯一可用路径）
+  const db = await loadAshareDb();
+  if (db && db.items.length) {
+    const local = searchAshareDb(kw);
+    if (local.length) return local;
+    // 本地库已加载但未命中：6 位代码再尝试腾讯实时解析兜底
+    if (/^\d{6}$/.test(kw)) {
+      try {
+        const r = await resolveCode(kw);
+        if (r && r.code) return [{ code: r.code, name: r.name || kw, market: r.market }];
+      } catch (e) { /* ignore */ }
+    }
+    // 同源后端可用时仍尝试（局域网桌面端）
+    try {
+      const be = await searchByBackend(kw);
+      if (be && be.length) return be;
+    } catch (e) { /* ignore */ }
+    return [];
+  }
+
+  // 1) 本地库缺失：调用本地后端 /api/securities/search（局域网 / GitHub Pages 部署时不存在）
+  try {
+    const items = await searchByBackend(kw);
+    if (items && items.length) return items;
+  } catch (e) { /* 后端不可达，走下一条 */ }
+
+  // 2) Fallback：东方财富 suggest（公开 CORS 接口，按代码/中文/拼音匹配）
+  try {
+    const items = await searchByEastMoney(kw);
+    if (items && items.length) return items;
+  } catch (e) { /* ignore */ }
+
+  // 3) 兜底：把输入当作 6 位代码，用腾讯实时接口解析（之前是唯一路径）
+  if (/^\d{6}$/.test(kw)) {
+    try {
+      const r = await resolveCode(kw);
+      if (r && r.code) return [{ code: r.code, name: r.name || kw, market: r.market }];
+    } catch (e) { /* ignore */ }
+  }
+  return [];
+}
+
+// 推断后端根地址：file:// 协议下默认 localhost；http(s) 部署时复用当前主机名+8765
+function guessBackendBase() {
+  if (location.protocol === 'file:') return 'http://localhost:8765';
+  return `${location.protocol}//${location.hostname}:8765`;
+}
+
+// 命中后端：返回 [{code: '000001.SZ', name: '平安银行', market: 'sz'}]，code 用专业展示格式
+async function searchByBackend(kw) {
+  const url = `${guessBackendBase()}/api/securities/search?q=${encodeURIComponent(kw)}&limit=20`;
+  const ctrl = new AbortController();
+  const tid = setTimeout(() => ctrl.abort(), 4000);
+  let resp;
+  try {
+    resp = await fetch(url, { signal: ctrl.signal });
+  } catch (e) {
+    clearTimeout(tid);
+    return [];
+  }
+  clearTimeout(tid);
+  if (!resp.ok) return [];
+  let data;
+  try { data = await resp.json(); } catch (e) { return []; }
+  const items = (data && data.items) || [];
+  const out = [];
+  for (const it of items) {
+    const code = String(it.code || '').padStart(6, '0');
+    if (!/^\d{6}$/.test(code)) continue;
+    const market = (it.market || '').toLowerCase();
+    if (!/^(sh|sz|bj)$/.test(market)) continue;
+    out.push({ code: `${code}.${market.toUpperCase()}`, name: it.name || code, market });
+  }
+  return out;
+}
+
+// 命中东方财富 suggest：返回 [{code: '000001.SZ', name: '平安银行', market: 'sz'}]
+async function searchByEastMoney(kw) {
+  const url = `https://searchapi.eastmoney.com/api/suggest/get?input=${encodeURIComponent(kw)}&type=14&count=20`;
+  const ctrl = new AbortController();
+  const tid = setTimeout(() => ctrl.abort(), 6000);
+  let resp;
+  try {
+    resp = await fetch(url, { signal: ctrl.signal });
+  } catch (e) {
+    clearTimeout(tid);
+    return [];
+  }
+  clearTimeout(tid);
+  if (!resp.ok) return [];
+  let data;
+  try { data = await resp.json(); } catch (e) { return []; }
+  const list = (data && data.QuotationCodeTable && data.QuotationCodeTable.Data) || [];
+  const out = [];
+  for (const row of list) {
+    // 只保留 A 股/ETF/基金/指数，过滤掉港股/美股/债券/新三板
+    const classify = row && row.Classify;
+    if (!['AStock', 'Fund', 'Index'].includes(classify)) continue;
+    const jys = String((row && row.JYS) || '');
+    let market = null;
+    if (jys === '2') market = 'sh';
+    else if (jys === '6') market = 'sz';
+    if (!market) continue;
+    const code = String((row && row.Code) || '').padStart(6, '0');
+    if (!/^\d{6}$/.test(code)) continue;
+    out.push({ code: `${code}.${market.toUpperCase()}`, name: row.Name || code, market });
+  }
+  return out;
+}
+
+// 仅渲染结果（不重新请求），供 5s 指数刷新复用缓存
+function renderMarketResults(items) {
+  const results = document.getElementById('hg-search-results');
+  const cards = document.getElementById('hg-cards');
+  if (!results) return;
+  state._marketResults = items;
+  if (items === 'loading') {
+    results.hidden = false;
+    if (cards) cards.style.display = 'none';
+    results.innerHTML = '<div class="hg-tip">搜索中…</div>';
+    return;
+  }
+  if (!items) {
+    results.hidden = true;
+    results.innerHTML = '';
+    if (cards) cards.style.display = '';
+    return;
+  }
+  results.hidden = false;
+  if (cards) cards.style.display = 'none';
+  if (!items.length) {
+    results.innerHTML = '<div class="hg-tip">未找到匹配的 A 股证券，可尝试输入 6 位代码</div>';
+    return;
+  }
+  results.innerHTML = items.map((it) => {
+    const added = (state._hangqingExtras || []).some((s) => s.code === it.code);
+    return `
+    <div class="hg-result" data-code="${it.code}">
+      <div class="hg-result-info">
+        <span class="hg-result-name">${escapeHtml(it.name)}</span>
+        <span class="hg-result-code">${it.code.toUpperCase()}</span>
+      </div>
+      <button class="hg-add-btn" type="button" data-code="${it.code}" data-name="${escapeHtml(it.name)}" ${added ? 'disabled' : ''}>${added ? '已添加' : '添加'}</button>
+    </div>`;
+  }).join('');
+}
+
+async function runMarketSearch(q) {
+  q = (q || '').trim();
+  if (!q) {
+    renderMarketResults(null);
+    return;
+  }
+  const token = ++marketSearchToken;
+  renderMarketResults('loading');
+  let items = [];
+  try { items = await searchAshare(q); } catch (e) { /* ignore */ }
+  if (token !== marketSearchToken) return; // 过期请求
+  renderMarketResults(items);
+}
+
+function attachMarketSearchResults() {
+  const results = document.getElementById('hg-search-results');
+  if (!results || results._bound) return;
+  results._bound = true;
+  results.addEventListener('click', (e) => {
+    const btn = e.target.closest('.hg-add-btn');
+    if (!btn) return;
+    const code = btn.dataset.code;
+    const name = btn.dataset.name;
+    if (addSecurityToHangqing(code, name)) {
+      btn.textContent = '已添加';
+      btn.disabled = true;
+    }
+  });
+}
+
+// ----- 主菜单长按：聚焦对应搜索框（不进入文字选中）-----
+let tabLongPressFired = false;
+function attachTabLongPress(tab) {
+  const name = tab.dataset.tab || '';
+  if (!name) return;
+  let timer = null, sx = 0, sy = 0;
+  const LONG_MS = 450;
+  const start = (x, y) => {
+    tabLongPressFired = false;
+    sx = x; sy = y;
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => { tabLongPressFired = true; onTabLongPress(name); }, LONG_MS);
+  };
+  const cancel = () => { if (timer) { clearTimeout(timer); timer = null; } };
+  tab.addEventListener('pointerdown', (e) => start(e.clientX, e.clientY));
+  tab.addEventListener('pointermove', (e) => { if (Math.abs(e.clientX - sx) > 12 || Math.abs(e.clientY - sy) > 12) cancel(); });
+  tab.addEventListener('pointerup', cancel);
+  tab.addEventListener('pointercancel', cancel);
+  tab.addEventListener('contextmenu', (e) => e.preventDefault());
+}
+
+function openHeaderSearch(tab) {
+  // 长按盯盘/行情：搜索框出现在「Chan-M」标题栏那一行，并同步弹起键盘
+  state.searchMode = tab;
+  const header = document.querySelector('.wx-header');
+  if (header) header.classList.add('search-active');
+  if (tab === 'dingpan' && state.view !== 'list') navigate('list');
+  if (state.activeTab !== tab) switchTab(tab);
+  else updateHeaderSearchVisibility();
+  const input = document.getElementById('search-input');
+  const closeBtn = document.getElementById('btn-search-close');
+  if (input) input.removeAttribute('hidden');
+  if (closeBtn) closeBtn.removeAttribute('hidden');
+  if (input) {
+    input.value = '';
+    input.placeholder = tab === 'hangqing' ? '搜索 A 股代码/名称，添加证券' : '搜索当前证券';
+    if (tab === 'hangqing') {
+      state._marketResults = null;
+      renderMarketResults(null);
+    } else {
+      state.searchQuery = '';
+      renderSecurityList('');
+    }
+    // 弹起键盘（移动端需先获得焦点），并主动校准 tabbar 贴住键盘顶部
+    setTimeout(() => { try { input.focus({ preventScroll: true }); } catch (e) { input.focus(); } }, 60);
+    [120, 280, 500, 800].forEach((ms) => setTimeout(syncWithKeyboard, ms));
+  }
+  if (navigator.vibrate) { try { navigator.vibrate(15); } catch (e) { /* ignore */ } }
+}
+
+function closeHeaderSearch() {
+  if (!state.searchMode) return;
+  const tab = state.searchMode;
+  state.searchMode = null;
+  const header = document.querySelector('.wx-header');
+  if (header) header.classList.remove('search-active');
+  document.body.classList.remove('search-header-fixed');
+  const input = document.getElementById('search-input');
+  const closeBtn = document.getElementById('btn-search-close');
+  if (input) { try { input.blur(); } catch (e) {} input.setAttribute('hidden', ''); input.value = ''; }
+  if (closeBtn) closeBtn.setAttribute('hidden', '');
+  state.searchQuery = '';
+  if (tab === 'hangqing') {
+    state._marketResults = null;
+    const r = document.getElementById('hg-search-results');
+    if (r) { r.hidden = true; r.innerHTML = ''; }
+    const c = document.getElementById('hg-cards');
+    if (c) c.style.display = '';
+    // 修复：搜索期间 renderHangqingView 因 cards 隐藏跳过了分时图绘制，
+    // 关闭搜索后 cards 重新显示，需用缓存重绘所有分时图。
+    requestAnimationFrame(() => repaintHangqingIntraday());
+  } else {
+    renderSecurityList('');
+  }
+  // 输入失焦后键盘会收起，校准 tabbar 回到正常位置
+  [120, 320, 600].forEach((ms) => setTimeout(syncWithKeyboard, ms));
+}
+
+// 长按主菜单：盯盘/行情触发标题栏搜索；处于盯盘（证券列表）时，长按提醒按钮呼出提醒窗口
+function onTabLongPress(name) {
+  if (name === 'dingpan' || name === 'hangqing') openHeaderSearch(name);
+  else if (name === 'alert') {
+    if (state.activeTab === 'dingpan' && state.view === 'list') openAddAlertSheet();
+  }
+}
+
+// ========== 初始化 ==========
+function init() {
+  // 配色主题：默认黑白（隐藏红涨绿跌），顶部按钮可切换回彩色
+  const THEME_KEY = 'chan-m-theme';
+  const themeBtn = document.getElementById('btn-theme-toggle');
+  const themeClr = document.getElementById('theme-clr');
+  const applyTheme = (mono) => {
+    document.body.classList.toggle('mono', mono);
+    // CLR. 文本：黑白态→黑字（代表黑白设置），彩色态→红字（代表彩色设置）
+    if (themeClr) themeClr.style.color = mono ? '#111111' : '#fa5151';
+    if (themeBtn) themeBtn.setAttribute('aria-label', mono ? '点击切换为彩色' : '点击切换为黑白');
+    // 主题变化后重绘已展开的分时图与详情页 K 线图，使红/绿颜色跟随主题色更新。
+    // requestAnimationFrame 确保浏览器先完成 CSS 变量计算，避免读到旧颜色。
+    requestAnimationFrame(() => {
+      repaintIntradayCharts();
+      repaintView(secKlineView);
+      if (isSegmentKlineOpen()) paintKline();
+      repaintPeriodRowsKline();
+    });
+  };
+  const saved = localStorage.getItem(THEME_KEY);
+  applyTheme(saved ? saved === 'mono' : true); // 无记录时默认黑白
+  if (themeBtn) themeBtn.addEventListener('click', () => {
+    const mono = !document.body.classList.contains('mono');
+    applyTheme(mono);
+    localStorage.setItem(THEME_KEY, mono ? 'mono' : 'color');
+  });
+
+  // 行情页自定义卡片：全局点击取消编辑态 / 处理删除按钮
+  document.addEventListener('click', (e) => {
+    const delBtn = e.target.closest('.index-delete-btn');
+    if (delBtn) {
+      removeSecurityFromHangqing(delBtn.dataset.code);
+      return;
+    }
+    const editing = document.querySelector('#hangqing-view .index-card.custom.editing');
+    if (editing && !editing.contains(e.target)) {
+      editing.classList.remove('editing');
+      editing.querySelector('.index-delete-btn')?.setAttribute('hidden', '');
+    }
+  }, true);
+
+  const headerBack = document.getElementById('btn-header-back');
+  if (headerBack) headerBack.addEventListener('click', () => goBack());
+
+  // 详情页证券卡片：下滑时从 2 行折叠为 1 行并保持吸顶
+  window.addEventListener('scroll', onDetailScroll, { passive: true });
+
+  $$('.wx-tab').forEach((tab) => {
+    const name = tab.dataset.tab || '';
+    tab.addEventListener('click', () => {
+      if (tabLongPressFired) { tabLongPressFired = false; return; }
+      switchTab(name);
+    });
+    attachTabLongPress(tab);
+  });
+
+  const searchInput = $('#search-input');
+  if (searchInput) {
+    let isComposing = false;
+    searchInput.addEventListener('compositionstart', () => { isComposing = true; });
+    searchInput.addEventListener('compositionend', () => { isComposing = false; onSearchInput({ target: searchInput }); });
+    searchInput.addEventListener('input', () => { if (!isComposing) onSearchInput({ target: searchInput }); });
+  }
+
+  const searchClose = document.getElementById('btn-search-close');
+  if (searchClose) searchClose.addEventListener('click', () => closeHeaderSearch());
+
+  // 长按弹出的搜索框定位为「临时搜索框」：点击标题栏（搜索框/关闭键）以外任意区域即自动收起，
+  // 与「即用即走」的轻量定位一致，消除「如何退出搜索框」的心理负担。
+  // 注意：边缘滑动返回由 gesture.js + search-edge-guard 处理（屏蔽系统返回手势，避免退出程序）。
+  document.addEventListener('click', (e) => {
+    if (!state.searchMode) return;
+    if (e.target.closest('.wx-header')) return; // 标题栏内不关闭
+    closeHeaderSearch();
+  }, true);
+
+  // file:// 模式下无法 fetch 站点数据，不进入加载态（保持「暂无画线数据」提示并引导用 start_chanm.bat）
+  if (location.protocol !== 'file:') loadState.loading = true;
+
+  // 行情页用户自定义证券：从 localStorage 恢复
+  state._hangqingExtras = loadHangqingExtras();
+
+  // 先校准 tabbar 视口位置，再渲染首屏；避免小米等机型首屏时 bottom 计算延迟
+  initTabbarViewportFix();
+
+  switchTab('dingpan'); // 先渲染：若本地无缓存则显示「加载中…」而非「暂无画线数据」
+  history.replaceState({ chanmView: 'list' }, '');
+  startIndexRealtime();
+
+  state.alerts = loadAlerts();
+  startAlertMonitor();
+
+  // 自动加载画线数据（file:// 模式下跳过）
+  if (location.protocol !== 'file:') {
+    loadAllDrawings();
+  }
+
+  if ('serviceWorker' in navigator && !window.__CHANM_NOCACHE__) {
+    navigator.serviceWorker.addEventListener('controllerchange', () => location.reload());
+    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js?v=20260725i').catch(() => {}));
+  }
+
+  // 搜索模式下：屏幕内任意横向滑动（>60px）即可关闭搜索框，无需点 ✕
+  // 纵向滚动不受影响；一旦判定为横向，先 preventDefault 阻止浏览器边缘手势（返回/前进），再关闭
+  let _swipeSX = 0, _swipeSY = 0, _swipeOn = false;
+  document.addEventListener('touchstart', (e) => {
+    if (!state.searchMode) return;
+    const t = e.touches[0];
+    _swipeSX = t.clientX; _swipeSY = t.clientY;
+    _swipeOn = true;
+  }, { passive: true });
+  document.addEventListener('touchmove', (e) => {
+    if (!_swipeOn || !state.searchMode) return;
+    const t = e.touches[0];
+    const dx = t.clientX - _swipeSX;
+    const dy = t.clientY - _swipeSY;
+    if (Math.abs(dx) > 30 && Math.abs(dx) > Math.abs(dy)) {
+      // 先于浏览器边缘手势（~40px 触发），阻止后退/前进
+      e.preventDefault();
+    }
+    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy)) {
+      closeHeaderSearch();
+      _swipeOn = false;
+    }
+  }, { passive: false });
+  document.addEventListener('touchend', () => { _swipeOn = false; }, { passive: true });
+
+  // 自动存档有 1s 防抖窗口：切后台/关闭页面时立即补写，避免最后一次盯盘续接结果丢失
+  window.addEventListener('pagehide', () => flushAutoSave());
+  document.addEventListener('visibilitychange', () => { if (document.hidden) flushAutoSave(); });
+
+  window.__CHANM_LOADED__ = true;
+}
+
+init();
+window.navigate = navigate;
+
