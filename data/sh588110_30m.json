@@ -1,7 +1,7 @@
 {
   "code": "sh588110",
   "period": "30m",
-  "exportedAt": 1792425095091,
+  "exportedAt": 1792509458535,
   "segments": [
     {
       "id": "s_q9wo4i3a",
@@ -29,6 +29,34 @@
       "end": {
         "time": 1791948600,
         "price": 0.528
+      }
+    },
+    {
+      "id": "s_sowpove1",
+      "kind": "segment",
+      "period": "30m",
+      "direction": "down",
+      "start": {
+        "time": 1791948600,
+        "price": 0.528
+      },
+      "end": {
+        "time": 1792377000,
+        "price": 0.47
+      }
+    },
+    {
+      "id": "s_bg3u1crs",
+      "kind": "segment",
+      "period": "30m",
+      "direction": "up",
+      "start": {
+        "time": 1792377000,
+        "price": 0.47
+      },
+      "end": {
+        "time": 1792465200,
+        "price": 0.501
       }
     }
   ],
@@ -64,6 +92,34 @@
           "end": {
             "time": 1791948600,
             "price": 0.528
+          }
+        },
+        {
+          "id": "s_sowpove1",
+          "kind": "segment",
+          "period": "30m",
+          "direction": "down",
+          "start": {
+            "time": 1791948600,
+            "price": 0.528
+          },
+          "end": {
+            "time": 1792377000,
+            "price": 0.47
+          }
+        },
+        {
+          "id": "s_bg3u1crs",
+          "kind": "segment",
+          "period": "30m",
+          "direction": "up",
+          "start": {
+            "time": 1792377000,
+            "price": 0.47
+          },
+          "end": {
+            "time": 1792465200,
+            "price": 0.501
           }
         }
       ],
@@ -115,70 +171,6 @@
   "presetName": "",
   "a0Period": "1m",
   "bars": [
-    {
-      "time": 1779415200,
-      "open": 0.65,
-      "high": 0.662,
-      "low": 0.65,
-      "close": 0.659,
-      "volume": 5699100.0
-    },
-    {
-      "time": 1779417000,
-      "open": 0.659,
-      "high": 0.664,
-      "low": 0.65,
-      "close": 0.65,
-      "volume": 2257600.0
-    },
-    {
-      "time": 1779418800,
-      "open": 0.65,
-      "high": 0.656,
-      "low": 0.648,
-      "close": 0.656,
-      "volume": 784100.0
-    },
-    {
-      "time": 1779420600,
-      "open": 0.655,
-      "high": 0.657,
-      "low": 0.651,
-      "close": 0.657,
-      "volume": 524000.0
-    },
-    {
-      "time": 1779427800,
-      "open": 0.658,
-      "high": 0.663,
-      "low": 0.658,
-      "close": 0.659,
-      "volume": 669600.0
-    },
-    {
-      "time": 1779429600,
-      "open": 0.659,
-      "high": 0.661,
-      "low": 0.659,
-      "close": 0.66,
-      "volume": 114300.0
-    },
-    {
-      "time": 1779431400,
-      "open": 0.662,
-      "high": 0.668,
-      "low": 0.662,
-      "close": 0.668,
-      "volume": 436200.0
-    },
-    {
-      "time": 1779433200,
-      "open": 0.668,
-      "high": 0.669,
-      "low": 0.665,
-      "close": 0.667,
-      "volume": 1016600.0
-    },
     {
       "time": 1779674400,
       "open": 0.674,
@@ -6514,6 +6506,70 @@
       "low": 0.484,
       "close": 0.485,
       "volume": 8519600.0
+    },
+    {
+      "time": 1792461600,
+      "open": 0.483,
+      "high": 0.493,
+      "low": 0.477,
+      "close": 0.489,
+      "volume": 31528000.0
+    },
+    {
+      "time": 1792463400,
+      "open": 0.488,
+      "high": 0.495,
+      "low": 0.486,
+      "close": 0.493,
+      "volume": 12128100.0
+    },
+    {
+      "time": 1792465200,
+      "open": 0.493,
+      "high": 0.501,
+      "low": 0.492,
+      "close": 0.496,
+      "volume": 25038400.0
+    },
+    {
+      "time": 1792467000,
+      "open": 0.497,
+      "high": 0.498,
+      "low": 0.493,
+      "close": 0.494,
+      "volume": 2980200.0
+    },
+    {
+      "time": 1792474200,
+      "open": 0.492,
+      "high": 0.492,
+      "low": 0.487,
+      "close": 0.488,
+      "volume": 8893700.0
+    },
+    {
+      "time": 1792476000,
+      "open": 0.488,
+      "high": 0.488,
+      "low": 0.485,
+      "close": 0.485,
+      "volume": 4113000.0
+    },
+    {
+      "time": 1792477800,
+      "open": 0.486,
+      "high": 0.49,
+      "low": 0.484,
+      "close": 0.489,
+      "volume": 9444000.0
+    },
+    {
+      "time": 1792479600,
+      "open": 0.489,
+      "high": 0.492,
+      "low": 0.488,
+      "close": 0.492,
+      "volume": 6784300.0
     }
   ]
 }
