@@ -455,7 +455,9 @@ function thirdRetestSeg(chain, range, baseIds, dir) {
     if (!ce) continue;
     const cLow = Math.min(ce.start.price, ce.end.price);
     const cHigh = Math.max(ce.start.price, ce.end.price);
-    if (dir < 0 ? (cHigh <= range.low) : (cLow >= range.high)) return c;
+    // 「不跌破 ZG」= 低点严格高于 ZG；「不升破 ZD」= 高点严格低于 ZD。
+    // 中枢是闭区间，回试恰好触及边界仍算回到中枢 ⇒ 三类点不成立。
+    if (dir < 0 ? (cHigh < range.low) : (cLow > range.high)) return c;
   }
   return null;
 }
@@ -487,7 +489,7 @@ export function detectOneBuySell(segments, zhongshus) {
   const zsList = [];
   for (const zs of zhongshus || []) {
     const range = zhongshuRangeLowHigh(zs, segMap);
-    if (!range || !(range.high > range.low)) continue;   // 区间退化 / 无法取值 → 不是中枢
+    if (!range) continue;   // 取不到区间 → 跳过；零宽度（ZG=ZD）仍是中枢，照常参与趋势比较
     const t0 = Number.isFinite(zs.startTime) ? zs.startTime : null;
     if (t0 === null) continue;
     zsList.push({ zs, t0, range });
@@ -945,11 +947,9 @@ export function detectTwoAndThreeBuySell(segments, zhongshus) {
     if (!base) continue;
     const range = zhongshuRangeLowHigh(zs, segMap);
     if (!range) continue;
-    // 区间退化（ZG ≤ ZD）的矩形**不是中枢**：中枢＝连续三段走势的重叠区间，
-    // 重叠宽度为零时无从判定「离开 / 重回」。与 L1 `chan_semantics._collect_zhongshus`
-    // 的 `if zg <= zd: 跳过并告警` 及桌面版 `_findThirdClassPoints` 同口径
-    // （实测 sh588110_1m 有 2 个这类矩形，旧版会在其上判出假的第三类卖点）。
-    if (!(range.high > range.low)) continue;
+    // 零宽度（ZG = ZD）的矩形**仍是中枢**，且**三类点照常判定**：
+    // 「不跌破 ZG / 不升破 ZD」就是「低点 ≥ ZG / 高点 ≤ ZD」的价格比较，
+    // ZG=ZD 时阈值退化为同一个价位，比较照样成立（与 L1 同口径）。
 
     // 三类点：买、卖**各自独立**取首个合格配对（同一中枢可同时给出 3B 与 3S），
     // 由 `thirdRetestSeg` 统一实现（与 detectOneBuySell 的候选二定位共用同一份判定）。

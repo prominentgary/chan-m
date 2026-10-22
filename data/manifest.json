@@ -30,9 +30,10 @@
         "5m",
         "15m",
         "30m",
-        "60m"
+        "60m",
+        "day"
       ],
-      "a0Period": "1m",
+      "a0Period": "30m",
       "presets": [
         {
           "id": "default",
@@ -40,11 +41,7 @@
         },
         {
           "id": "preset_nt8uyzl7",
-          "name": "中枢视角"
-        },
-        {
-          "id": "preset_jhl53olu",
-          "name": "转译视角"
+          "name": ""
         }
       ]
     },
@@ -56,12 +53,17 @@
         "5m",
         "15m",
         "30m",
-        "60m"
+        "60m",
+        "day"
       ],
-      "a0Period": "1m",
+      "a0Period": "30m",
       "presets": [
         {
           "id": "default",
+          "name": ""
+        },
+        {
+          "id": "preset_qjqejzbw",
           "name": ""
         }
       ]
