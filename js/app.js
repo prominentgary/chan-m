@@ -3,6 +3,8 @@
 import { fetchBars, fetchRealtimeMulti, formatTime, formatPrice, isETF, resolveCode } from './fetcher.js?v=20260725i';
 import { computeMACD } from './macd.js?v=20260725f';
 import { buildBrief } from './ai_brief.js?v=20261018a';
+import { buildQuadBrief, pickQuadLevels } from './quad_brief.js?v=20261024a';
+import { computeHideBefore, computeHideBeforeDetail, visibleSegsOf, visibleZsOf, getHigherPeriod } from './hide.js?v=20261024a';
 import { segmentStrength, detectStrengthIndicators, detectOneBuySell, detectTwoAndThreeBuySell, computeZhongshuStrength, detectZhongshu, computeZhongshuExtend, computeRecursiveSegment, zhongshuRangeLowHigh } from './algo.js?v=20261015b';
 import { renderSegments } from './table.js?v=20260904b';
 import { renderKlineChart, sliceSegmentBars, renderIntradayChart, repaintView } from './klinechart.js?v=20261011a';
@@ -48,15 +50,7 @@ const AUX_PERIODS = { '15m': true, '60m': true };
 const AUX_TO_MAIN = { '15m': '5m', '60m': '30m' };
 
 // 返回当前周期在证券可用周期列表中的下一个更高级别周期（跳过 15m/60m 辅助周期）
-function getHigherPeriod(period, availablePeriods) {
-  const idx = PERIODS.findIndex((x) => x[0] === period);
-  if (idx < 0) return null;
-  for (let i = idx + 1; i < PERIODS.length; i++) {
-    if (AUX_PERIODS[PERIODS[i][0]]) continue;
-    if (availablePeriods.includes(PERIODS[i][0])) return PERIODS[i][0];
-  }
-  return null;
-}
+// 已抽到 hide.js —— 屏幕的隐藏规则与联立简报必须用同一份实现。
 
 // 周期链上的「下一更高级别」（跳过 15m/60m 辅助周期），不要求该周期已有数据。
 // 与 getHigherPeriod 的区别：后者要求目标周期在证券周期列表内（用于级别联立/展示），
@@ -71,69 +65,8 @@ function getNextHigherPeriod(period) {
   return null;
 }
 
-// 把当日内某个交易时间换算成距 9:30 的分钟数（已扣除午休）
-function marketMinutesFrom930(t) {
-  const dt = new Date(t * 1000);
-  const hm = dt.getHours() * 60 + dt.getMinutes();
-  if (hm < 13 * 60) return hm - (9 * 60 + 30);
-  return (hm - 13 * 60) + 120;
-}
-
-// 给定目标时间 t（通常对应某根高周期 K 线的结束时间），返回该 K 线的开始时间
-function periodBarStart(t, period) {
-  if (period === 'day' || period === 'week' || period === 'month') {
-    const dt = new Date(t * 1000);
-    dt.setHours(0, 0, 0, 0);
-    return Math.floor(dt.getTime() / 1000);
-  }
-  const minutes = { '1m': 1, '5m': 5, '15m': 15, '30m': 30, '60m': 60 }[period];
-  if (!minutes) return t;
-  const mm = marketMinutesFrom930(t);
-  if (mm <= 0) {
-    const dt = new Date(t * 1000);
-    dt.setHours(9, 30, 0, 0);
-    return Math.floor(dt.getTime() / 1000);
-  }
-  const startMm = Math.floor((mm - 1) / minutes) * minutes;
-  const startHm = startMm < 120
-    ? (9 * 60 + 30) + startMm
-    : 13 * 60 + (startMm - 120);
-  const dt = new Date(t * 1000);
-  dt.setHours(Math.floor(startHm / 60), startHm % 60, 0, 0);
-  return Math.floor(dt.getTime() / 1000);
-}
-
-// 计算低级别周期的 hideBefore：优先用更高周期中时间上最新的一段（end 最大），
-// 以其终点对齐到更高周期 K 线起点，使低周期图聚焦到「最新一段覆盖的交易日」。
-// 安全回退：若更高周期数据比当前周期段更新（如 30m 末段 end 晚于 5m 末段 start），
-// 纯按 end 对齐会把当前周期图清空，此时退回旧逻辑——用更高周期所有段的 max(start) 对齐，
-// 保留更多历史段（例如 5m 图从 30m 起点起显示，而非变空或只剩 1 段）。
-function computeHideBefore(higherSegments, higherPeriod, curSegments) {
-  if (!higherPeriod || !higherSegments || !higherSegments.length) return null;
-  // 盯盘段终点为「当前最新价」，若把它当作更高周期的最后一段来算 hideBefore，
-  // 会把低周期段几乎全部隐藏（例如 5m 盯盘导致 1m 只显示盯盘段之后）。各周期盯盘段需排除。
-  // 递归产物（_isRecursive，见 recursiveToHigherPeriod）同理排除：它是人工在低周期上合成出的
-  // 高级别段，不代表行情推进到的最新位置，若参与对齐会把低周期视图的历史段无谓隐藏。
-  const realHigher = higherSegments.filter((s) => !s._isWatch && !s._isTrack && !s._isRecursive);
-  if (!realHigher.length) return null;
-  let lastEnd = 0, maxStart = 0;
-  for (const s of realHigher) {
-    const e = s.end?.time ?? s.start?.time ?? 0;
-    const st = s.start?.time ?? s.end?.time ?? 0;
-    if (e > lastEnd) lastEnd = e;
-    if (st > maxStart) maxStart = st;
-  }
-  const hbEnd = lastEnd ? periodBarStart(lastEnd, higherPeriod) : null;
-  if (hbEnd != null && curSegments && curSegments.length) {
-    let curLastStart = 0;
-    for (const s of curSegments) {
-      const st = s.start?.time ?? s.end?.time ?? 0;
-      if (st > curLastStart) curLastStart = st;
-    }
-    if (hbEnd > curLastStart) return maxStart ? periodBarStart(maxStart, higherPeriod) : hbEnd;
-  }
-  return hbEnd;
-}
+// 「级别联立隐藏」规则（periodBarStart / computeHideBefore / 可见段与可见中枢过滤）
+// 已抽到 hide.js —— 联立简报与屏幕显示必须用同一份实现，不能各算一份。
 
 const STORE_KEY_PREFIX = 'chan-m-sec-';
 const ALERT_STORE_KEY = 'chan-m-alerts-v1';
@@ -801,12 +734,8 @@ function countVisible(sec, period) {
   const higherPeriod = getHigherPeriod(period, sec.periods || []);
   const higherSegments = (higherPeriod && sec.drawings[higherPeriod]?.segments) || [];
   const hideBefore = computeHideBefore(higherSegments, higherPeriod, segments);
-  let visibleSegs = segments;
-  if (hideBefore != null) {
-    visibleSegs = segments.filter((s) => (s.start?.time ?? s.end?.time ?? 0) >= hideBefore);
-  }
-  const visibleIds = new Set(visibleSegs.map((s) => s.id));
-  const visibleZs = (zhongshus || []).filter((z) => (z.segmentIds || []).some((id) => visibleIds.has(id)));
+  const visibleSegs = visibleSegsOf(segments, hideBefore);
+  const visibleZs = visibleZsOf(zhongshus, visibleSegs);
   return { segCount: visibleSegs.length, zsCount: visibleZs.length };
 }
 
@@ -917,6 +846,8 @@ function renderPeriodList(code, { keepHeader = false } = {}) {
               <div class="sec-price">${priceText}</div>
               <div class="sec-change ${change.cls}">${change.text}</div>
             </div>
+            <button class="sec-quad-btn" type="button" data-quad-code="${code}"
+              aria-label="多级别联立结构分析">联立</button>
           </div>
         </div>
         <div class="sec-intraday">
@@ -927,6 +858,19 @@ function renderPeriodList(code, { keepHeader = false } = {}) {
     `;
     const card = box.querySelector('.sec-card');
     attachSecIntradayLongPress(card, code);
+    // 证券级「联立」入口：讲这只票的多级别结构，不是某一张图。
+    // pointerdown 必须拦下（与周期行「问 AI」胶囊同理）：卡片上绑着 480ms 长按
+    // 展开分时图，不拦的话按住按钮稍久会先展开分时，松手又弹出联立，两个动作都发生。
+    const quadBtn = card.querySelector('.sec-quad-btn');
+    if (quadBtn) {
+      ['pointerdown', 'pointermove', 'pointerup', 'pointercancel'].forEach((ev) => {
+        quadBtn.addEventListener(ev, (e) => e.stopPropagation());
+      });
+      quadBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openQuadBriefSheet(code);
+      });
+    }
     staggerEnter(box, '.sec-card, .period-row');
   } else {
     const listEl = box.querySelector('.period-list');
@@ -2127,6 +2071,151 @@ function renderSinglePeriodDetail(detail, code, g, hideBefore = null, animate = 
 
 // ========== 手机端「问 AI」：把当前这张图翻译成一段人话，复制去 WorkBuddy ==========
 // 只做三件事：取现成结果（algo.js 已算好的段/中枢/力度/买卖点）→ 交给 ai_brief.js 拼装 →
+// 简报弹层（单图简报与多级联立共用）：只负责展示与复制，不做任何判定。
+function showBriefSheet(brief, opts = {}) {
+  const old = document.getElementById('brief-sheet');
+  if (old) old.remove();
+
+  const sheet = document.createElement('div');
+  sheet.id = 'brief-sheet';
+  sheet.className = 'action-sheet-mask';
+  const warnHtml = (brief.warnings && brief.warnings.length)
+    ? `<div class="brief-warn">⚠ ${escapeHtml(brief.warnings.join('；'))}</div>`
+    : '';
+  const title = opts.title || '问 AI · 结构简报';
+  const hint = opts.hint
+    || '点「复制全文」，打开 WorkBuddy 粘贴，再补一句你想问的（例如「现在能不能进」「下一个该盯哪个价位」）。';
+  sheet.innerHTML = `
+    <div class="action-sheet brief-sheet">
+      <div class="action-sheet-title">
+        <span>${escapeHtml(title)}</span>
+        <button class="action-sheet-close" aria-label="关闭">×</button>
+      </div>
+      <div class="brief-body">
+        <div class="brief-hint">${escapeHtml(hint)}</div>
+        ${warnHtml}
+        <pre class="brief-text" id="brief-text"></pre>
+      </div>
+      <div class="action-sheet-footer brief-footer">
+        <button type="button" class="primary" id="brief-copy">复制全文</button>
+        <button type="button" class="mini" id="brief-share">分享到…</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(sheet);
+  sheet.querySelector('#brief-text').textContent = brief.text;
+
+  const close = () => {
+    sheet.classList.remove('show');
+    setTimeout(() => sheet.remove(), 260);
+  };
+  sheet.querySelector('.action-sheet-close').addEventListener('click', close);
+  sheet.addEventListener('click', (e) => { if (e.target === sheet) close(); });
+
+  sheet.querySelector('#brief-copy').addEventListener('click', async () => {
+    const ok = await copyText(brief.text);
+    toast(ok ? `已复制 ${brief.text.length} 字，去 WorkBuddy 粘贴` : '复制失败，请长按正文手动全选复制');
+  });
+
+  const shareBtn = sheet.querySelector('#brief-share');
+  if (navigator.share && window.isSecureContext) {
+    shareBtn.addEventListener('click', async () => {
+      try {
+        await navigator.share({ title: brief.title, text: brief.text });
+      } catch (e) {
+        // 用户取消不算错误，静默；真失败则退回复制
+        if (e && e.name !== 'AbortError') toast('分享不可用，请用「复制全文」');
+      }
+    });
+  } else {
+    shareBtn.hidden = true;
+    sheet.querySelector('#brief-copy').style.width = '100%';
+  }
+
+  requestAnimationFrame(() => sheet.classList.add('show'));
+}
+
+// 多级别联立简报：**一个证券一个入口**，把整条级别链打包成一段可复制的文本。
+// 与周期行 AI 胶囊的分工：那个讲「这一张图」，这个讲「这只票现在怎么走」。
+//
+// 硬边界：
+//   1. 只读不判：段/中枢/力度/买卖点全部由 algo.js 算过，这里只做跨级编排与排版。
+//   2. 作用域与屏幕同一口径：分界一律走 hide.js 的 computeHideBeforeDetail，
+//      它和周期行的「N 段 · M 中枢」、图上显示的线是同一份实现，**不另算一套**。
+//   3. 辅助周期（15m/60m）不纳入：它们的画线复刻 5m/30m，纳入会平白多两级。
+//   4. 力度用该周期自己的 K 线算（与屏幕上画的那张图一致），因此不可跨级比大小。
+let _quadBriefBusy = false;
+async function openQuadBriefSheet(code) {
+  if (_quadBriefBusy) return;
+  const sec = state.securities.find((s) => s.code === code);
+  if (!sec) return;
+
+  const knownPeriods = sec.periods || Object.keys(sec.drawings || {});
+  const periods = pickQuadLevels(knownPeriods, sec.drawings || {});
+  if (!periods.length) { toast('这只证券还没有任何周期画过线'); return; }
+
+  _quadBriefBusy = true;
+  const levels = [];
+  try {
+    for (const p of periods) {
+      let bars = [];
+      try { bars = (await ensureDisplayBars(code, p, false)) || []; } catch (e) { bars = []; }
+      const d = sec.drawings?.[p] || {};
+      // 深拷贝后再跑算法：周期行入口进来时画布上的段可能还没被 computeStrengths 装饰过，
+      // 直接用原对象会得到「力度不可比、零买卖点」的假简报；就地装饰又会污染共享画布对象。
+      const segs = JSON.parse(JSON.stringify(d.segments || []));
+      const zss = JSON.parse(JSON.stringify(d.zhongshus || []));
+      if (segs.length && bars.length) computeStrengths(bars, segs, zss);
+      // 分界用**紧邻上一级**（已跳辅助周期）的最后一段截断 —— 与屏幕显示同一实现。
+      // 注意这里不拿「联立链里的上一级」顶替：链上可能缺一级没画线，而屏幕的隐藏
+      // 仍然按紧邻的那一级算，两者混用会让简报的作用域与眼睛看到的不是同一段。
+      const hideBy = getHigherPeriod(p, knownPeriods);
+      const higherSegs = (hideBy && sec.drawings?.[hideBy]?.segments) || [];
+      const hb = computeHideBeforeDetail(higherSegs, hideBy, segs);
+      levels.push({
+        period: p,
+        bars,
+        segments: segs,
+        zhongshus: zss,
+        higherPeriod: hideBy || null,
+        hideBefore: hb ? hb.hideBefore : null,
+        hideHow: hb ? hb.how : null,
+        anchorSeg: hb ? hb.anchor : null,
+      });
+    }
+  } finally {
+    _quadBriefBusy = false;
+  }
+
+  const rt = state._rtPrices?.[code];
+  const presets = state._presets?.[code] || [];
+  const pIdx = state._currentPresetIdx?.[code] || 0;
+  const presetName = (presets.length > 1 && presets[pIdx])
+    ? (presets[pIdx].name || `方案${pIdx + 1}`)
+    : null;
+
+  let quad = null;
+  try {
+    quad = buildQuadBrief({
+      code,
+      name: sec.name || rt?.name || code,
+      levels,
+      a0Period: sec._a0Period || null,
+      presetName,
+      quote: rt ? { price: rt.price, prevClose: rt.prevClose } : null,
+    });
+  } catch (err) {
+    toast('生成失败：' + ((err && err.message) || '未知错误'));
+    return;
+  }
+
+  showBriefSheet(quad, {
+    title: `问 AI · ${levels.length} 级联立`,
+    hint: '这是这只票的多级别联立结构（不是单张图）。点「复制全文」，打开 WorkBuddy 粘贴，'
+      + '再补一句你想问的（例如「现在能不能进」「这几级对得上吗」）。',
+  });
+}
+
 // 展示 + 复制。这里**不做任何判定**，也不从 K 线重新数段，否则就和桌面 L1 变成两套口径。
 //
 // 入参只用 (code, period)：周期行与详情页两个入口都调它，数据自己取，
@@ -2193,63 +2282,7 @@ async function openBriefSheet(code, period) {
     return;
   }
 
-  const old = document.getElementById('brief-sheet');
-  if (old) old.remove();
-
-  const sheet = document.createElement('div');
-  sheet.id = 'brief-sheet';
-  sheet.className = 'action-sheet-mask';
-  const warnHtml = (brief.warnings && brief.warnings.length)
-    ? `<div class="brief-warn">⚠ ${escapeHtml(brief.warnings.join('；'))}</div>`
-    : '';
-  sheet.innerHTML = `
-    <div class="action-sheet brief-sheet">
-      <div class="action-sheet-title">
-        <span>问 AI · 结构简报</span>
-        <button class="action-sheet-close" aria-label="关闭">×</button>
-      </div>
-      <div class="brief-body">
-        <div class="brief-hint">点「复制全文」，打开 WorkBuddy 粘贴，再补一句你想问的（例如「现在能不能进」「下一个该盯哪个价位」）。</div>
-        ${warnHtml}
-        <pre class="brief-text" id="brief-text"></pre>
-      </div>
-      <div class="action-sheet-footer brief-footer">
-        <button type="button" class="primary" id="brief-copy">复制全文</button>
-        <button type="button" class="mini" id="brief-share">分享到…</button>
-      </div>
-    </div>
-  `;
-  document.body.appendChild(sheet);
-  sheet.querySelector('#brief-text').textContent = brief.text;
-
-  const close = () => {
-    sheet.classList.remove('show');
-    setTimeout(() => sheet.remove(), 260);
-  };
-  sheet.querySelector('.action-sheet-close').addEventListener('click', close);
-  sheet.addEventListener('click', (e) => { if (e.target === sheet) close(); });
-
-  sheet.querySelector('#brief-copy').addEventListener('click', async () => {
-    const ok = await copyText(brief.text);
-    toast(ok ? `已复制 ${brief.text.length} 字，去 WorkBuddy 粘贴` : '复制失败，请长按正文手动全选复制');
-  });
-
-  const shareBtn = sheet.querySelector('#brief-share');
-  if (navigator.share && window.isSecureContext) {
-    shareBtn.addEventListener('click', async () => {
-      try {
-        await navigator.share({ title: brief.title, text: brief.text });
-      } catch (e) {
-        // 用户取消不算错误，静默；真失败则退回复制
-        if (e && e.name !== 'AbortError') toast('分享不可用，请用「复制全文」');
-      }
-    });
-  } else {
-    shareBtn.hidden = true;
-    sheet.querySelector('#brief-copy').style.width = '100%';
-  }
-
-  requestAnimationFrame(() => sheet.classList.add('show'));
+  showBriefSheet(brief);
 }
 
 // 复制纯文本：优先剪贴板 API；局域网 http（非 secure context）下退回 execCommand。
@@ -2437,13 +2470,7 @@ function getVisibleSegsForPeriod(code, period) {
   const higherPeriod = getHigherPeriod(period, sec?.periods || []);
   const higherSegments = (higherPeriod && sec?.drawings?.[higherPeriod]?.segments) || [];
   const hideBefore = computeHideBefore(higherSegments, higherPeriod, segments);
-  let visible = [...segments];
-  if (hideBefore != null) {
-    visible = visible.filter((s) => (s.start?.time ?? s.end?.time ?? 0) >= hideBefore);
-  }
-  return visible.sort(
-    (a, b) => (a.end?.time ?? a.start?.time) - (b.end?.time ?? b.start?.time)
-  );
+  return visibleSegsOf(segments, hideBefore);
 }
 
 // 根据中枢及其包含段，计算点线矩形坐标（与 model.js 的 toDrawings 逻辑一致）

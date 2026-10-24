@@ -842,6 +842,20 @@ body.search-header-fixed .search-edge-guard { display: block; }
 .sec-meta { font-size: 14px; color: var(--wx-muted); transition: font-size .18s ease, opacity .18s ease; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .preset-dot { margin: 0 4px; color: var(--wx-muted); }
 .sec-right { display: flex; align-items: center; gap: 10px; }
+
+/* 证券级「联立」按钮：这只票的多级别结构，不是单张图。
+   与周期行的 AI 胶囊同形（描边胶囊），靠文案区分：AI=单图，联立=跨级。 */
+.sec-quad-btn {
+  flex: 0 0 auto;
+  padding: 2px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--wx-accent);
+  background: transparent;
+  color: var(--wx-accent);
+  font-size: 11px; font-weight: 700; line-height: 1.7;
+  letter-spacing: .5px;
+}
+.sec-quad-btn:active { background: rgba(240, 180, 41, .16); }
 .sec-quote { text-align: right; line-height: 1.35; }
 .sec-price { font-size: 17px; font-weight: 600; color: var(--wx-txt); transition: font-size .18s ease; }
 .sec-change { font-size: 14px; font-weight: 500; color: var(--wx-muted); transition: font-size .18s ease; }
