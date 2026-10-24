@@ -1,7 +1,7 @@
 {
   "code": "sh588110",
   "period": "day",
-  "exportedAt": 1792686654865,
+  "exportedAt": 1792809709178,
   "segments": [
     {
       "id": "s_fpc2t5qz",
@@ -249,7 +249,7 @@
   ],
   "activePreset": "default",
   "presetName": "",
-  "a0Period": "30m",
+  "a0Period": "1m",
   "bars": [
     {
       "time": "2023-08-31",
@@ -6314,6 +6314,14 @@
       "low": 0.468,
       "close": 0.47,
       "volume": 119918124.0
+    },
+    {
+      "time": "2026-10-23",
+      "open": 0.457,
+      "high": 0.486,
+      "low": 0.441,
+      "close": 0.483,
+      "volume": 143200000.0
     }
   ]
 }
