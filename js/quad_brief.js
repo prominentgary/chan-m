@@ -468,13 +468,18 @@ function buildLabels(use, segLines, tailLine, period, r1) {
 
   let keep = valid.map((_, i) => i);
   if (valid.length > 7) {
-    // 太多就只留首、尾、最高、最低
+    // 点太多会糊：按步长采样，且一定保留首、尾、最高、最低（约 4~6 个标签）
+    const stride = Math.ceil((valid.length - 2) / 3);
+    const set = new Set([0, valid.length - 1]);
+    for (let i = stride; i < valid.length - 1; i += stride) set.add(i);
     let hi = 0, lo = 0;
     valid.forEach((q, i) => {
       if (q.p > valid[hi].p) hi = i;
       if (q.p < valid[lo].p) lo = i;
     });
-    keep = [...new Set([0, valid.length - 1, hi, lo])].sort((a, b) => a - b);
+    set.add(hi);
+    set.add(lo);
+    keep = [...set].sort((a, b) => a - b);
   }
 
   const daily = DAILY_PERIODS.has(period);

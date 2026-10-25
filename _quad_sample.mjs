@@ -39,6 +39,13 @@ function normBarTime(bars) {
 }
 
 const code = process.argv[2] || 'sh588110';
+// 名称从 manifest 读（数据文件里没有 name 字段）
+let secName = code;
+try {
+  const mf = JSON.parse(fs.readFileSync(path.join(DATA, 'manifest.json'), 'utf8'));
+  const hit = (mf.securities || []).find((x) => x.code === code);
+  if (hit && hit.name) secName = hit.name;
+} catch (e) { /* 读不到就退回代码 */ }
 const avail = PERIODS.filter((p) => fs.existsSync(path.join(DATA, `${code}_${p}.json`)));
 const drawings = {};
 const barsByPeriod = {};
@@ -103,7 +110,7 @@ const quote = lastLv && lastLv.bars.length
   : null;
 
 const { title, text, warnings } = buildQuadBrief({
-  code, name: code, levels, a0Period, presetName, quote,
+  code, name: secName, levels, a0Period, presetName, quote,
 });
 
 console.error(`\n[out] ${title} · ${text.length} 字符 / ${text.split('\n').length} 行`
