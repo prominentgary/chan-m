@@ -54,11 +54,17 @@ const ANSWER_GUIDE = [
   '默认请给出一份「手机版多级别走势报告」，按下面七节写。'
   + '如果我只是问一个小问题（例如「现在能不能进」），就直接答那个，不必铺开。',
   '',
+  '  总纲：整份报告只回答一个问题 —— **现在该看什么、该等什么**。'
+  + '不是把每级的数字挨个摆一遍，而是挑出此刻最要紧的那一件事，直说。'
+  + '**30分钟 和 5分钟 是主体**：日线只用一句话定方向，1分钟只用一句话抠位置，'
+  + '篇幅和分析都留给这两级。',
+  '',
   '一、开头三行（先给结论，不要先讲结构）',
   '  ※ 全文说的「方向」一律是**未完成段**的方向，不是最后一条已画线的方向。',
-  '  1. 现在是什么局面：一句话，把最高一级和主操作级的方向合起来说。',
-  '  2. 现在该做什么：等 / 不追高 / 找买点 / 不动手，并写清触发条件（价位 + 哪一级的什么变化）。',
-  '  3. 这个判断怕什么：一句话，哪一级走到哪里，这份结论就作废。',
+  '  1. 局面：一句话点出**关键矛盾** —— 哪一级在衰竭、哪两级不一致、或者什么还没给信号。'
+  + '不要写「日线向下、30分钟向下」这种流水账。',
+  '  2. 该做什么：一个动作 + 到底在等什么。**不要写「注意风险」「谨慎操作」这类空话。**',
+  '  3. 怕什么：一句话，什么情况会让这个判断作废。',
   '',
   '二、逐级一段（自上而下，一级一段，不要合并成一段）',
   '  每级固定四行，顺序不许换：',
@@ -66,9 +72,15 @@ const ANSWER_GUIDE = [
   + '再提上一段已画的线。**不要拿最后一条已画线当「当前这一段」** —— 画线通常滞后于行情，'
   + '日线最后一条画出来的线是向上、而价格早就跌破它的终点，这种情况很常见。',
   '  · 关键价位：中枢上下沿、当前段的起点与极值、上一段的起点（观察点用它），照抄数字。',
-  '  · 力度怎么说：本段 vs 参照段，只在本级内部比；未完成段必须说明还会累加。',
-  '  · 这一级的一句话结论，要带一个观察点：「能否跌破 X」（这一段向下时）'
-  + '或「能否收回 X」（这一段向上时）。动词跟着这一段自己的方向走。',
+  '  · 力度怎么说：本段 vs 参照段，只在本级内部比；未完成段必须说明还会累加。'
+  + '要讲清参照段是谁（<100% 是衰减、>100% 是还在加速），但段没走完时这只是当前进度。',
+  '  · **灵魂句**：这一级必须给一句**判断**，不是复述。'
+  + '不许写「当前段向下、力度减弱」这种把上面数字再念一遍的话 —— 要回答「所以呢」：'
+  + '这一级现在是强还是弱、在加速还是在衰竭、最要紧的矛盾是什么。'
+  + '例：「这是衰竭型下跌，不是在赶底」／「跌得比上一级更犹豫，随时会被带起来」。',
+  '  · 灵魂句后面再跟一个**力度观察点**：现在力度是参照段的百分之多少、到什么时候能定案。'
+  + '**不要把「能否收回 / 跌破某个价位」当作结束信号** —— 一段的结束由背驰（力度衰竭）'
+  + '确认，价位只说明前一段被完整走过，不代表这一段走完了。',
   '',
   '三、级别分工（一行一级，手机窄屏不要用表格）',
   '  只列这次实际有的级别，按下面的分工，不要按级别高低想当然'
@@ -78,16 +90,21 @@ const ANSWER_GUIDE = [
   '      - 它还在向下 ⇒ 等这一段走完、比力度，出背驰才买；',
   '      - 它已经转向上 ⇒ 不追高，等回调（交给下一级）找买点；',
   '      - 它在中枢里震荡 ⇒ 先等它选方向。',
-  '  · 第三级＝接力：必须写明**启用条件**（主操作级转向上之后，才等这里回调的背驰）；'
-  + '主操作级还没转向上时，这一级暂不启用。',
+  '  · **第三级＝双重职责（最容易写漏的一半）**：',
+  '      ① **判断主操作级是不是快走完了** —— 这一级出现力度衰竭/背驰，通常就是'
+  + '上一级那一段要结束的**第一信号**。主操作级还没转向时，这一条照样成立，是最早的预警。',
+  '      ② 主操作级确认转向之后，在这里找回调的买点。',
+  '    报告里**必须把①写出来**，只写「等回调的买点」等于漏了它一半的用处。'
+  + '还要把两级的联动点破，例：「5分钟 力度只有上一段的 30%，说明 30分钟 这一段已在收尾」。',
   '  · 最低一级＝精确入场：只用来把买点位置抠细，**不单独定方向**。',
   '  （只有两级时：最高一级＝大方向＋主操作，较低一级＝精确入场；'
   + '三级时第三级既是接力也是精确入场；只有一级时不写分工。）',
   '',
-  '四、操作计划',
-  '  1. 现在做什么（具体到动作：空仓等 / 持有不动 / 分批 / 减）。',
-  '  2. 什么情况下改主意：价位一条、哪一级的结构变化一条，分开写。',
-  '  3. 不要做什么：一句话。',
+  '四、操作计划（要能直接照做，不要给选择题）',
+  '  1. 现在做什么：一个动作（空仓等 / 持有不动 / 分批 / 减），'
+  + '并说清**等的是什么**（等 5分钟 出背驰，不是等某个价位）。',
+  '  2. 什么情况下改主意：两条，一条结构、一条价位，都写到具体数字。',
+  '  3. 不要做什么：一句话，点破最容易犯的那个错。',
   '',
   '五、交付形式：对话里三行 + 一份 HTML 文件',
   '  1. 先在对话里给**三行结论**（局面 / 该做什么 / 怕什么），一屏看完；再给 HTML。',
@@ -96,16 +113,27 @@ const ANSWER_GUIDE = [
   '  3. 手机优先：左右留白 14px、正文 15px、行高 1.65、最大宽 680px；不要横向滚动。',
   '  4. **每级都要画一张结构图**：用该级「图数据」给的坐标画 SVG —— 段折线、中枢矩形、'
   + '未完成段虚线。**不要画蜡烛 K 线**：材料里没有每根 K 线的 OHLC，画蜡烛必然是编的。',
-  '     坐标已经是 0-100 的最终值，直接 x/100×宽、y/100×高，**不要再自己换算价格**。模板照抄、只换坐标：',
-  '     <svg viewBox="0 0 100 100" preserveAspectRatio="none" style="width:100%;height:150px;background:#fafafa">',
-  '       <rect x="左" y="上" width="宽" height="高" fill="#fdf3e3" stroke="#b45309" stroke-width="0.4"/>',
-  '       <polyline points="x0,y0 x1,y1" fill="none" stroke="#14924b" stroke-width="0.9"/>',
+  '     坐标已经是最终值，直接填进 points / rect，**不要再自己换算价格或比例**。模板照抄、只换数字：',
+  '     <svg viewBox="0 0 220 100" style="width:100%;height:auto;display:block;background:#fafafa">',
+  '       <rect x="左" y="上" width="宽" height="高" fill="#fdf3e3" stroke="#b45309" stroke-width="1"/>',
+  '       <polyline points="x0,y0 x1,y1" fill="none" stroke="#14924b" stroke-width="1.6"/>',
   '     </svg>',
-  '     段颜色：U（向上）#d92b2b、D（向下）#14924b；未完成段一律 #b45309 且加 stroke-dasharray="2 1.5"',
+  '     ★ 三件事必须照做，否则比例会失真：',
+  '       · viewBox 用「图数据」里给的那串（`0 0 220 100`），**不要改成 0 0 100 100**；',
+  '       · 只写 `width:100%;height:auto`，**不要设固定高度**（如 height:150px）；',
+  '       · **不要加 preserveAspectRatio="none"** —— 加了会把横向拉宽、把陡的走势画成缓的。',
+  '     段颜色：U（向上）#d92b2b、D（向下）#14924b；未完成段一律 #b45309 且加 stroke-dasharray="3 2"',
   '     （虚线本身就表示「还没走完」，所以不必再用颜色区分方向）。',
-  '     图形会被拉伸（preserveAspectRatio="none"），线宽加 vector-effect="non-scaling-stroke" 保持均匀。',
   '     **图下面必须标一行纵向价格范围**（用「图数据」里 y=0 与 y=100 那两个价），'
   + '否则 1 分钟那种 0.481~0.486 的小尺度图会被误读成暴跌。',
+  '     横轴是**按段等距**的（每段一样宽，不是真实时间）—— 不要画时间刻度，'
+  + '也不要按时间比例去理解图上的斜率。',
+  '     中枢矩形标注了「已加高到可视」的，说明真实区间比画出来的更窄，文字里要写真实值。',
+  '     **端点标签**：图数据里给了每个转折点的时间和价格（x/y/anchor 都算好了），'
+  + '每个写一条 `<text>`，位置照抄，不要自己再算：',
+  '       <text x="44" y="95.9" text-anchor="middle" font-size="4.5" fill="#666" '
+  + 'stroke="#fff" stroke-width="1.4" paint-order="stroke">07-30 · 0.500</text>',
+  '     （白色描边 + paint-order="stroke" 是给文字垫白底，否则折线会从字中间穿过去）',
   '  5. **不要画 K 线图或别的示意图**：除了上面这张结构图，不要再自创图形；'
   + '不要画成交量、不要画均线、不要画箭头预测。',
   '  6. HTML 结构照这个顺序，不要自创：',
@@ -121,11 +149,15 @@ const ANSWER_GUIDE = [
   '  · 数字照抄，不要改量级、不要四舍五入改写。',
   '  · 级别一律写「日线 / 30分钟 / 5分钟 / 1分钟」，不写「次级别 / 本级别 / 高级别」。',
   '  · 先说结论再说依据，不要复述上面已经给过的原文。',
+  '  · 不写流水账：不要「日线向下、30分钟向下、5分钟向下」这样把方向念一遍，'
+  + '要说清这几级**分别意味着什么**、合起来是什么局面。',
   '',
   '七、内容红线（违反即错）',
   '  · 只讲作用域内那一段，不要引全图统计（「全图共 N 个中枢」这类不要写）。',
   '  · 力度强弱只在本级内部成立，**不许跨级比大小**。',
   '  · 背驰只能用给出的力度数字判断，不许自己另算、不许用价格幅度冒充力度。',
+  '  · 判断一段是否结束，看力度是否衰竭（背驰），**不是**看能否收回或跌破某个价位；'
+  + '也不要把「跌破前一段起点」当成一段走完。',
   '  · 未完成段的力度比例只是当前进度，不能当定案。',
   '  · 图上没有买卖点标记 ≠ 不成立，只能写「按当前画线还没成立」。',
   '  · 提到买卖点必须带级别（「5分钟三卖」「1分钟三买」），'
@@ -284,19 +316,23 @@ export function tailSegment(bars, lastSeg, seqNo) {
 }
 
 /**
- * 把一级的结构压成 0-100 画图坐标（y 向下，SVG 习惯）。
+ * 把一级的结构压成画图坐标（y 向下，SVG 习惯）。
  *
  * 为什么要它：手机上看一大段文字很难对应到底长什么样。但**不能画蜡烛** ——
  * 材料里没有每根 K 线的 OHLC，画出来必然是编的。能画的只有结构骨架：
- * 段折线、中枢矩形、未完成段、买卖点。这些坐标由上面已有的真实端点算出，不是猜的。
+ * 段折线、中枢矩形、未完成段。这些坐标由上面已有的真实端点算出，不是猜的。
  *
- * 归一化：横轴按时间线性拉伸，纵轴按价格线性拉伸；模型拿到的就是最终值，
- * 只做 x/100*宽、y/100*高，不要再自己换算价格 —— 那一步最容易错。
+ * ★比例：x 的输出范围是 `100 × aspect`、y 是 `100`，配合 `viewBox="0 0 220 100"`
+ * 与 `width:100%; height:auto`（**不设固定高度、不用 preserveAspectRatio="none"**），
+ * 让横纵每个单位的像素长度相等 —— 否则横向被拉伸，陡的走势会画成缓的。
+ * 早先用 `viewBox 0 0 100 100` + 固定高 148px，横向被拉宽 2.3 倍，走势全被压平了。
  */
-export function chartData(segs, tail, zsList, maxSegs = 12, maxZs = 2) {
+export function chartData(segs, tail, zsList, period, maxSegs = 12, maxZs = 2, aspect = 2.2) {
   const all = Array.isArray(segs) ? segs : [];
   const use = all.length > maxSegs ? all.slice(-maxSegs) : all;
   const clipped = all.length > use.length;
+  const stretch = Number.isFinite(aspect) && aspect > 0 ? aspect : 2.2;
+  const X_MAX = 100 * stretch;
   const pts = [];
   const push = (t, p) => {
     if (t != null && Number.isFinite(p)) pts.push([t, p]);
@@ -319,46 +355,204 @@ export function chartData(segs, tail, zsList, maxSegs = 12, maxZs = 2) {
   }
   if (!pts.length) return null;
 
-  const ts = pts.map((q) => q[0]);
   const ps = pts.map((q) => q[1]);
-  const tMin = Math.min(...ts), tMax = Math.max(...ts);
   const pMin = Math.min(...ps), pMax = Math.max(...ps);
-  const sx = (t) => (tMax > tMin ? ((t - tMin) / (tMax - tMin)) * 100 : 50);
   const sy = (p) => (pMax > pMin ? ((pMax - p) / (pMax - pMin)) * 100 : 50);
   const r1 = (v) => (Math.round(v * 10) / 10).toFixed(1);
 
-  const segLines = use.map((s) => ({
-    dir: s.direction,
-    x0: sx(toSec(s.start?.time)), y0: sy(s.start?.price),
-    x1: sx(toSec(s.end?.time)), y1: sy(s.end?.price),
-  })).filter((l) => Number.isFinite(l.x0) && Number.isFinite(l.x1));
+  // ★横轴按**段序号等距**，不按真实时间。
+  // 段的时间跨度能差十几倍（5分钟图里有一段跨了 30 小时、相邻一段只有 20 分钟），
+  // 按真实时间画就成了「一条长斜线 + 两根短线」：第三段吃掉 84% 宽度，
+  // 前两段挤在左上角，未完成段只剩 0.3 宽根本看不见。等距之后每段一样宽，
+  // 结构节奏才和眼睛在软件上看到的一致。代价是时间轴不再线性，必须在图下写明。
+  const nSlots = use.length + (tail ? 1 : 0);
+  const step = X_MAX / Math.max(nSlots, 1);
 
+  // 中枢的时间要落回「段序号」坐标系：先定位它在哪一段里，再按段内时间比例插值。
+  const xOfTime = (t) => {
+    if (t == null) return 0;
+    for (let i = 0; i < use.length; i++) {
+      const t0 = toSec(use[i].start?.time);
+      const t1 = toSec(use[i].end?.time);
+      if (t0 == null || t1 == null || t1 <= t0) continue;
+      if (t >= t0 && t <= t1) return i * step + ((t - t0) / (t1 - t0)) * step;
+    }
+    if (tail && t >= tail.t0) {
+      const span = tail.t1 - tail.t0;
+      return use.length * step + (span > 0 ? ((t - tail.t0) / span) * step : step);
+    }
+    const firstT = toSec(use[0] && use[0].start && use[0].start.time);
+    return (firstT != null && t < firstT) ? 0 : X_MAX;
+  };
+
+  const segLines = use.map((s, i) => ({
+    dir: s.direction,
+    x0: i * step, y0: sy(s.start?.price),
+    x1: (i + 1) * step, y1: sy(s.end?.price),
+  })).filter((l) => Number.isFinite(l.x0) && Number.isFinite(l.y0)
+    && Number.isFinite(l.x1) && Number.isFinite(l.y1));
+
+  // 带上时间与价格，供 buildLabels 打端点标签（只有 x/y 是不够的）
   const tailLine = tail
-    ? { dir: tail.direction, x0: sx(tail.t0), y0: sy(tail.p0), x1: sx(tail.t1), y1: sy(tail.p1) }
+    ? {
+      dir: tail.direction,
+      x0: use.length * step, y0: sy(tail.p0),
+      x1: (use.length + 1) * step, y1: sy(tail.p1),
+      t0: tail.t0, p0: tail.p0, t1: tail.t1, p1: tail.p1,
+    }
     : null;
 
+  // 中枢矩形给一个最小可视高度：0.499~0.507 这种窄中枢按真实比例画只有 3px 高，
+  // 图上会变成一条线、看不出「价格在这个区间里盘过」。高度仍以文字给出真实值。
+  const MIN_ZS_H = 2.5;
   const zsRects = zss.map((z) => {
     const lo = Number.isFinite(z.low) ? z.low : null;
     const hi = Number.isFinite(z.high) ? z.high : null;
     const zt0 = toSec(z.startTime);
     const zt1 = toSec(z.endTime);
     if (lo == null || hi == null || zt0 == null || zt1 == null) return null;
-    const x0 = sx(zt0), x1 = sx(zt1);
+    const xa = xOfTime(zt0), xb = xOfTime(zt1);
     const ya = sy(hi), yb = sy(lo);
-    return { x: Math.min(x0, x1), y: Math.min(ya, yb), w: Math.abs(x1 - x0), h: Math.abs(yb - ya) };
+    let top = Math.min(ya, yb);
+    let h = Math.abs(yb - ya);
+    const bumped = h < MIN_ZS_H;
+    if (bumped) { top -= (MIN_ZS_H - h) / 2; h = MIN_ZS_H; }
+    return {
+      x: Math.min(xa, xb), y: Math.max(0, top), w: Math.abs(xb - xa), h, bumped,
+    };
   }).filter(Boolean);
 
   return {
     clipped, segLines, tailLine, zsRects,
-    pMin, pMax,
+    pMin, pMax, xMax: X_MAX,
+    viewBox: `0 0 ${Math.round(X_MAX)} 100`,
+    labels: buildLabels(use, segLines, tailLine, period, r1),
     // 给模型直接用的字符串（它只需照抄，不必换算）
     segStr: segLines.map((l) => `${l.dir === 'up' ? 'U' : 'D'} ${r1(l.x0)},${r1(l.y0)}>${r1(l.x1)},${r1(l.y1)}`).join(' ｜ '),
     tailStr: tailLine
       ? `${tailLine.dir === 'up' ? 'U' : 'D'} ${r1(tailLine.x0)},${r1(tailLine.y0)}>${r1(tailLine.x1)},${r1(tailLine.y1)}`
       : '',
-    zsStr: zsRects.map((z) => `x${r1(z.x)}~${r1(z.x + z.w)} y${r1(z.y)}~${r1(z.y + z.h)}`).join(' ｜ '),
-    priceStr: `y=0 → ${fixed(pMax, 3)}，y=100 → ${fixed(pMin, 3)}`,
+    zsStr: zsRects.map((z) => `x${r1(z.x)}~${r1(z.x + z.w)} y${r1(z.y)}~${r1(z.y + z.h)}`
+      + (z.bumped ? '（已加高到可视）' : '')).join(' ｜ '),
+    priceStr: `y=0 → ${fixed(pMax, 3)}，y=100 → ${fixed(pMin, 3)}；横轴按段等距（不是真实时间）`,
   };
+}
+
+/**
+ * 端点标签：每个转折点标「时间 · 价格」。
+ *
+ * 位置必须由代码算好再交给模型 —— 让模型自己摆一定会压线、出界、互相重叠。
+ * 规则：
+ *   · 局部高点标在点的**上方**（上方是空白），局部低点标在**下方**，其余交替上下错开；
+ *   · 贴近上下边界时强行翻到另一侧，保证 y 落在 [6, 96]；
+ *   · 首尾用 start/end 锚点，避免文字冲出画布；
+ *   · 段数超过 6 时只标「首、尾、最高、最低」四个，否则一定糊成一团。
+ */
+function buildLabels(use, segLines, tailLine, period, r1) {
+  const pts = [];
+  segLines.forEach((l, i) => {
+    const s = use[i];
+    pts.push({ x: l.x0, y: l.y0, t: toSec(s.start?.time), p: s.start?.price });
+  });
+  const lastLine = segLines.length ? segLines[segLines.length - 1] : null;
+  const lastUse = use.length ? use[use.length - 1] : null;
+  if (tailLine) {
+    pts.push({ x: tailLine.x0, y: tailLine.y0, t: tailLine.t0, p: tailLine.p0 });
+    pts.push({ x: tailLine.x1, y: tailLine.y1, t: tailLine.t1, p: tailLine.p1 });
+  } else if (lastLine && lastUse) {
+    pts.push({ x: lastLine.x1, y: lastLine.y1, t: toSec(lastUse.end?.time), p: lastUse.end?.price });
+  }
+  const valid = pts.filter((q) => Number.isFinite(q.x) && Number.isFinite(q.y)
+    && Number.isFinite(q.p) && q.t != null);
+  if (!valid.length) return [];
+
+  let keep = valid.map((_, i) => i);
+  if (valid.length > 7) {
+    // 太多就只留首、尾、最高、最低
+    let hi = 0, lo = 0;
+    valid.forEach((q, i) => {
+      if (q.p > valid[hi].p) hi = i;
+      if (q.p < valid[lo].p) lo = i;
+    });
+    keep = [...new Set([0, valid.length - 1, hi, lo])].sort((a, b) => a - b);
+  }
+
+  const daily = DAILY_PERIODS.has(period);
+  const stamp = (t) => {
+    const d = new Date(t * 1000);
+    const md = `${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+    return daily ? md : `${md} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  };
+
+  return keep.map((i, k) => {
+    const q = valid[i];
+    const prev = i > 0 ? valid[i - 1] : null;
+    const next = i < valid.length - 1 ? valid[i + 1] : null;
+    const localHigh = (!prev || q.y <= prev.y) && (!next || q.y <= next.y);
+    const localLow = (!prev || q.y >= prev.y) && (!next || q.y >= next.y);
+    let up = localHigh ? true : (localLow ? false : (k % 2 === 0));
+    if (up && q.y - 3 < 6) up = false;
+    if (!up && q.y + 9 > 96) up = true;
+    const y = up ? q.y - 3 : q.y + 9;
+    const anchor = i === 0 ? 'start' : (i === valid.length - 1 ? 'end' : 'middle');
+    return {
+      x: +r1(q.x), y: +r1(Math.max(6, Math.min(96, y))),
+      anchor,
+      text: `${stamp(q.t)} · ${fixed(q.p, 3)}`,
+    };
+  });
+}
+
+/**
+ * 挑「参照段」—— 与正在走的这一段比力度的对象。缠论口径，两条：
+ *   ① 有中枢 → 比**进入中枢的那一段**（判断离开中枢这一波是否背驰）；
+ *   ② 没有中枢 → 比**上一段同向走势**（隔一段的那个同向段）。
+ *
+ * 不能拿「上一段」直接比：上一段通常方向相反，跌段比涨段得出的倍数没有意义
+ * （日线曾算出「2714.4 比 388.1 = 699%」，比的是上涨段的力度，纯属胡说）。
+ *
+ * @param allSegs 该级全量已画段（未过滤作用域）
+ * @param visSegs 作用域内可见段（用于标注参照段是否在图里）
+ * @param zss     作用域内中枢
+ * @param curDir  正在走的这一段的方向
+ */
+function pickRefSeg(allSegs, visSegs, zss, curDir) {
+  const sorted = [...(allSegs || [])].sort(
+    (a, b) => (toSec(a.end?.time) ?? 0) - (toSec(b.end?.time) ?? 0),
+  );
+  const idxOf = {};
+  sorted.forEach((s, i) => { idxOf[s.id] = i; });
+  const visIds = new Set((visSegs || []).map((s) => s.id));
+
+  // ① 有中枢：进入段 = 中枢第一根构成段之前的那一段
+  //    ★但只有**方向相同**时才能拿来比（趋势背驰是「离开段比进入段」，两者必然同向）。
+  //    方向不同说明当前这一波不是离开中枢的趋势段（是回调/反弹），比出来的是两个不同
+  //    方向的力量，毫无意义 —— 589850 的 30 分钟曾出现「上涨 159.8 比下跌 118.9 = 134%」。
+  const zs = zss && zss.length ? zss[zss.length - 1] : null;
+  if (zs) {
+    const members = (zs.baseSegmentIds && zs.baseSegmentIds.length)
+      ? zs.baseSegmentIds.slice()
+      : (zs.segmentIds || []).slice();
+    let firstIdx = -1;
+    for (const id of members) {
+      const i = idxOf[id];
+      if (i != null && (firstIdx < 0 || i < firstIdx)) firstIdx = i;
+    }
+    if (firstIdx > 0) {
+      const ent = sorted[firstIdx - 1];
+      if (ent.direction === curDir) {
+        return { seg: ent, basis: '进入中枢的那一段', inScope: visIds.has(ent.id) };
+      }
+    }
+  }
+
+  // ② 没有中枢、中枢没有进入段、或进入段方向与当前段不同：退到「上一段同向走势」
+  for (let i = sorted.length - 1; i >= 0; i--) {
+    if (sorted[i].direction === curDir) {
+      return { seg: sorted[i], basis: '上一段同向走势', inScope: visIds.has(sorted[i].id) };
+    }
+  }
+  return null;
 }
 
 /**
@@ -376,11 +570,18 @@ function summarizeLevel(lv, higher, idx) {
   const cur = segs.length ? segs[segs.length - 1] : null;
   // 正在走的这一段：画线之后到最新行情的未完成段（没有延伸时为 null）
   const tail = cur ? tailSegment(bars, cur, segs.length + 1) : null;
+  // 参照段与比例在这里一并算好，供逐级正文与「各级结论要点」共用（两处口径必须一致）
+  const refInfo = tail ? pickRefSeg(allSegs, segs, zss, tail.direction) : null;
+  const refArea = refInfo && refInfo.seg ? refInfo.seg._strength?.macdArea : null;
+  const refUsable = !!(tail && tail.strength != null && tail.strengthBars >= 3
+    && tail.strength !== 0 && refInfo && Number.isFinite(refArea) && Math.abs(refArea) > 0);
+  const refPct = refUsable ? (Math.abs(tail.strength) / Math.abs(refArea)) * 100 : null;
 
   return {
     period, higher, idx,
     allSegs, allZs, segs, zss, bars, lastBarTime, cur, tail,
-    chart: chartData(segs, tail, zss),
+    refInfo, refPct,
+    chart: chartData(segs, tail, zss, period),
     hideBefore: lv.hideBefore ?? null,
     hideHow: lv.hideHow || null,
     // 用来锚定的那一段（上一级「最后一段」，由 computeHideBeforeDetail 一并返回）：
@@ -562,14 +763,20 @@ export function buildQuadBrief(ctx) {
         + (tail.direction === 'down' ? '**最低**点' : '**最高**点')
         + '，不是最新收盘（极值之后的反抽属于还没成形的下一段）。');
 
-      // 上一段（最后一条已画段）—— 观察点要用它的起点
+      // 上一段（最后一条已画段）只说明「画线画到哪儿」，不在这里给力度：
+      // 力度只跟参照段比（中枢进入段 / 上一段同向），两个数字并列会让人以为能互相比较。
       let prev = `  上一段（已画）：${lastDirCn} ${tf(lastSt)}（${fixed(lastP0, 3)}）`
         + `→ ${tf(lastEt)}（${fixed(lastP1, 3)}）`;
       if (lastP0) prev += `，幅度 ${signed((lastP1 - lastP0) / lastP0 * 100, 2)}%`;
-      if (Number.isFinite(lastArea)) prev += `，力度 ${fixed(Math.abs(lastArea), 1)}`;
       out.push(prev + '。');
 
-      // 力度：当前进度 vs 上一段（只能本级内部比）
+      // 参照段（有中枢比进入段，没中枢比上一段同向）—— 在 summarizeLevel 里已算好，这里只读
+      const ref = lv.refInfo;
+      const refArea = ref && ref.seg ? ref.seg._strength?.macdArea : null;
+      const pct = lv.refPct;
+      const hasRef = pct != null;
+
+      // 力度：当前进度 vs 参照段（只能本级内部比）
       if (tail.strength == null) {
         out.push(`  力度（当前进度）：不可比 —— 这一段只覆盖 ${tail.strengthBars} 根 K 线（不是 0）。`);
       } else if (tail.strengthBars < 3) {
@@ -578,41 +785,41 @@ export function buildQuadBrief(ctx) {
       } else if (tail.strength === 0) {
         out.push(`  力度（当前进度）暂时是 0：这一段里没有一根${movingDir === '向下' ? '下跌' : '上涨'}方向的 `
           + 'MACD 柱 —— 价格动了、动能还没跟上，不代表「力气小」。');
-      } else if (Number.isFinite(lastArea) && Math.abs(lastArea) > 0) {
-        const pct = Math.abs(tail.strength) / Math.abs(lastArea) * 100;
-        out.push(`  力度（当前进度）${fixed(Math.abs(tail.strength), 1)}，上一段 ${fixed(Math.abs(lastArea), 1)}`
-          + ` → 目前是 **${pct.toFixed(0)}%**。段还没走完，继续走还会累加，`
-          + '这个百分比只是当前进度，不是定案。');
+      } else if (hasRef) {
+        const rt0 = toSec(ref.seg.start?.time);
+        const rt1 = toSec(ref.seg.end?.time);
+        const rtf = timeFmt(lv.period);
+        let line = `  力度（当前进度）${fixed(Math.abs(tail.strength), 1)}，`
+          + `参照段＝${ref.basis}（${ref.seg.direction === 'down' ? '向下' : '向上'} `
+          + `${rtf(rt0)}（${fixed(ref.seg.start?.price, 3)}）→ `
+          + `${rtf(rt1)}（${fixed(ref.seg.end?.price, 3)}））`
+          + ` 力度 ${fixed(Math.abs(refArea), 1)} → 目前是 **${pct.toFixed(0)}%**`;
+        if (!ref.inScope) line += '［参照段在作用域之外，属已递归上去的历史段］';
+        out.push(line + '。');
       } else {
         out.push(`  力度（当前进度）${fixed(Math.abs(tail.strength), 1)}`
-          + '（上一段没有可比力度，暂不给比例）。');
+          + '（没有可比的参照段：作用域内没有中枢、也没有更早的同向段）。');
       }
 
-      // 观察点：动词跟着未完成段自己的方向走。三种情形要分开写，混用会自相矛盾：
-      //   ① 同向 → 这是上一段的延续，看能否回到延续起点
-      //   ② 反向且已越过上一段起点 → 不能再问「能否跌破」，改问能否收回／守住
-      //   ③ 反向但还没越过 → 才能问「能否跌破／收回」
-      const trendCn = cur.direction === 'up' ? '上涨' : (cur.direction === 'down' ? '下跌' : '横向');
-      const sameDir = tail.direction === cur.direction;
-      const crossed = tail.direction === 'down' ? tail.p1 < lastP0 : tail.p1 > lastP0;
-      if (sameDir) {
-        out.push(`  观察点：这一段是上一段${trendCn}的延续。能否回到 `
-          + `**${fixed(tail.p0, 3)}**（这段延续的起点）附近 —— 回到这里，这一段就走完了，等下一段再说。`);
-      } else if (crossed) {
-        if (tail.direction === 'down') {
-          out.push(`  观察点：**已经跌破**上一段${trendCn}的起点 ${fixed(lastP0, 3)}`
-            + `（现在 ${fixed(tail.p1, 3)}）。接下来看能否收回 ${fixed(lastP0, 3)} 之上 —— `
-            + '收不回去，就说明这一段下跌还没结束。');
+      // 观察点：判断这一段是否结束，看的是**力度是否衰竭**，不是看能否收回某个价位。
+      // 价位只说明「前一段走到哪里被完整走过」，不构成结束信号 —— 缠论里结束由背驰确认。
+      // 注意要和上面力度行用同一套保护：K 线不足 3 根、或同向柱为 0 时，力度根本不参与比较。
+      const usable = tail.strength != null && tail.strengthBars >= 3 && tail.strength !== 0;
+      if (usable && hasRef && pct != null) {
+        if (pct < 100) {
+          out.push(`  观察点：这一段现在的力度是参照段的 ${pct.toFixed(0)}%，**已经小于它**。`
+            + '若走完时仍小于参照段，就是力度衰竭（背驰），这一段才算结束；'
+            + '现在还在走，继续走还会累加，要等它走完（出现反向段）再比一次才能定案。');
         } else {
-          out.push(`  观察点：**已经升破**上一段${trendCn}的起点 ${fixed(lastP0, 3)}`
-            + `（现在 ${fixed(tail.p1, 3)}）。接下来看能否守住 ${fixed(lastP0, 3)} 之上 —— `
-            + `跌回 ${fixed(lastP0, 3)} 之下，就说明这一段上涨到头了。`);
+          out.push(`  观察点：这一段现在的力度已经是参照段的 ${pct.toFixed(0)}%，**还在放大**，`
+            + '没有衰竭迹象。要等它走完再比一次，力度降下来才算背驰。');
         }
+      } else if (!usable) {
+        out.push(`  观察点：${(tail.strength == null || tail.strengthBars < 3)
+          ? '这一段 K 线太少、力度不参与比较'
+          : '这一段暂时没有同向 MACD 柱、力度还没长出来'}，现在比不了强弱 —— 等它走完再比。`);
       } else {
-        const verb = tail.direction === 'down' ? '跌破' : '收回';
-        const fail = tail.direction === 'down' ? '跌不破' : '收不回去';
-        out.push(`  观察点：能否${verb} **${fixed(lastP0, 3)}**（上一段${trendCn}的起点）。`
-          + `${fail}，就仍是同一段${trendCn}的延续。`);
+        out.push('  观察点：没有可比的参照段，只能等它走完，再与同向的上一段比力度，看是否衰竭。');
       }
     } else {
       // 没有延伸：最后一条已画段的终点就在最新价上
@@ -677,13 +884,17 @@ export function buildQuadBrief(ctx) {
     // 图数据：只给结构骨架坐标，模型照抄即可画 SVG（不必换算价格）
     const ch = lv.chart;
     if (ch) {
-      out.push('  图数据（画图用，0-100 坐标，y 向下；x_px=x/100*宽，y_px=y/100*高）：');
+      out.push(`  图数据（画图用，viewBox="${ch.viewBox}"，y 向下；坐标直接填，不要再换算）：`);
       out.push(`    ${ch.priceStr}`);
       if (ch.segStr) {
         out.push(`    已画段：${ch.segStr}` + (ch.clipped ? '（只列了最近的若干段）' : ''));
       }
       if (ch.tailStr) out.push(`    未完成段（虚线）：${ch.tailStr}`);
       if (ch.zsStr) out.push(`    中枢矩形：${ch.zsStr}`);
+      if (ch.labels && ch.labels.length) {
+        out.push('    端点标签（每个转折点的时间和价格，x/y 与 anchor 已算好，直接照抄进 <text>）：');
+        out.push('      ' + ch.labels.map((lb) => `(${lb.x},${lb.y}) anchor=${lb.anchor} "${lb.text}"`).join(' ｜ '));
+      }
     }
   }
 
@@ -766,8 +977,10 @@ export function buildQuadBrief(ctx) {
           parts.push('力度暂不可比');
         } else if (lv.tail.strength === 0) {
           parts.push('力度暂为0');
+        } else if (lv.refPct != null) {
+          parts.push(`力度${fixed(Math.abs(lv.tail.strength), 1)}（参照段 ${lv.refPct.toFixed(0)}%）`);
         } else {
-          parts.push(`力度${fixed(Math.abs(lv.tail.strength), 1)}（进度）`);
+          parts.push(`力度${fixed(Math.abs(lv.tail.strength), 1)}`);
         }
       } else if (lv.cur._strengthIndicator) {
         parts.push(`力度${lv.cur._strengthIndicator}`);
@@ -786,6 +999,8 @@ export function buildQuadBrief(ctx) {
     + '不是最后一条已画线；未完成段还没成段，不计入段数与中枢判定。',
     '作用域＝被紧邻上一级最后一段截断之后仍然显示的段，也就是你手机上看得见的那部分；不是全图统计。',
     '各级力度只能在本级内部比（本段 vs 参照段），**不能跨级比大小** —— 每级用的 K 线周期不同，量纲也不同。',
+    '参照段的取法固定：**有中枢就比进入中枢的那一段，没有中枢就比上一段同向走势**；'
+    + '绝不会拿反向段来比（跌段比涨段的倍数没有意义）。',
     '未完成段的力度是动态的：段没走完，继续走还会累加，走完才定案。',
     '15 分钟 / 60 分钟是辅助周期（画线复刻 5 分钟 / 30 分钟），不参与联立。',
     '图上没有买卖点标记 ≠ 不成立，只是按当前画线还没长出来。',
