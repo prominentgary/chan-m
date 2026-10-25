@@ -843,8 +843,7 @@ body.search-header-fixed .search-edge-guard { display: block; }
 .preset-dot { margin: 0 4px; color: var(--wx-muted); }
 .sec-right { display: flex; align-items: center; gap: 10px; }
 
-/* 证券级「联立」按钮：这只票的多级别结构，不是单张图。
-   与周期行的 AI 胶囊同形（描边胶囊），靠文案区分：AI=单图，联立=跨级。 */
+/* 证券级「联立」按钮：这只票的多级别结构，不是单张图。手机端唯一的 AI 入口。 */
 .sec-quad-btn {
   flex: 0 0 auto;
   padding: 2px 9px;
@@ -1528,19 +1527,8 @@ body.search-header-fixed .search-edge-guard { display: block; }
 }
 
 
-/* ===== 手机端「问 AI」：周期标题右侧入口 + 结构简报弹层 ===== */
-/* 标题改为两端对齐，让入口贴在右边；label 仍是纯文本节点，不影响既有逻辑 */
-.period-title {
-  display: flex; align-items: center; justify-content: space-between; gap: 8px;
-}
-.period-ai-btn {
-  flex: none;
-  padding: 3px 10px; border-radius: 999px;
-  border: 1px solid var(--wx-accent);
-  background: transparent; color: var(--wx-accent);
-  font-size: 12px; font-weight: 600; line-height: 1.6;
-}
-.period-ai-btn:active { background: rgba(240, 180, 41, .14); }
+/* ===== 手机端「问 AI」：结构简报弹层 ===== */
+/* 单周期入口（周期标题右侧的「问 AI」）已去掉，只留证券级「联立」；标题回到纯文本。 */
 
 .brief-sheet { height: 88vh; max-height: 88vh; }
 .brief-body {
@@ -1569,27 +1557,9 @@ body.search-header-fixed .search-edge-guard { display: block; }
 .brief-footer { display: flex; gap: 10px; }
 .brief-footer button { flex: 1; }
 
-/* ===== 周期行右端：「问 AI」胶囊（与展开箭头同组） ===== */
+/* ===== 周期行右端：展开箭头 ===== */
 .period-row-tail { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
-.row-ai-btn {
-  flex: 0 0 auto;
-  padding: 2px 9px;
-  border-radius: 999px;
-  border: 1px solid var(--wx-accent);
-  background: transparent;
-  color: var(--wx-accent);
-  font-size: 11px; font-weight: 700; line-height: 1.7;
-  letter-spacing: .5px;
-}
-.row-ai-btn:active { background: rgba(240, 180, 41, .16); }
 
-/* 合并行半区里的迷你胶囊：只占 22px 左右，给「N 段 · M 中枢」留出位置 */
-.row-ai-btn--mini {
-  padding: 1px 6px;
-  font-size: 10px;
-  letter-spacing: 0;
-  border-width: 1px;
-}
-/* 合并行半区可收缩，避免胶囊把计数文字顶出去 */
+/* 合并行两个半区横向只剩百来像素，计数文字必须可收缩，否则被压成两行 */
 .period-half .period-row-info { min-width: 0; }
 .period-half .period-row-meta { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

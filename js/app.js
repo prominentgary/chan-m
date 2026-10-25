@@ -2,8 +2,7 @@
 // 注意：所有 import 路径均带版本号，每次发布新版本时请同步修改 html/js/sw 中的版本号
 import { fetchBars, fetchRealtimeMulti, formatTime, formatPrice, isETF, resolveCode } from './fetcher.js?v=20260725i';
 import { computeMACD } from './macd.js?v=20260725f';
-import { buildBrief } from './ai_brief.js?v=20261018a';
-import { buildQuadBrief, pickQuadLevels } from './quad_brief.js?v=20261024a';
+import { buildQuadBrief, pickQuadLevels } from './quad_brief.js?v=20261025a';
 import { computeHideBefore, computeHideBeforeDetail, visibleSegsOf, visibleZsOf, getHigherPeriod } from './hide.js?v=20261024a';
 import { segmentStrength, detectStrengthIndicators, detectOneBuySell, detectTwoAndThreeBuySell, computeZhongshuStrength, detectZhongshu, computeZhongshuExtend, computeRecursiveSegment, zhongshuRangeLowHigh } from './algo.js?v=20261015b';
 import { renderSegments } from './table.js?v=20260904b';
@@ -764,12 +763,8 @@ function periodRowInfoHtml(sec, p) {
       </div>`;
 }
 
-// 合并行两个半区并排，横向只剩百来像素：胶囊用 mini 尺寸，
-// 否则会把「N 段 · M 中枢」挤出去或压成两行。
-function aiChipHtml(p, mini = false) {
-  return `<button class="row-ai-btn${mini ? ' row-ai-btn--mini' : ''}" type="button" data-ai-period="${p}"`
-    + ` aria-label="用 AI 分析${periodLabel(p)}">AI</button>`;
-}
+// 单周期的 AI 胶囊已去掉：「问 AI」只保留证券级一个「联立」入口（讲这只票的多级别结构），
+// 不再为每个周期各做一个入口 —— 那等于让用户自己挑一张图，丢掉跨级关系。
 
 // 普通周期行：整行一个周期
 function periodRowHtml(sec, p) {
@@ -777,7 +772,7 @@ function periodRowHtml(sec, p) {
     <div class="period-row" data-period="${p}">
       <div class="period-row-head">
         ${periodRowInfoHtml(sec, p)}
-        <span class="period-row-tail">${aiChipHtml(p)}<span class="sec-arrow">▸</span></span>
+        <span class="period-row-tail"><span class="sec-arrow">▸</span></span>
       </div>
       <div class="period-row-kline">
         <canvas class="period-kline-main"></canvas>
@@ -794,11 +789,11 @@ function dualPeriodRowHtml(sec, main, aux) {
       <div class="period-row-head period-row-head--dual">
         <div class="period-half" data-period="${main}">
           ${periodRowInfoHtml(sec, main)}
-          <span class="period-row-tail">${aiChipHtml(main, true)}<span class="sec-arrow">▸</span></span>
+          <span class="period-row-tail"><span class="sec-arrow">▸</span></span>
         </div>
         <div class="period-half" data-period="${aux}">
           ${periodRowInfoHtml(sec, aux)}
-          <span class="period-row-tail">${aiChipHtml(aux, true)}<span class="sec-arrow">▸</span></span>
+          <span class="period-row-tail"><span class="sec-arrow">▸</span></span>
         </div>
       </div>
       <div class="period-row-kline">
@@ -858,9 +853,9 @@ function renderPeriodList(code, { keepHeader = false } = {}) {
     `;
     const card = box.querySelector('.sec-card');
     attachSecIntradayLongPress(card, code);
-    // 证券级「联立」入口：讲这只票的多级别结构，不是某一张图。
-    // pointerdown 必须拦下（与周期行「问 AI」胶囊同理）：卡片上绑着 480ms 长按
-    // 展开分时图，不拦的话按住按钮稍久会先展开分时，松手又弹出联立，两个动作都发生。
+    // 证券级「联立」入口：讲这只票的多级别结构，不是某一张图。手机端只此一个 AI 入口。
+    // pointerdown 必须拦下：卡片上绑着 480ms 长按展开分时图，
+    // 不拦的话按住按钮稍久会先展开分时，松手又弹出联立，两个动作都发生。
     const quadBtn = card.querySelector('.sec-quad-btn');
     if (quadBtn) {
       ['pointerdown', 'pointermove', 'pointerup', 'pointercancel'].forEach((ev) => {
@@ -901,15 +896,6 @@ function renderPeriodList(code, { keepHeader = false } = {}) {
     });
     attachPeriodRowLongPress(row, code, p0);
     attachPeriodRowSegNavSwipe(row, code, p0);
-    // 行内「问 AI」：pointerdown 必须拦下，否则按住稍久就触发行级长按（pushView('detail')），
-    // 用户点的是按钮却跳进了另一个页面；click 也要拦，不然还会顺带开合行内 K 线。
-    row.querySelectorAll('.row-ai-btn').forEach((btn) => {
-      btn.addEventListener('pointerdown', (e) => e.stopPropagation());
-      btn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        openBriefSheet(code, btn.dataset.aiPeriod || rowActivePeriod(row));
-      });
-    });
     // 保持展开状态：preset 切换/数据刷新重建列表后自动恢复已展开的行内 K 线
     const openP = periodsOfRow.find((p) => state._periodExpanded?.has(p));
     if (openP) {
@@ -2034,18 +2020,6 @@ function renderSinglePeriodDetail(detail, code, g, hideBefore = null, animate = 
   if (g.error) label += ' · 加载失败';
   else if (!g.loaded) label += ' · 加载中…';
   header.textContent = label;
-  // 「问 AI」只在结构已算好时出现：加载中/失败时给一张只有「加载中」的简报等于给 AI 喂错话
-  if (g.loaded) {
-    const aiBtn = document.createElement('button');
-    aiBtn.type = 'button';
-    aiBtn.className = 'period-ai-btn';
-    aiBtn.textContent = '问 AI';
-    aiBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      openBriefSheet(code, g.period);
-    });
-    header.appendChild(aiBtn);
-  }
   if (g.error) {
     const retry = document.createElement('button');
     retry.className = 'mini retry-btn';
@@ -2069,9 +2043,9 @@ function renderSinglePeriodDetail(detail, code, g, hideBefore = null, animate = 
   if (animate) staggerEnter(detail, '.period-title, .plain-card, .zs-block, .empty');
 }
 
-// ========== 手机端「问 AI」：把当前这张图翻译成一段人话，复制去 WorkBuddy ==========
-// 只做三件事：取现成结果（algo.js 已算好的段/中枢/力度/买卖点）→ 交给 ai_brief.js 拼装 →
-// 简报弹层（单图简报与多级联立共用）：只负责展示与复制，不做任何判定。
+// ========== 手机端「问 AI」：把结构翻译成一段人话，复制去 WorkBuddy ==========
+// 只做两件事：取现成结果（algo.js 已算好的段/中枢/力度/买卖点）交给 quad_brief.js 拼装 →
+// 简报弹层：只负责展示与复制，不做任何判定。手机端只出「多级别联立」这一种简报。
 function showBriefSheet(brief, opts = {}) {
   const old = document.getElementById('brief-sheet');
   if (old) old.remove();
@@ -2136,7 +2110,8 @@ function showBriefSheet(brief, opts = {}) {
 }
 
 // 多级别联立简报：**一个证券一个入口**，把整条级别链打包成一段可复制的文本。
-// 与周期行 AI 胶囊的分工：那个讲「这一张图」，这个讲「这只票现在怎么走」。
+// 它是手机端唯一的 AI 入口 —— 单周期入口（周期行胶囊、详情页「问 AI」）已去掉，
+// 因为「自己挑一张图去问」天然丢掉跨级关系，而走势的方向恰恰在跨级里。
 //
 // 硬边界：
 //   1. 只读不判：段/中枢/力度/买卖点全部由 algo.js 算过，这里只做跨级编排与排版。
@@ -2211,78 +2186,9 @@ async function openQuadBriefSheet(code) {
 
   showBriefSheet(quad, {
     title: `问 AI · ${levels.length} 级联立`,
-    hint: '这是这只票的多级别联立结构（不是单张图）。点「复制全文」，打开 WorkBuddy 粘贴，'
-      + '再补一句你想问的（例如「现在能不能进」「这几级对得上吗」）。',
+    hint: '这是这只票的多级别联立结构（不是单张图）。点「复制全文」，打开 WorkBuddy 直接粘贴发送 —— '
+      + '文末已经带好要求：先给三行结论，再出一份手机能直接看的 HTML 报告；只想问个小问题也行。',
   });
-}
-
-// 展示 + 复制。这里**不做任何判定**，也不从 K 线重新数段，否则就和桌面 L1 变成两套口径。
-//
-// 入参只用 (code, period)：周期行与详情页两个入口都调它，数据自己取，
-// 不依赖「调用前是否进过详情页」（那会让另一个入口静默失效）。
-let _briefBusy = false;
-async function openBriefSheet(code, period) {
-  if (_briefBusy) return;
-  const sec = state.securities.find((s) => s.code === code);
-  if (!sec || !period) return;
-  // 辅助周期（15m/60m）的段是主周期（5m/30m）刻度：力度必须用主周期 K 线算，
-  // 用 15m 的 bars 去找 5m 的段端点会静默算偏。
-  const briefPeriod = AUX_TO_MAIN[period] || period;
-
-  _briefBusy = true;
-  let bars = [];
-  try {
-    bars = (await ensureDisplayBars(code, briefPeriod, false)) || [];
-  } catch (e) {
-    bars = [];
-  } finally {
-    _briefBusy = false;
-  }
-  if (!bars.length) { toast('K 线还没加载完，稍后再试'); return; }
-
-  const rt = state._rtPrices?.[code];
-  const presets = state._presets?.[code] || [];
-  const pIdx = state._currentPresetIdx?.[code] || 0;
-  const presetName = (presets.length > 1 && presets[pIdx])
-    ? (presets[pIdx].name || `方案${pIdx + 1}`)
-    : null;
-  // 中文里「15分 周期」这种空格很别扭，这里把单位词和周期名连起来写
-  const periodNote = (briefPeriod !== period)
-    ? `你正在看的是${periodLabel(period)}周期。它是辅助周期，画线沿用${periodLabel(briefPeriod)}周期的刻度，`
-      + `所以下面按${periodLabel(briefPeriod)}周期的口径描述段与中枢（段的时间点都是${periodLabel(briefPeriod)}周期 K 线的时刻）。`
-    : '';
-
-  let brief = null;
-  try {
-    // 深拷贝后再跑算法：周期行入口进来时，画布上的段还没被 computeStrengths 装饰过
-    // （行内 K 线不画买卖点、不显示力度）。直接用原对象会得到「力度不可比、零买卖点」
-    // 的假简报；而就地装饰又会把结果写回共享的画布对象，污染其它视图。
-    const segs = JSON.parse(JSON.stringify((sec.drawings?.[period] && sec.drawings[period].segments) || []));
-    const zss = JSON.parse(JSON.stringify((sec.drawings?.[period] && sec.drawings[period].zhongshus) || []));
-    if (segs.length) computeStrengths(bars, segs, zss);
-    brief = buildBrief({
-      code,
-      name: sec.name || rt?.name || code,
-      period: briefPeriod,
-      periodNote,
-      bars,
-      segments: segs,
-      zhongshus: zss,
-      quote: rt ? { price: rt.price, prevClose: rt.prevClose } : null,
-      a0Period: sec._a0Period || null,
-      // 方案名取自列表页同一来源（state._presets + 当前索引）。drawings[period] 上没有
-      // presetName 字段，从那里取会静默变成 null，简报就少了「看的是哪个方案」。
-      presetName,
-      // 图上做了「聚焦最近走势」过滤，只显示可见段；简报用全量段。
-      // 把可见段数传过去，让简报自己说明「图上只显示了几段」，否则两个数字会打架。
-      visibleSegCount: getVisibleSegsForPeriod(code, period).length,
-    });
-  } catch (err) {
-    toast('生成失败：' + ((err && err.message) || '未知错误'));
-    return;
-  }
-
-  showBriefSheet(brief);
 }
 
 // 复制纯文本：优先剪贴板 API；局域网 http（非 secure context）下退回 execCommand。
