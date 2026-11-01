@@ -1,8 +1,8 @@
 {
   "securities": [
     {
-      "code": "sh588700",
-      "name": "科创生物",
+      "code": "sz399006",
+      "name": "创业板指",
       "periods": [
         "1m",
         "5m",
@@ -16,10 +16,6 @@
         {
           "id": "default",
           "name": ""
-        },
-        {
-          "id": "preset_tco6oz2t",
-          "name": "中枢视角"
         }
       ]
     },
@@ -65,25 +61,6 @@
         },
         {
           "id": "preset_qjqejzbw",
-          "name": ""
-        }
-      ]
-    },
-    {
-      "code": "sz399006",
-      "name": "创业板指",
-      "periods": [
-        "1m",
-        "5m",
-        "15m",
-        "30m",
-        "60m",
-        "day"
-      ],
-      "a0Period": "1m",
-      "presets": [
-        {
-          "id": "default",
           "name": ""
         }
       ]
