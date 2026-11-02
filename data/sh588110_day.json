@@ -1,10 +1,10 @@
 {
   "code": "sh588110",
   "period": "day",
-  "exportedAt": 1793548940435,
+  "exportedAt": 1793636596416,
   "segments": [
     {
-      "id": "s_fpc2t5qz",
+      "id": "s_41y8tdbt",
       "kind": "segment",
       "period": "day",
       "direction": "down",
@@ -18,7 +18,7 @@
       }
     },
     {
-      "id": "s_f1ptnl3d",
+      "id": "s_w9erqlk2",
       "kind": "segment",
       "period": "day",
       "direction": "up",
@@ -28,35 +28,35 @@
       },
       "end": {
         "time": 1786982400,
-        "price": 0.683
+        "price": 0.6830000281333923
       }
     },
     {
-      "id": "s_6i2ihaa3",
+      "id": "s_9cix589b",
       "kind": "segment",
       "period": "day",
       "direction": "down",
       "start": {
         "time": 1786982400,
-        "price": 0.683
+        "price": 0.6830000281333923
       },
       "end": {
         "time": 1788451200,
-        "price": 0.591
+        "price": 0.5910000205039978
       }
     },
     {
-      "id": "s_ud4vl5ek",
+      "id": "s_5kizr6yt",
       "kind": "segment",
       "period": "day",
       "direction": "up",
       "start": {
         "time": 1788451200,
-        "price": 0.591
+        "price": 0.5910000205039978
       },
       "end": {
         "time": 1790006400,
-        "price": 0.672
+        "price": 0.671999990940094
       }
     }
   ],
@@ -65,9 +65,9 @@
       "id": "s_b2kaghki",
       "kind": "zhongshu",
       "segmentIds": [
-        "s_f1ptnl3d",
-        "s_6i2ihaa3",
-        "s_ud4vl5ek"
+        "s_w9erqlk2",
+        "s_9cix589b",
+        "s_5kizr6yt"
       ],
       "startTime": 1785340800,
       "endTime": 1790006400,
@@ -84,9 +84,9 @@
         }
       ],
       "baseSegmentIds": [
-        "s_f1ptnl3d",
-        "s_6i2ihaa3",
-        "s_ud4vl5ek"
+        "s_w9erqlk2",
+        "s_9cix589b",
+        "s_5kizr6yt"
       ]
     }
   ],
@@ -96,7 +96,7 @@
       "name": "",
       "segments": [
         {
-          "id": "s_fpc2t5qz",
+          "id": "s_41y8tdbt",
           "kind": "segment",
           "period": "day",
           "direction": "down",
@@ -110,7 +110,7 @@
           }
         },
         {
-          "id": "s_f1ptnl3d",
+          "id": "s_w9erqlk2",
           "kind": "segment",
           "period": "day",
           "direction": "up",
@@ -120,35 +120,35 @@
           },
           "end": {
             "time": 1786982400,
-            "price": 0.683
+            "price": 0.6830000281333923
           }
         },
         {
-          "id": "s_6i2ihaa3",
+          "id": "s_9cix589b",
           "kind": "segment",
           "period": "day",
           "direction": "down",
           "start": {
             "time": 1786982400,
-            "price": 0.683
+            "price": 0.6830000281333923
           },
           "end": {
             "time": 1788451200,
-            "price": 0.591
+            "price": 0.5910000205039978
           }
         },
         {
-          "id": "s_ud4vl5ek",
+          "id": "s_5kizr6yt",
           "kind": "segment",
           "period": "day",
           "direction": "up",
           "start": {
             "time": 1788451200,
-            "price": 0.591
+            "price": 0.5910000205039978
           },
           "end": {
             "time": 1790006400,
-            "price": 0.672
+            "price": 0.671999990940094
           }
         }
       ],
@@ -157,9 +157,9 @@
           "id": "s_b2kaghki",
           "kind": "zhongshu",
           "segmentIds": [
-            "s_f1ptnl3d",
-            "s_6i2ihaa3",
-            "s_ud4vl5ek"
+            "s_w9erqlk2",
+            "s_9cix589b",
+            "s_5kizr6yt"
           ],
           "startTime": 1785340800,
           "endTime": 1790006400,
@@ -176,9 +176,9 @@
             }
           ],
           "baseSegmentIds": [
-            "s_f1ptnl3d",
-            "s_6i2ihaa3",
-            "s_ud4vl5ek"
+            "s_w9erqlk2",
+            "s_9cix589b",
+            "s_5kizr6yt"
           ]
         }
       ]
@@ -6362,6 +6362,14 @@
       "low": 0.41100001335144043,
       "close": 0.41200000047683716,
       "volume": 119635736.0
+    },
+    {
+      "time": "2026-11-02",
+      "open": 0.41999998688697815,
+      "high": 0.42399999499320984,
+      "low": 0.4050000011920929,
+      "close": 0.41600000858306885,
+      "volume": 139996896.0
     }
   ]
 }

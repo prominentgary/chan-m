@@ -297,9 +297,11 @@ function drawMainCanvas(canvas, bars, segs, zhongshus, colors, period, digits) {
   const segList = Array.isArray(segs) ? segs : (segs ? [{ seg: segs, no: '' }] : []);
 
   let min = Infinity, max = -Infinity;
-  for (const b of bars) {
-    if (b.low < min) min = b.low;
-    if (b.high > max) max = b.high;
+  let hiIdx = 0, loIdx = 0;
+  for (let i = 0; i < bars.length; i++) {
+    const b = bars[i];
+    if (b.low < min) { min = b.low; loIdx = i; }
+    if (b.high > max) { max = b.high; hiIdx = i; }
   }
   const pad = (max - min) * 0.08 || 1;
   min -= pad; max += pad;
@@ -380,6 +382,46 @@ function drawMainCanvas(canvas, bars, segs, zhongshus, colors, period, digits) {
   const labelState = { vertices: new Set(), lastVertexRight: -Infinity };
   for (const { seg: s, no } of segList) {
     if (s?.start && s?.end) drawSegConnector(ctx, meta, s, colors, no, labelState);
+  }
+
+  // 最高价 / 最低价标签：标在极值 K 线旁边（与桌面版一致）。
+  // 优先放在 K 线上方（最高）/ 下方（最低）；空间不足时水平摆在 K 线一侧，避免压住 K 线。
+  const yHi = yOf(max);
+  const yLo = yOf(min);
+  function drawExtremeTag(idx, price, color, isHigh, forceSide) {
+    const text = (isHigh ? '最高 ' : '最低 ') + price.toFixed(digits);
+    ctx.save();
+    ctx.font = '11px sans-serif';
+    const tw = ctx.measureText(text).width;
+    const tagH = 15;
+    const cx = xOf(idx);
+    let bx;
+    let by;
+    if (!forceSide && isHigh && yHi - tagH - 4 >= 0) {
+      bx = cx - tw / 2;
+      by = yHi - tagH - 3;
+    } else if (!forceSide && !isHigh && yLo + tagH + 4 <= plotH) {
+      bx = cx - tw / 2;
+      by = yLo + 3;
+    } else {
+      // 空间不足 / 高低标签过近：水平摆在 K 线右侧，右侧放不下改左侧
+      by = Math.max(2, Math.min(plotH - tagH - 2, (isHigh ? yHi : yLo) - tagH / 2));
+      if (cx + 8 + tw + 6 <= padL + plotW) bx = cx + 8;
+      else bx = cx - tw - 8 - 6;
+    }
+    bx = Math.max(padL + 2, Math.min(padL + plotW - tw - 6, bx));
+    ctx.fillStyle = colors.card;
+    ctx.fillRect(bx - 3, by, tw + 6, tagH);
+    ctx.fillStyle = color;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, bx, by + tagH / 2 + 0.5);
+    ctx.restore();
+  }
+  if (max > min) {
+    const tooClose = Math.abs(yLo - yHi) < 20;
+    drawExtremeTag(hiIdx, max, colors.red, true, tooClose);
+    drawExtremeTag(loIdx, min, colors.green, false, tooClose);
   }
 
   return { ctx, w, h, n, min, max, plotW, plotH, padL, xOf, yOf, seg: segList.map((x) => x.seg), bars, colors, zhongshus };
