@@ -129,7 +129,8 @@ function drawSegConnector(ctx, meta, seg, colors, no, labelState) {
   if (x1 < 0 || x2 < 0) return;
   const y1 = yOf(seg.start.price);
   const y2 = yOf(seg.end.price);
-  const col = colors.mono ? colors.accent : (seg.direction === 'up' ? colors.red : colors.green);
+  const dir = seg.direction || (seg.end.price >= seg.start.price ? 'up' : 'down');
+  const col = colors.mono ? colors.accent : (dir === 'up' ? colors.red : colors.green);
   ctx.save();
   ctx.strokeStyle = col;
   ctx.lineWidth = 1.4;
@@ -149,6 +150,45 @@ function drawSegConnector(ctx, meta, seg, colors, no, labelState) {
     // 端点编号：起点 = no、终点 = no+1（相邻段共享端点，由 labelState 去重只画一次）
     drawEndpointNo(ctx, meta, x1, y1, no, col, labelState);
     drawEndpointNo(ctx, meta, x2, y2, no + 1, col, labelState);
+  }
+  // 盯盘段/追踪段：段中点加标记（线段太短时跳过，避免盖住端点与编号）
+  if ((seg._isWatch || seg._isTrack) && (Math.abs(x2 - x1) >= 22 || Math.abs(y2 - y1) >= 22)) {
+    drawMovingSegMark(ctx, meta, seg, (x1 + x2) / 2, (y1 + y2) / 2, col);
+  }
+  ctx.restore();
+}
+
+// 盯盘/追踪段标记：位置与样式对齐桌面版盯盘段的小眼睛——段中点垂直偏移 14px
+// （向上段在上方、向下段在下方），不压线段本身；纯线条无圆底，颜色随段色。
+function drawMovingSegMark(ctx, meta, seg, x, y, col) {
+  const isWatch = !!seg._isWatch;
+  const dir = seg.direction || (seg.end.price >= seg.start.price ? 'up' : 'down');
+  const plotH = meta.plotH || 0;
+  const cy = Math.max(10, Math.min((plotH || 1e9) - 10, y + (dir === 'up' ? -14 : 14)));
+  ctx.save();
+  ctx.setLineDash([]);
+  ctx.strokeStyle = col;
+  ctx.fillStyle = col;
+  ctx.lineWidth = 1.5;
+  if (isWatch) {
+    // 眼睛：椭圆外框 + 实心眼珠（桌面版同款）
+    ctx.beginPath();
+    ctx.ellipse(x, cy, 8, 5, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(x, cy, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    // 追踪：准星（中心圆环 + 四向短线），同样不压线
+    ctx.beginPath();
+    ctx.arc(x, cy, 2.8, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(x, cy - 5.4); ctx.lineTo(x, cy - 2.6);
+    ctx.moveTo(x, cy + 5.4); ctx.lineTo(x, cy + 2.6);
+    ctx.moveTo(x - 5.4, cy); ctx.lineTo(x - 2.6, cy);
+    ctx.moveTo(x + 5.4, cy); ctx.lineTo(x + 2.6, cy);
+    ctx.stroke();
   }
   ctx.restore();
 }

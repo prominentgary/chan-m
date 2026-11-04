@@ -3,10 +3,10 @@
 import { fetchBars, fetchRealtimeMulti, formatTime, formatPrice, isETF, resolveCode } from './fetcher.js?v=20260725i';
 import { computeMACD } from './macd.js?v=20260725f';
 import { buildQuadBrief, pickQuadLevels } from './quad_brief.js?v=20261025a';
-import { computeHideBefore, computeHideBeforeDetail, visibleSegsOf, visibleZsOf, getHigherPeriod } from './hide.js?v=20261024a';
+import { computeHideBefore, computeHideBeforeDetail, visibleSegsOf, visibleZsOf, getHigherPeriod } from './hide.js?v=20261104a';
 import { segmentStrength, detectStrengthIndicators, detectOneBuySell, detectTwoAndThreeBuySell, computeZhongshuStrength, detectZhongshu, computeZhongshuExtend, computeRecursiveSegment, zhongshuRangeLowHigh } from './algo.js?v=20261015b';
 import { renderSegments } from './table.js?v=20260904b';
-import { renderKlineChart, sliceSegmentBars, renderIntradayChart, repaintView } from './klinechart.js?v=20261102a';
+import { renderKlineChart, sliceSegmentBars, renderIntradayChart, repaintView } from './klinechart.js?v=20261104b';
 import { loadStaticData } from './sync.js?v=20260725g';
 import { openEditor } from './editor.js?v=20260830b';
 import { makeZhongshu } from './model.js?v=20260725f';
@@ -2254,6 +2254,30 @@ function refreshPeriodDetailWithoutFetch(code, period) {
   renderSinglePeriodDetail(detail, code, group, hideBefore, false);
 }
 
+// 某周期的段集合变化后（新增 / 删除 / 递归产物增删），同步「把它当上一级」的低级别视图。
+// 低级别图的 hideBefore 由上一级段集合算出（hide.js）：上一级段增删后若不重绘低级别，
+// 低级别会停在旧截断位置——删掉递归出的 5 分钟段后，1 分钟图被隐藏的段不会回来。
+function refreshLowerPeriodViews(code, period) {
+  const sec = state.securities.find((s) => s.code === code);
+  if (!sec) return;
+  const list = sec.periods || [];
+  for (const p of list) {
+    if (p === period) continue;
+    if (getHigherPeriod(p, list) !== period) continue;
+    // 详情页正展示该低级别：整页重绘（内部已含行内图同步）；否则只刷周期页的展开行
+    if (state.view === 'detail' && state.selectedCode === code && state.selectedPeriod === p) {
+      refreshPeriodDetailWithoutFetch(code, p);
+    } else {
+      refreshPeriodRowKlinesForPeriod(code, p);
+    }
+    // 段卡片 K 线（若正停在该周期）：visibleSegs 是打开时的快照，需随 hideBefore 重建
+    if (_klineView && _klineView.code === code && _klineView.period === p) {
+      _klineView.visibleSegs = getVisibleSegsForPeriod(code, p);
+      paintKline(true);
+    }
+  }
+}
+
 // 长按段卡片：显示覆盖在该卡片上的操作蒙板（编辑 / 删除 / 新增）
 function attachSegmentCardActions(code, period) {
   const detail = $('#period-detail');
@@ -3413,6 +3437,8 @@ async function handleSegmentAction(act, segId, code, period) {
       }
       saveLocalEdits(code, sec.drawings);
       refreshPeriodDetailWithoutFetch(code, period);
+      // 编辑可能改变该周期的段集合/端点，低级别图的隐藏范围随之变化
+      refreshLowerPeriodViews(code, period);
     }, null, startLocked, () => {
       // 取消编辑：若为盯盘段则恢复实时自动延伸
       if (targetSeg) delete targetSeg._watchManualEnd;
@@ -3564,6 +3590,8 @@ async function handleSegmentAction(act, segId, code, period) {
     d.zhongshus = (d.zhongshus || []).filter((z) => (z.segmentIds || []).length >= 3);
     saveLocalEdits(code, sec.drawings);
     refreshPeriodDetailWithoutFetch(code, period);
+    // 删除的若是更高周期段（如递归产物），低级别图的隐藏范围要跟着回退
+    refreshLowerPeriodViews(code, period);
   }
 }
 
@@ -3783,6 +3811,31 @@ async function ensureBars(code, period) {
   return bars;
 }
 
+// 某周期的单根 K 线时长（秒），用于段端点吸附容差
+function barSecOf(period) {
+  const m = { '1m': 60, '5m': 300, '15m': 900, '30m': 1800, '60m': 3600, 'day': 86400, 'week': 86400 * 7, 'month': 86400 * 31 };
+  return m[period] || 60;
+}
+
+// 段端点 → bar 索引（盯盘/追踪的起点定位）。
+// 段端点不一定正好落在本周期 bar 上：递归产物来自低一级周期（如 1m 端点 09:37 落到 5m 图上）、
+// 导入的画线端点是插值时间。精确匹配不到时，在容差（2 根 K 线）内吸附到「不晚于该时间的最后一根 bar」；
+// 端点早于取数窗口（历史段）或超出容差则返回 -1，由调用方如实提示。
+function findBarIdxNear(bars, time, period) {
+  if (!bars || !bars.length || time == null) return -1;
+  const exact = findBarIdxByTime(bars, time);
+  if (exact >= 0) return exact;
+  const t = Math.floor(time);
+  let lo = -1, loT = -Infinity;
+  for (let i = 0; i < bars.length; i++) {
+    const bt = Math.floor(bars[i].time);
+    if (bt <= t && bt > loT) { lo = i; loT = bt; }
+  }
+  if (lo < 0) return -1;
+  if (t - loT > barSecOf(period) * 2) return -1;
+  return lo;
+}
+
 // 展示用 K 线（证券卡片图/段弹窗/行内图）：一律取当前周期真实数据。
 // 主周期直接复用算法缓存 _currentBars（轮询已刷新）；辅助周期取本周期真实 K 线，
 // 段端点与本周期 bar 不对齐处由 klinechart 的 timeToX 时间插值定位。
@@ -3898,7 +3951,7 @@ function recursiveToHigherPeriod(code, period, segId) {
     direction: info.end.price >= info.start.price ? 'up' : 'down',
     start: { time: info.start.time, price: info.start.price },
     end: { time: info.end.time, price: info.end.price },
-    // 递归产物标记：不参与低周期 hideBefore 对齐（见 computeHideBefore）
+    // 递归产物标记：与普通段一样参与低周期 hideBefore 对齐（见 hide.js computeHideBeforeDetail）
     _isRecursive: true,
   };
   hd.segments.push(newSeg);
@@ -3913,12 +3966,22 @@ function recursiveToHigherPeriod(code, period, segId) {
   saveLocalEdits(code, sec.drawings);
   toast(`已递归生成${periodLabel(higherPeriod)}段`);
   refreshPeriodDetailWithoutFetch(code, period);
+  // 递归产物落在更高周期：必须同步该级别已挂载的视图，否则要收起再展开才看得到新段。
+  // ① 周期页里更高周期的展开行（行内 K 线，用缓存 bars 重切重绘）
+  refreshPeriodRowKlinesForPeriod(code, higherPeriod);
+  // ② 详情页段卡片 K 线（若正停在该级别）：visibleSegs 是打开时的快照，需重建后再绘
+  if (_klineView && _klineView.code === code && _klineView.period === higherPeriod) {
+    _klineView.visibleSegs = getVisibleSegsForPeriod(code, higherPeriod);
+    paintKline(true);
+  }
 }
 
 // ===== 盯盘段：选点 / 创建 / 动态更新 / 自动续接（对齐桌面版 watch 逻辑） =====
 
 let _watchEndCache = null;   // 盯盘段终点缓存：仅行情数据变化时重算，避免每帧 O(N²)
 let _watchScopeKey = null;   // 当前盯盘 scope（code|period），切换时清空派生缓存
+// 单次 updateWatchSegments 内最多连续推进的段数（防病态数据下死循环；一段正常行情远小于此值）
+const MAX_AUTO_ADVANCE_ROUNDS = 80;
 
 // 降级盯盘段为普通段（清除盯盘标记，保留为普通段）
 function degradeWatch(seg) {
@@ -3937,7 +4000,7 @@ function degradeWatch(seg) {
 function createWatchFromSource(sourceSeg, bars, segs, period, overrideEnd) {
   const right = segRight(sourceSeg);
   if (!right) return { created: false, reason: 'invalid' };
-  const startIdx = findBarIdxByTime(bars, right.time);
+  const startIdx = findBarIdxNear(bars, right.time, period);
   if (startIdx < 0) return { created: false, reason: 'no_start' };
   const direction = oppositeDir(sourceSeg.direction || segDirection(sourceSeg));
   const startPrice = right.price;
@@ -3973,7 +4036,8 @@ function createWatchFromSource(sourceSeg, bars, segs, period, overrideEnd) {
     kind: 'segment',
     period,
     direction,
-    start: { time: Math.floor(right.time), price: right.price },
+    // 起点吸附到实际 bar 时间（端点可能是递归/导入的插值时间，不吸附会被判「起点不在 bars 中」而降级）
+    start: { time: Math.floor(bars[startIdx].time), price: right.price },
     end: { time: Math.floor(foundB.endInfo.time), price: foundB.endInfo.price },
     _isWatch: true,
     _watchSourceId: sourceSeg.id,
@@ -4057,43 +4121,33 @@ function updateWatchSegments(code, period, bars, refresh = true) {
   }
   let changed = false, structural = false;
 
-  // 1) 失效降级：非最右端/右端点被占用/起点不在bars中 → 降级为普通段
-  for (const s of segs) {
-    if (!s._isWatch) continue;
-    if (!isRightmostAndUnoccupied(s, segs) || findBarIdxByTime(bars, s.start.time) < 0) {
-      degradeWatch(s);
-      changed = structural = true;
+  // 自动续接/修复链：单次调用内连续推进，直到前沿（当前段还在长 / 等待下一段成形 / 修复链全失败）。
+  // 历史上这里只判定一次，一次调用最多推进一段；实时轮询又受「行情快照未变即命中终点缓存」的门槛约束，
+  // 于是段链停在半路，必须重新打开详情页（重新取数、快照变化）才能再推进一段——
+  // 表现为「收起弹窗再展开才画下一段，反复开关才画完」。
+  for (let round = 0; round < MAX_AUTO_ADVANCE_ROUNDS; round++) {
+    // 1) 失效降级：非最右端/右端点被占用/起点不在bars中 → 降级为普通段
+    for (const s of segs) {
+      if (!s._isWatch) continue;
+      if (!isRightmostAndUnoccupied(s, segs) || findBarIdxByTime(bars, s.start.time) < 0) {
+        degradeWatch(s);
+        changed = structural = true;
+      }
     }
-  }
-  // 2) 唯一活跃盯盘段 = 仍标记 _isWatch 的那条（失效的已降级）
-  const activeWatch = segs.find((s) => s._isWatch);
-  if (!activeWatch) {
-    if (changed) {
-      d.segments = segs;
-      if (refresh) refreshPeriodDetailWithoutFetch(code, period);
-    }
-    // 盯盘段被降级为普通段也是数据变更，需落盘，否则刷新后回到「仍是盯盘段」的旧快照
-    if (changed || structural) scheduleAutoSave(code);
-    return { changed: changed, structural: structural };
-  }
-  // 3) 手动接管（编辑中）暂停自动延伸
-  if (activeWatch._watchManualEnd) {
-    if (changed) {
-      d.segments = segs;
-      if (refresh) refreshPeriodDetailWithoutFetch(code, period);
-    }
-    if (changed || structural) scheduleAutoSave(code);
-    return { changed: changed, structural: structural };
-  }
-  const startIdx = findBarIdxByTime(bars, activeWatch.start.time);
-  let recomputed = false;
-  if (startIdx >= 0) {
+    // 2) 唯一活跃盯盘段 = 仍标记 _isWatch 的那条（失效的已降级）
+    const activeWatch = segs.find((s) => s._isWatch);
+    if (!activeWatch) break;
+    // 3) 手动接管（编辑中）暂停自动延伸
+    if (activeWatch._watchManualEnd) break;
+    const startIdx = findBarIdxByTime(bars, activeWatch.start.time);
+    if (startIdx < 0) break;
     const direction = activeWatch.direction || segDirection(activeWatch);
     const maxSpanOverride = (activeWatch._watchMaxSpan != null && activeWatch._watchMaxSpan >= DEFAULT_CANDIDATE_SPAN_MIN)
       ? activeWatch._watchMaxSpan : undefined;
     const lastBar = bars[bars.length - 1];
     const cacheKey = activeWatch.id + '|' + bars.length + '|' + Math.floor(lastBar.time) + '|' + lastBar.high + '|' + lastBar.low + '|' + (maxSpanOverride != null ? maxSpanOverride : '');
     let foundEnd;
+    let recomputed = false;
     if (_watchEndCache && _watchEndCache.key === cacheKey) {
       foundEnd = _watchEndCache.result;
     } else {
@@ -4109,64 +4163,69 @@ function updateWatchSegments(code, period, bars, refresh = true) {
         changed = true;
       }
     }
-    // 4) 自动续接 / 四层修复链（仅重建触发时判定）
-    if (recomputed) {
-      const verdict = evalAutoContinue(segs, activeWatch, bars, startIdx, maxSpanOverride);
-      if (verdict === 'continue') {
-        // 冻结当前盯盘段并续接下一段；续接失败则恢复为盯盘段
-        const frozenId = activeWatch.id;
-        degradeWatch(activeWatch);
-        const made = createWatchFromSource(activeWatch, bars, segs, period);
-        if (!made.created) {
-          const frozen = segs.find((s) => s.id === frozenId);
-          if (frozen) frozen._isWatch = true;
-        }
-        changed = structural = true;
-      } else if (verdict === 'fix') {
-        // 自动修复链（与「✓ 确认」一致，仅多「充分发展」前置闸门）：
-        // 闸2覆盖整个修复链（回溯+死胡同自修+死胡同兜底）：两次修复间至少间隔 AUTO_CONTINUE_FIX_GAP 根新K线
-        let fixOk = true;
-        if (activeWatch._watchLastFixTime != null) {
-          const lastFixIdx = findBarIdxByTime(bars, activeWatch._watchLastFixTime);
-          if (lastFixIdx >= 0 && (bars.length - 1 - lastFixIdx) < AUTO_CONTINUE_FIX_GAP) fixOk = false;
-        }
-        if (fixOk) {
-          // —— 修复链：先死胡同回溯（最优解：删b，收紧a）——
-          const roll = rollbackResult(segs, activeWatch, bars);
-          if (roll.ok) {
-            const prev = roll.prevSeg;
-            // 原地删除 b（保持 segs 与 d.segments 引用一致，防结尾 d.segments = segs 恢复已删段）
-            const bIdx = segs.indexOf(activeWatch);
-            if (bIdx >= 0) segs.splice(bIdx, 1);
-            prev.end = { time: Math.floor(roll.newEnd.time), price: roll.newEnd.price };
-            prev.direction = prev.direction || segDirection(prev);
-            prev._isWatch = true;
-            prev._watchMaxSpan = roll.tempMax;
-            prev._watchFixCount = (prev._watchFixCount || 0) + 1;
-            prev._watchLastFixTime = Math.floor(bars[bars.length - 1].time);
-            changed = structural = true;
-          } else {
-            // —— 回溯失败，降级死胡同自修（兜底：收紧b自己）——
-            const t = tightenCurrentResult(activeWatch, bars, startIdx);
-            if (t.ok) {
-              activeWatch.end = { time: Math.floor(t.newEnd.time), price: t.newEnd.price };
-              activeWatch._watchMaxSpan = t.tempMax;
-              activeWatch._watchFixCount = (activeWatch._watchFixCount || 0) + 1;
-              activeWatch._watchLastFixTime = Math.floor(bars[bars.length - 1].time);
-              changed = structural = true;
-            } else {
-              // —— 第三层：死胡同兜底（下调「下一段试算」的滑窗窗口，避免人工介入）——
-              if (applyDeadEndFallback(period, segs, activeWatch, bars)) {
-                changed = structural = true;
-              } else if (applyStrongGapFallback(period, segs, activeWatch, bars)) {
-                // —— 第四层：强缺口兜底（b 右侧跨交易日强反向缺口成立时，c 取缺口后极值）——
-                changed = structural = true;
-              }
-            }
-          }
+    // 行情快照未变（命中终点缓存）⇒ 该段在这个快照下已判定过，继续循环只会原地打转
+    if (!recomputed) break;
+    // 4) 自动续接 / 四层修复链
+    const verdict = evalAutoContinue(segs, activeWatch, bars, startIdx, maxSpanOverride);
+    if (verdict === 'continue') {
+      // 冻结当前盯盘段并续接下一段；续接失败则恢复为盯盘段并停手
+      const frozenId = activeWatch.id;
+      degradeWatch(activeWatch);
+      const made = createWatchFromSource(activeWatch, bars, segs, period);
+      if (!made.created && made.reason !== 'narrow') {
+        const frozen = segs.find((s) => s.id === frozenId);
+        if (frozen) frozen._isWatch = true;
+        break;
+      }
+      changed = structural = true;
+      continue;
+    }
+    if (verdict !== 'fix') break;
+    // 自动修复链（与「✓ 确认」一致，仅多「充分发展」前置闸门）：
+    // 闸2覆盖整个修复链（回溯+死胡同自修+死胡同兜底）：两次修复间至少间隔 AUTO_CONTINUE_FIX_GAP 根新K线
+    let fixOk = true;
+    if (activeWatch._watchLastFixTime != null) {
+      const lastFixIdx = findBarIdxByTime(bars, activeWatch._watchLastFixTime);
+      if (lastFixIdx >= 0 && (bars.length - 1 - lastFixIdx) < AUTO_CONTINUE_FIX_GAP) fixOk = false;
+    }
+    if (!fixOk) break;
+    let acted = false;
+    // —— 修复链：先死胡同回溯（最优解：删b，收紧a）——
+    const roll = rollbackResult(segs, activeWatch, bars);
+    if (roll.ok) {
+      const prev = roll.prevSeg;
+      // 原地删除 b（保持 segs 与 d.segments 引用一致，防结尾 d.segments = segs 恢复已删段）
+      const bIdx = segs.indexOf(activeWatch);
+      if (bIdx >= 0) segs.splice(bIdx, 1);
+      prev.end = { time: Math.floor(roll.newEnd.time), price: roll.newEnd.price };
+      prev.direction = prev.direction || segDirection(prev);
+      prev._isWatch = true;
+      prev._watchMaxSpan = roll.tempMax;
+      prev._watchFixCount = (prev._watchFixCount || 0) + 1;
+      prev._watchLastFixTime = Math.floor(bars[bars.length - 1].time);
+      acted = true;
+    } else {
+      // —— 回溯失败，降级死胡同自修（兜底：收紧b自己）——
+      const t = tightenCurrentResult(activeWatch, bars, startIdx);
+      if (t.ok) {
+        activeWatch.end = { time: Math.floor(t.newEnd.time), price: t.newEnd.price };
+        activeWatch._watchMaxSpan = t.tempMax;
+        activeWatch._watchFixCount = (activeWatch._watchFixCount || 0) + 1;
+        activeWatch._watchLastFixTime = Math.floor(bars[bars.length - 1].time);
+        acted = true;
+      } else {
+        // —— 第三层：死胡同兜底（下调「下一段试算」的滑窗窗口，避免人工介入）——
+        if (applyDeadEndFallback(period, segs, activeWatch, bars)) {
+          acted = true;
+        } else if (applyStrongGapFallback(period, segs, activeWatch, bars)) {
+          // —— 第四层：强缺口兜底（b 右侧跨交易日强反向缺口成立时，c 取缺口后极值）——
+          acted = true;
         }
       }
     }
+    // 四层全失败 / 闸2未过：段链已停，继续循环无意义
+    if (!acted) break;
+    changed = structural = true;
   }
   if (changed || structural) {
     d.segments = segs;
@@ -4178,8 +4237,9 @@ function updateWatchSegments(code, period, bars, refresh = true) {
 }
 
 // 打开进入详情页时，用全量历史K线连续回放，把从上次保存段到当前走势前沿的中间段
-// 一次补齐（对齐桌面版「打开即画完」）：反复调用 updateWatchSegments，每轮最多续接一段，
-// 直到无结构性变化（已到最新走势前沿，或当前盯盘段仍在长/等待）为止。
+// 一次补齐（对齐桌面版「打开即画完」）：updateWatchSegments 内部已循环推进，这里再套一层
+// 兜底循环（防止外层状态在两次推进间被改动），直到无结构性变化（已到最新走势前沿，
+// 或当前盯盘段仍在长/等待）为止。
 // 仅复用 A0 盯盘段的既有算法，不触碰非 A0「追踪段」与卡片级联隐藏逻辑。
 function catchUpWatchSegments(code, period, bars) {
   let u = { changed: false, structural: false };
@@ -4206,7 +4266,7 @@ async function addWatchSegment(code, period, sourceSegId) {
   const segs = d.segments || [];
   const sourceSeg = segs.find((s) => s.id === sourceSegId);
   if (!sourceSeg) return;
-  if (segRight(sourceSeg) && findBarIdxByTime(bars, segRight(sourceSeg).time) < 0) {
+  if (segRight(sourceSeg) && findBarIdxNear(bars, segRight(sourceSeg).time, period) < 0) {
     toast('未找到起点对应K线');
     return;
   }
@@ -4255,7 +4315,7 @@ function trackExtremeEnd(bars, startIdx, direction) {
 function createTrackFromSource(sourceSeg, bars, period) {
   const right = segRight(sourceSeg);
   if (!right) return { created: false };
-  const startIdx = findBarIdxByTime(bars, right.time);
+  const startIdx = findBarIdxNear(bars, right.time, period);
   if (startIdx < 0 || startIdx >= bars.length - 1) return { created: false };
   const direction = oppositeDir(sourceSeg.direction || segDirection(sourceSeg));
   const end = trackExtremeEnd(bars, startIdx, direction);
@@ -4265,7 +4325,8 @@ function createTrackFromSource(sourceSeg, bars, period) {
     kind: 'segment',
     period,
     direction,
-    start: { time: Math.floor(right.time), price: right.price },
+    // 起点吸附到实际 bar 时间：端点可能是递归/导入的插值时间，不吸附后续更新会定位失败
+    start: { time: Math.floor(bars[startIdx].time), price: right.price },
     end,
     _isTrack: true,
     _trackSourceId: sourceSeg.id,
@@ -4288,7 +4349,7 @@ async function addTrackSegment(code, period, sourceSegId) {
   const segs = d.segments || [];
   const sourceSeg = segs.find((s) => s.id === sourceSegId);
   if (!sourceSeg) return;
-  if (segRight(sourceSeg) && findBarIdxByTime(bars, segRight(sourceSeg).time) < 0) {
+  if (segRight(sourceSeg) && findBarIdxNear(bars, segRight(sourceSeg).time, period) < 0) {
     toast('未找到起点对应K线');
     return;
   }
@@ -4321,7 +4382,7 @@ function updateTrackSegments(code, period, bars) {
   for (const s of segs) {
     if (!s._isTrack) continue;
     const direction = s.direction || segDirection(s);
-    let startIdx = s.start ? findBarIdxByTime(bars, s.start.time) : -1;
+    let startIdx = s.start ? findBarIdxNear(bars, s.start.time, period) : -1;
     if (startIdx < 0) startIdx = 0; // 起点 K 线已被挤出窗口时退化为整段区间
     const end = trackExtremeEnd(bars, startIdx, direction);
     if (!end) continue;

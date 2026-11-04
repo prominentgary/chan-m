@@ -13,8 +13,10 @@
 //
 // 硬边界：
 //   1. 只做**相邻一级**，不递归。每一级各自被它的上一级截断，链式嵌套天然成立。
-//   2. 对齐锚**排除**盯盘段/追踪段/递归段：盯盘段终点是当前最新价、随行情延伸，
-//      拿它当锚会把低级别段几乎全部隐藏（例：5m 盯盘导致 1m 只剩盯盘段之后）。
+//   2. 对齐锚**只排除**盯盘段/追踪段：它们的终点是当前最新价、随行情延伸，
+//      拿它们当锚会把低级别段几乎全部隐藏（例：5m 盯盘导致 1m 只剩盯盘段之后）。
+//      递归段（_isRecursive）照常参与——它是更高一级别已经画出来的走势，
+//      终点之前的低级别段就该隐藏，否则递归出的高周期段不会截断低周期图。
 //   3. 安全回退：若高周期数据比当前周期段更新（对齐点越过当前周期最后一段起点），
 //      退回用高周期所有段的 max(start) 对齐，宁可多留历史，也不把图清空。
 //      **回退必须披露**（见 scopeHint）：此时作用域偏早，不是「当前这一段」的真实起点。
@@ -97,7 +99,10 @@ function endOf(seg) {
  */
 export function computeHideBeforeDetail(higherSegments, higherPeriod, curSegments) {
   if (!higherPeriod || !higherSegments || !higherSegments.length) return null;
-  const realHigher = higherSegments.filter((s) => !s._isWatch && !s._isTrack && !s._isRecursive);
+  // 只排除盯盘段/追踪段：它们的终点是当前最新价、随行情延伸，拿它们当锚会把低级别段几乎全部隐藏。
+  // 递归段**照常参与**：它是更高一级别已经画出来的走势（桌面版「最后一条虚线」的等价物），
+  // 其终点之前正是本级要隐藏的历史部分；排除它会导致「递归出的高周期段不截断低周期图」。
+  const realHigher = higherSegments.filter((s) => !s._isWatch && !s._isTrack);
   if (!realHigher.length) return null;
   let lastEnd = 0, maxStart = 0, anchor = null;
   for (const s of realHigher) {
