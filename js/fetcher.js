@@ -207,4 +207,252 @@ export function formatPrice(code, price) {
   return price.toFixed(digits);
 }
 
+// ---- 大盘涨跌分布（沪深京 A 股全量统计，口径对齐东方财富行情页）----
+// 说明：push2ex 的 getTopicZDFenBu 返回的是一份更新不及时/口径不同的快照，
+// 与东财行情页上的实时涨跌分布对不上（实测收盘时 涨家数 4716 vs 4869），故不用它。
+// 这里按东财行情页的口径自己统计：拉全量 A 股（约 5600 只，100 只/页，并发 6），
+// 只取 f3（涨跌幅%）分档；涨停/跌停数取东财涨停池/跌停池的 tc（与图上「涨停/跌停」一致）。
+// 分档（与东财 9 根柱一致）：涨停 / 5%以上 / 1-5% / 0-1% / 平盘 / 0-1% / 1-5% / 5%以下 / 跌停
+const A_SHARE_FS = 'm:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048';
+const BREADTH_PZ = 100;
+const BREADTH_CONCURRENCY = 6;
+
+async function fetchAsharePage(pn) {
+  const url = `https://push2.eastmoney.com/api/qt/clist/get?pn=${pn}&pz=${BREADTH_PZ}&np=1&fltt=2&invt=2&fid=f3&po=1&fs=${A_SHARE_FS}&fields=f3&_=${Date.now()}`;
+  const res = await fetch(url);
+  const json = await res.json();
+  const d = json?.data;
+  if (!d || !Array.isArray(d.diff)) throw new Error('clist page empty');
+  return { total: +d.total || 0, vals: d.diff.map((o) => o.f3).filter((v) => typeof v === 'number') };
+}
+
+// 全量 A 股涨跌幅数组（停牌/无报价的股票 f3 为 "-"，自然被剔除，与东财一致）
+async function fetchAllAshareChange() {
+  const first = await fetchAsharePage(1);
+  const pages = Math.max(1, Math.ceil(first.total / BREADTH_PZ));
+  const vals = first.vals.slice();
+  let failed = 0;
+  let next = 2;
+  const worker = async () => {
+    for (;;) {
+      const pn = next++;
+      if (pn > pages) return;
+      try {
+        const r = await fetchAsharePage(pn);
+        for (const v of r.vals) vals.push(v);
+      } catch (e) {
+        failed++;
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(BREADTH_CONCURRENCY, pages) }, worker));
+  // 掉页超过 10% 视为不完整，宁可不更新也不要出错数
+  if (!vals.length || failed > Math.max(2, Math.floor(pages * 0.1))) throw new Error('breadth incomplete');
+  return vals;
+}
+
+// 涨停/跌停家数：东财涨停池 / 跌停池（date 必须是交易日，节假日向前回退）
+async function fetchLimitCount(kind) {
+  const api = kind === 'zt' ? 'getTopicZTPool' : 'getTopicDTPool';
+  const sort = kind === 'zt' ? 'fbt:asc' : 'fund:asc';
+  const d = new Date();
+  for (let i = 0; i < 5; i++) {
+    const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, '0')}${String(d.getDate()).padStart(2, '0')}`;
+    const url = `https://push2ex.eastmoney.com/${api}?ut=7eea3edcaed734bea9cbfc24409ed989&dpt=wz.ztzt&Pageindex=0&pagesize=1&sort=${sort}&date=${ymd}`;
+    try {
+      const json = await (await fetch(url)).json();
+      if (json?.data && Number.isFinite(+json.data.tc)) return +json.data.tc;
+    } catch (e) { /* 换前一天再试 */ }
+    d.setDate(d.getDate() - 1);
+  }
+  return null;
+}
+
+// 返回 { up, down, flat, limitUp, limitDown, total, buckets:[{label,value,dir,lv}] }
+export async function fetchMarketBreadth() {
+  const [vals, zt, dt] = await Promise.all([
+    fetchAllAshareChange(),
+    fetchLimitCount('zt').catch(() => null),
+    fetchLimitCount('dt').catch(() => null),
+  ]);
+  let up = 0, down = 0, flat = 0;
+  let ge5 = 0, u1to5 = 0, u0to1 = 0, m1to0 = 0, m5tom1 = 0, le5 = 0;
+  for (const v of vals) {
+    if (v > 0) up++; else if (v < 0) down++; else flat++;
+    if (v >= 5) ge5++;          // ≥5%（含涨停）
+    else if (v > 1) u1to5++;    // 1%~5%
+    else if (v > 0) u0to1++;    // 0%~1%
+    else if (v < -5) le5++;     // ≤-5%（含跌停）
+    else if (v < -1) m5tom1++;  // -5%~-1%
+    else if (v < 0) m1to0++;    // -1%~0%
+  }
+  // 涨跌停池拿不到时按 0 处理（对应档位会并入相邻档，不至于出现负数）
+  const limitUp = Math.max(0, Math.min(zt == null ? 0 : zt, ge5));
+  const limitDown = Math.max(0, Math.min(dt == null ? 0 : dt, le5));
+  const buckets = [
+    { label: '涨停', value: limitUp, dir: 1, lv: 4 },
+    { label: '>5%', value: Math.max(0, ge5 - limitUp), dir: 1, lv: 3 },
+    { label: '1-5%', value: u1to5, dir: 1, lv: 2 },
+    { label: '0-1%', value: u0to1, dir: 1, lv: 1 },
+    { label: '平盘', value: flat, dir: 0, lv: 0 },
+    { label: '0-1%', value: m1to0, dir: -1, lv: 1 },
+    { label: '1-5%', value: m5tom1, dir: -1, lv: 2 },
+    { label: '<-5%', value: Math.max(0, le5 - limitDown), dir: -1, lv: 3 },
+    { label: '跌停', value: limitDown, dir: -1, lv: 4 },
+  ];
+  return { up, down, flat, limitUp, limitDown, total: vals.length, buckets };
+}
+
+// ---- 三市成交额（上证 + 深证 + 北证50 的分时成交额即沪深京总成交额）----
+// 实时总额走 ulist（一次请求几百字节，10s 级刷新）；「较前一日同期」的基准曲线
+// 用分时接口（ndays=2）取一次并缓存 30 分钟，避免每次都拉 2 天分时（约 60KB）。
+const AMOUNT_SECIDS = ['1.000001', '0.399001', '0.899050'];
+let _amtBaseline = null; // { at, days:[d1,d2], byDate:{day:{'HH:mm':累计成交额}} }
+
+function hmToMin(hm) {
+  const [h, m] = String(hm).split(':').map(Number);
+  return (h || 0) * 60 + (m || 0);
+}
+
+async function buildAmountBaseline() {
+  const trendsList = await Promise.all(AMOUNT_SECIDS.map(async (secid) => {
+    const url = `https://push2his.eastmoney.com/api/qt/stock/trends2/get?secid=${secid}&fields1=f1,f2,f3,f7,f8&fields2=f51,f53,f56,f57&ndays=2&iscr=0&_=${Date.now()}`;
+    const json = await (await fetch(url)).json();
+    return json?.data?.trends || [];
+  }));
+  // day -> { 'HH:mm': 三市累计成交额 }（按分钟累加）
+  const acc = {};
+  trendsList.forEach((trends) => {
+    trends.forEach((line) => {
+      const p = String(line).split(',');
+      const ts = p[0] || '';
+      if (ts.length < 16) return;
+      const day = ts.slice(0, 10);
+      const hm = ts.slice(11, 16);
+      const amt = +p[3] || 0;
+      const m = acc[day] || (acc[day] = {});
+      m[hm] = (m[hm] || 0) + amt;
+    });
+  });
+  const days = Object.keys(acc).sort();
+  if (!days.length) throw new Error('amount baseline empty');
+  // 转成累计值
+  const byDate = {};
+  days.forEach((day) => {
+    const src = acc[day];
+    let sum = 0;
+    const cum = {};
+    Object.keys(src).sort().forEach((hm) => { sum += src[hm]; cum[hm] = sum; });
+    byDate[day] = cum;
+  });
+  return { at: Date.now(), days, byDate };
+}
+
+async function getAmountBaseline() {
+  if (!_amtBaseline || Date.now() - _amtBaseline.at > 30 * 60 * 1000) {
+    _amtBaseline = await buildAmountBaseline();
+  }
+  return _amtBaseline;
+}
+
+// 当前时点 → 对比用的分钟（收盘/休市后固定为 15:00）
+function amountCutoffHm(now = new Date()) {
+  const hm = now.getHours() * 60 + now.getMinutes();
+  const p = (n) => String(n).padStart(2, '0');
+  if (hm <= 9 * 60 + 30) return '09:30';
+  if (hm < 11 * 60 + 30) return `${p(Math.floor(hm / 60))}:${p(hm % 60)}`;
+  if (hm < 13 * 60) return '11:30';
+  if (hm < 15 * 60) return `${p(Math.floor(hm / 60))}:${p(hm % 60)}`;
+  return '15:00';
+}
+
+// 返回 { total, prevSame, date } 单位：元
+export async function fetchMarketAmount() {
+  const [total, baseline] = await Promise.all([
+    (async () => {
+      const url = `https://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&secids=${AMOUNT_SECIDS.join(',')}&fields=f12,f14,f6&_=${Date.now()}`;
+      const json = await (await fetch(url)).json();
+      const diff = json?.data?.diff;
+      if (!Array.isArray(diff) || !diff.length) throw new Error('amount empty');
+      return diff.reduce((a, x) => a + (typeof x.f6 === 'number' ? x.f6 : 0), 0);
+    })(),
+    getAmountBaseline(),
+  ]);
+  const days = baseline.days;
+  const cur = days[days.length - 1];
+  const prev = days.length > 1 ? days[days.length - 2] : null;
+  const today = (() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  })();
+  // 当前这一档数据不是今天（盘前/休市日）：对比用整日，避免拿半天跟整天比
+  const cutoff = cur === today ? amountCutoffHm() : '15:00';
+  let prevSame = null;
+  if (prev) {
+    const pm = baseline.byDate[prev];
+    const keys = Object.keys(pm).filter((hm) => hmToMin(hm) <= hmToMin(cutoff)).sort();
+    if (keys.length) prevSame = pm[keys[keys.length - 1]];
+  }
+  return { total, prevSame, date: cur };
+}
+
+// ---- 美股指数（东方财富全球指数，secid 由东财统一编号，CORS 已开放）----
+// 100.DJIA 道琼斯 / 100.NDX 纳斯达克 / 100.SPX 标普500 / 251.SOX 费城半导体指数
+export const US_INDEX_LIST = [
+  { secid: '100.DJIA', code: 'DJIA', label: '道琼斯' },
+  { secid: '100.NDX', code: 'NDX', label: '纳斯达克' },
+  { secid: '100.SPX', code: 'SPX', label: '标普500' },
+  { secid: '251.SOX', code: 'SOX', label: '费城半导体' },
+];
+
+// 批量实时行情：返回 { DJIA: { price, pct, prevClose }, ... }（key 用 f12 指数代码）
+export async function fetchUsIndexQuotes() {
+  const secids = US_INDEX_LIST.map((x) => x.secid).join(',');
+  const url = `https://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&secids=${secids}&fields=f2,f3,f12,f18&_=${Date.now()}`;
+  const json = await (await fetch(url)).json();
+  const diff = json?.data?.diff;
+  if (!Array.isArray(diff) || !diff.length) throw new Error('us quote empty');
+  const out = {};
+  diff.forEach((x) => {
+    out[String(x.f12).toUpperCase()] = {
+      price: typeof x.f2 === 'number' ? x.f2 : null,
+      pct: typeof x.f3 === 'number' ? x.f3 : null,
+      prevClose: typeof x.f18 === 'number' ? x.f18 : null,
+    };
+  });
+  return out;
+}
+
+// 分时（最近一个美股交易日，22:30-05:00 或 21:30-04:00，按实际首尾点自适应）
+// 返回 { bars:[{time,open,high,low,close,volume}], prevClose, dayStart, dayEnd, date }
+export async function fetchUsIndexIntraday(secid) {
+  const url = `https://push2his.eastmoney.com/api/qt/stock/trends2/get?secid=${secid}&fields1=f1,f2,f3,f7,f8&fields2=f51,f53,f56,f57&ndays=1&iscr=0&_=${Date.now()}`;
+  const json = await (await fetch(url)).json();
+  const d = json?.data;
+  if (!d || !Array.isArray(d.trends) || !d.trends.length) throw new Error('us trends empty');
+  const bars = [];
+  d.trends.forEach((line) => {
+    const p = String(line).split(',');
+    const ts = p[0] || '';
+    if (ts.length < 16) return;
+    const close = +p[1];
+    const time = Math.floor(new Date(ts.replace(/-/g, '/')).getTime() / 1000);
+    if (!Number.isFinite(time) || !Number.isFinite(close) || close <= 0) return;
+    // 分时只有每分钟收盘价，高开低收都取该值：y 轴范围仍由价格序列决定
+    bars.push({ time, open: close, high: close, low: close, close, volume: 0 });
+  });
+  if (!bars.length) throw new Error('us trends parse empty');
+  // x 轴固定铺满一个完整交易时段（6.5 小时，首个数据点即开盘时刻）：
+  // 盘中只画到当前时刻，不会因为数据少而被拉伸占满整幅图
+  const dayStart = bars[0].time;
+  const dayEnd = Math.max(dayStart + 6.5 * 3600, bars[bars.length - 1].time);
+  return {
+    bars,
+    prevClose: +d.preClose || 0,
+    dayStart,
+    dayEnd,
+    date: String(d.trends[0]).slice(0, 10),
+  };
+}
+
 

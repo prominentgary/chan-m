@@ -817,6 +817,196 @@ body.search-header-fixed .search-edge-guard { display: block; }
   display: none;
 }
 
+/* 行情页左右翻页：左页美股 / 右页 A 股（默认），右滑揭示左页 */
+#hangqing-view { overflow-x: clip; }
+.hg-track {
+  display: flex;
+  width: 200%;
+  will-change: transform;
+}
+.hg-track.animating {
+  transition: transform .26s cubic-bezier(.22, .61, .36, 1);
+}
+.hg-page {
+  width: 50%;
+  flex: none;
+  min-width: 0;
+  /* 给固定悬浮的切换标记留出空间，滚到底时不压住内容 */
+  padding-bottom: 18px;
+}
+/* 切换标记：固定悬浮在底部菜单栏之上（tabbar 高 56px + 安全区） */
+.hg-pager {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: calc(env(safe-area-inset-bottom, 0px) + 62px);
+  z-index: 19; /* 低于 tabbar(20)，高于页面内容 */
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  padding: 4px 0;
+  pointer-events: none; /* 不挡住下面的卡片点击，只有圆点可点 */
+}
+.hg-pager[hidden] { display: none; }
+.hg-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #d2d2d2;
+  /* 悬浮在内容之上，加一圈背景色描边，滚到底时不糊在卡片文字上 */
+  box-shadow: 0 0 0 2px var(--wx-bg);
+  transition: background .2s ease;
+  cursor: pointer;
+  pointer-events: auto;
+}
+.hg-dot.active { background: var(--wx-muted); }
+
+/* 行情页底部：涨跌分布 + 两市成交额（类东方财富） */
+.hg-breadth { padding: 0 12px 12px; }
+.hg-bd-card {
+  background: var(--wx-card);
+  border: 1px solid var(--wx-line);
+  border-radius: 12px;
+  padding: 14px 10px 10px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .04);
+}
+.hg-bd-empty {
+  color: var(--wx-muted);
+  font-size: 12px;
+  text-align: center;
+  padding: 18px 0;
+}
+/* 右上角汇总：涨跌分布 涨:平:跌 */
+.hg-bd-head {
+  display: flex;
+  justify-content: flex-end;
+  margin: -2px 0 6px;
+}
+.hg-bd-sum {
+  font-size: 11px;
+  color: var(--wx-muted);
+  letter-spacing: .2px;
+}
+.hg-bd-sum b { font-weight: 600; }
+.hg-bd-sum b.up { color: var(--wx-red); }
+.hg-bd-sum b.flat { color: var(--wx-muted); }
+.hg-bd-sum b.down { color: var(--wx-green); }
+.hg-bd-sum .sep {
+  margin: 0 1px;
+  color: var(--wx-hint);
+}
+.hg-bd-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 112px;
+}
+.hg-bd-col {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 3px;
+}
+.hg-bd-val {
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--wx-muted);
+}
+.hg-bd-col.up .hg-bd-val { color: var(--wx-red); }
+.hg-bd-col.down .hg-bd-val { color: var(--wx-green); }
+.hg-bd-bar {
+  width: 72%;
+  max-width: 26px;
+  border-radius: 3px 3px 1px 1px;
+  background: var(--wx-muted);
+}
+.hg-bd-col.up .hg-bd-bar { background: var(--wx-red); }
+.hg-bd-col.down .hg-bd-bar { background: var(--wx-green); }
+/* 离平盘越近颜色越实（与东方财富一致）：lv1 最近，lv4 为涨/跌停 */
+.hg-bd-col[data-lv="1"] .hg-bd-bar { opacity: 1; }
+.hg-bd-col[data-lv="2"] .hg-bd-bar { opacity: .72; }
+.hg-bd-col[data-lv="3"] .hg-bd-bar { opacity: .5; }
+.hg-bd-col[data-lv="4"] .hg-bd-bar { opacity: .32; }
+/* 黑白模式下红绿都变黑，靠「空心/实心」区分：涨、平盘空心，跌实心 */
+body.mono .hg-bd-col.up .hg-bd-bar,
+body.mono .hg-bd-col.flat .hg-bd-bar {
+  background: transparent;
+  border: 1.5px solid var(--wx-txt);
+}
+/* 空心轮廓在低不透明度下会糊掉，黑白模式单独提一档 */
+body.mono .hg-bd-col[data-lv="2"] .hg-bd-bar { opacity: .85; }
+body.mono .hg-bd-col[data-lv="3"] .hg-bd-bar { opacity: .7; }
+body.mono .hg-bd-col[data-lv="4"] .hg-bd-bar { opacity: .55; }
+.hg-bd-lab {
+  font-size: 9px;
+  line-height: 1;
+  color: var(--wx-muted);
+  white-space: nowrap;
+}
+/* 涨/平/跌占比条：分段之间留缝，缝向右下倾斜（各段左右边同斜，缝隙就是等宽的斜缝） */
+.hg-bd-ratio {
+  display: flex;
+  gap: 3px;
+  height: 6px;
+  margin: 12px 2px 6px;
+  border-radius: 3px;
+  overflow: hidden;
+}
+.hg-bd-seg { display: block; height: 100%; }
+/* 首尾两端保持平口，中间的缝向右下斜 */
+.hg-bd-seg.up {
+  background: var(--wx-red);
+  clip-path: polygon(0 0, calc(100% - 3px) 0, 100% 100%, 0 100%);
+}
+.hg-bd-seg.flat {
+  background: #b0b0b0;
+  min-width: 8px;
+  clip-path: polygon(3px 0, calc(100% - 3px) 0, 100% 100%, 0 100%);
+}
+.hg-bd-seg.down {
+  flex: 1 1 0;
+  background: var(--wx-green);
+  clip-path: polygon(3px 0, 100% 0, 100% 100%, 0 100%);
+}
+/* 黑白模式同样靠空心/实心区分 */
+body.mono .hg-bd-seg.up,
+body.mono .hg-bd-seg.flat {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--wx-txt);
+}
+.hg-bd-counts {
+  display: flex;
+  justify-content: space-between;
+  font-size: 12px;
+  font-weight: 500;
+}
+.hg-bd-counts .up { color: var(--wx-red); }
+.hg-bd-counts .down { color: var(--wx-green); }
+.hg-bd-amt {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  margin-top: 10px;
+  padding-top: 9px;
+  border-top: 1px solid var(--wx-line);
+  font-size: 12px;
+  color: var(--wx-muted);
+}
+.hg-bd-amt-val {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--wx-txt);
+}
+.hg-bd-amt-sub { margin-left: auto; }
+.hg-bd-amt-sub b { font-weight: 600; }
+.hg-bd-amt-sub b.up { color: var(--wx-red); }
+.hg-bd-amt-sub b.down { color: var(--wx-green); }
+
 /* 编辑视图 */
 .bianji-content { padding: 12px; }
 .bianji-content h3 { font-size: 15px; font-weight: 600; margin: 16px 0 8px; color: var(--wx-txt); }
@@ -952,6 +1142,9 @@ body.search-header-fixed .search-edge-guard { display: block; }
 }
 /* 段数较多时缩小字号，仍保持一行均分 */
 .sec-segnav.dense .sec-segnum { font-size: 10px; line-height: 24px; }
+/* 仅 1~2 段时不铺满整行：每段占 1/3 宽（按 3 列扣掉 2 个 6px 间隙计算），
+   右侧剩余 1/3 留白，避免单个段号被拉成整条横杠 */
+.sec-segnav.few .sec-segnum { flex: 0 0 calc((100% - 12px) / 3); }
 /* 段数超过一行 8 个时换行：每行固定 8 个宽度（42px = 7 个 gap 6px），
    第二行及以后按钮宽度与第一行一致，不因数量少而被拉伸。
    换行后接管纵向手势（touch-action: none）做快速缩放，单行时保持 pan-y 不影响页面滚动。

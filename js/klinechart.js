@@ -1010,11 +1010,17 @@ export function renderIntradayChart(canvas, bars, prevClose, opts = {}) {
     dayStart = dayEnd = 0;
   }
   // x 轴映射：剔除中午休市 11:30-13:00，上午 9:30-11:30 与下午 13:00-15:00 拼接
+  // opts.linearX：连续交易时段（如美股 22:30-05:00）按时间线性铺满，不做 A 股午休拼接
   const morningEnd = dayStart + 2 * 3600;         // 11:30
   const afternoonStart = dayStart + 3.5 * 3600;   // 13:00
   const morningMinutes = 120, afternoonMinutes = 120;
   const totalMinutes = morningMinutes + afternoonMinutes;
-  const xOfTime = (t) => {
+  const xLinear = (t) => {
+    if (dayEnd === dayStart) return padL + plotW / 2;
+    const ratio = Math.max(0, Math.min(1, (t - dayStart) / (dayEnd - dayStart)));
+    return padL + ratio * plotW;
+  };
+  const xOfTime = opts.linearX ? xLinear : (t) => {
     if (dayEnd === dayStart) return padL + plotW / 2;
     if (t <= morningEnd) {
       const ratio = Math.max(0, Math.min(1, (t - dayStart) / (morningEnd - dayStart)));

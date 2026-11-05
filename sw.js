@@ -1,10 +1,10 @@
 // sw.js —— 离线缓存（PWA）
-const CACHE = 'chan-m-v175';
+const CACHE = 'chan-m-v186';
 const ASSETS = [
   './', './index.html', './manifest.webmanifest', './icon.svg',
-  './css/m.css?v=20261018d',
-  './js/app.js?v=20261104e', './js/gesture.js?v=20260905a', './js/fetcher.js?v=20260725i', './js/adjust.js?v=20260725b', './js/macd.js?v=20260725f', './js/model.js?v=20260725f',
-  './js/klinechart.js?v=20261104b', './js/table.js?v=20260904b', './js/algo.js?v=20261015b', './js/editor.js?v=20260830b', './js/watchmode.js?v=20260922d', './js/sync.js?v=20260725g', './js/ai_brief.js?v=20261018a',
+  './css/m.css?v=20261105h',
+  './js/app.js?v=20261105j', './js/gesture.js?v=20260905a', './js/fetcher.js?v=20261105g', './js/adjust.js?v=20260725b', './js/macd.js?v=20260725f', './js/model.js?v=20260725f',
+  './js/klinechart.js?v=20261105c', './js/table.js?v=20260904b', './js/algo.js?v=20261015b', './js/editor.js?v=20260830b', './js/watchmode.js?v=20260922d', './js/sync.js?v=20260725g', './js/ai_brief.js?v=20261018a',
   './js/hide.js?v=20261104a', './js/quad_brief.js?v=20261025a',
   './data/manifest.json',
 ];

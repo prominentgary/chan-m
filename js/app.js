@@ -1,12 +1,12 @@
 // app.js —— Chan-M 入口：一键导入站点全部画线，按「证券 → 周期」展示，联网算力
 // 注意：所有 import 路径均带版本号，每次发布新版本时请同步修改 html/js/sw 中的版本号
-import { fetchBars, fetchRealtimeMulti, formatTime, formatPrice, isETF, resolveCode } from './fetcher.js?v=20260725i';
+import { fetchBars, fetchRealtimeMulti, formatTime, formatPrice, isETF, resolveCode, fetchMarketBreadth, fetchMarketAmount, US_INDEX_LIST, fetchUsIndexQuotes, fetchUsIndexIntraday } from './fetcher.js?v=20261105g';
 import { computeMACD } from './macd.js?v=20260725f';
 import { buildQuadBrief, pickQuadLevels } from './quad_brief.js?v=20261025a';
 import { computeHideBefore, computeHideBeforeDetail, visibleSegsOf, visibleZsOf, getHigherPeriod } from './hide.js?v=20261104a';
 import { segmentStrength, detectStrengthIndicators, detectOneBuySell, detectTwoAndThreeBuySell, computeZhongshuStrength, detectZhongshu, computeZhongshuExtend, computeRecursiveSegment, zhongshuRangeLowHigh } from './algo.js?v=20261015b';
 import { renderSegments } from './table.js?v=20260904b';
-import { renderKlineChart, sliceSegmentBars, renderIntradayChart, repaintView } from './klinechart.js?v=20261104b';
+import { renderKlineChart, sliceSegmentBars, renderIntradayChart, repaintView } from './klinechart.js?v=20261105c';
 import { loadStaticData } from './sync.js?v=20260725g';
 import { openEditor } from './editor.js?v=20260830b';
 import { makeZhongshu } from './model.js?v=20260725f';
@@ -102,6 +102,17 @@ const state = {
   // 行情页用户自定义证券
   _hangqingExtras: [], // [{ code, name }] —— 在行情页搜索添加的证券卡片
   _extrasIntraday: {}, // { code: { bars, prevClose, dayStart, dayEnd, date } }
+  // 行情页底部：涨跌分布 + 两市成交额
+  marketBreadth: null,   // fetchMarketBreadth() 结果
+  marketAmount: null,    // fetchMarketAmount() 结果
+  _breadthAt: 0,         // 上次成功拉取时间戳（30s 节流，跟随 5s 指数轮询刷新）
+  _breadthLoading: false,
+  _breadthErr: false,    // 两个接口都失败时置位，用于给出「暂不可用」提示
+  // 行情页左右翻页：'cn' A 股指数（默认） | 'us' 美股指数（左滑到右页揭示，右滑进入）
+  hqMarket: 'cn',
+  usQuotes: {},          // { DJIA: { price, pct, prevClose } }
+  usIntraday: {},        // { secid: { bars, prevClose, dayStart, dayEnd, date, fetchedAt } }
+  _hqDragging: false,    // 翻页拖拽中：暂停 5s 轮询重建 DOM，避免打断手势
 };
 
 const HANGQING_EXTRAS_KEY = 'chanm_hangqing_extras';
@@ -1214,12 +1225,14 @@ function renderSecSegNav(code, period, visibleSegs) {
   // 卡片处于吸顶折叠态时 K 线实际不可见（意图态待回到顶部后手动展开），段号条一并隐藏
   const card = document.querySelector('.sec-card--detail');
   const collapsed = !!(card && card.classList.contains('sec-card--collapsed'));
-  if (!secKlineExpanded || collapsed || !visibleSegs || visibleSegs.length < 2) {
+  // 只有 1 段也显示：段号本身是长按操作菜单的入口（此时无可取消的较早段，滑动不产生位移）
+  if (!secKlineExpanded || collapsed || !visibleSegs || !visibleSegs.length) {
     nav.hidden = true;
     nav.innerHTML = '';
     return;
   }
   nav.hidden = false;
+  nav.classList.toggle('few', visibleSegs.length < 3); // 1~2 段：每段占 1/3，右侧留白
   nav.classList.toggle('dense', visibleSegs.length > 14); // 段多时缩小字号
   // 段数超过每行上限时换行（每行 SEG_NAV_PER_ROW 个，后续行按钮宽度与第一行一致）
   nav.classList.toggle('wrap', visibleSegs.length > SEG_NAV_PER_ROW);
@@ -1664,13 +1677,16 @@ async function renderPeriodRowKline(code, period, row) {
 function renderPeriodRowSegNav(row, visibleSegs) {
   const nav = row.querySelector('.period-row-segnav');
   if (!nav) return;
-  const hide = row._segHide || 0;
-  if (!row.classList.contains('expanded') || !visibleSegs || visibleSegs.length < 2) {
+  // 只有 1 段也显示：段号本身是长按操作菜单的入口（此时无可取消的较早段，滑动不产生位移）
+  if (!row.classList.contains('expanded') || !visibleSegs || !visibleSegs.length) {
     nav.hidden = true;
     nav.innerHTML = '';
     return;
   }
+  // 段数减少时收敛取消选中数（右端固定最后一段），避免仅剩的段号被整条置灰
+  const hide = Math.min(row._segHide || 0, Math.max(0, visibleSegs.length - 1));
   nav.hidden = false;
+  nav.classList.toggle('few', visibleSegs.length < 3); // 1~2 段：每段占 1/3，右侧留白
   nav.classList.toggle('dense', visibleSegs.length > 14); // 段多时缩小字号
   // 段数超过每行上限时换行（每行 SEG_NAV_PER_ROW 个，后续行按钮宽度与第一行一致）
   nav.classList.toggle('wrap', visibleSegs.length > SEG_NAV_PER_ROW);
@@ -3742,8 +3758,12 @@ async function refreshIndexQuotes() {
     if (state._hangqingExtras && state._hangqingExtras.length) {
       codes.push(...state._hangqingExtras.map((s) => s.code));
     }
-    const results = await fetchRealtimeMulti(codes);
-    state.indexQuotes = results || {};
+    const [results, usQuotes] = await Promise.all([
+      fetchRealtimeMulti(codes).catch(() => null),
+      state.hqMarket === 'us' ? fetchUsIndexQuotes().catch(() => null) : null,
+    ]);
+    if (results) state.indexQuotes = results;
+    if (usQuotes) state.usQuotes = usQuotes;
     renderHangqingView();
   } catch {}
 }
@@ -4568,7 +4588,7 @@ function switchTab(name) {
   });
 
   if (name === 'dingpan') renderDingpanView();
-  if (name === 'hangqing') { renderHangqingView(); startIndexRealtime(); }
+  if (name === 'hangqing') { renderHangqingView(); startIndexRealtime(); maybeRefreshMarketBreadth(true); }
   if (name === 'alert') renderAlertView();
   if (name === 'workbench') renderWorkbenchView();
   if (name === 'wo') renderWoView();
@@ -4587,6 +4607,8 @@ function switchTab(name) {
 function renderHangqingView() {
   const el = $('#hangqing-view');
   if (!el) return;
+  // 手势拖拽/翻页动画中不重建，避免打断；下一次 5s 轮询会补上
+  if (state._hqDragging) return;
 
   const cards = INDEX_CODES.map((idx) => {
     const rt = state.indexQuotes[idx.code];
@@ -4635,11 +4657,28 @@ function renderHangqingView() {
       </div>`;
   }).join('');
 
-  el.innerHTML = `<div class='index-grid' id='hg-cards'>${cards}${extraCards}</div><div id='hg-search-results' class='hg-search-results' hidden></div>`;
+  const cnPage = `<div class='index-grid' id='hg-cards'>${cards}${extraCards}</div>`
+    + `<div id='hg-breadth' class='hg-breadth'>${renderMarketBreadthHtml()}</div>`
+    + `<div id='hg-search-results' class='hg-search-results' hidden></div>`;
+
+  // 左右翻页：左页 = A 股指数（默认），右页 = 美股指数。左滑揭示右页的美股。
+  // 切换标记固定悬浮在底部菜单栏之上（必须在 track 之外：track 带 transform，
+  // 会成为 fixed 子元素的包含块，导致标记跟着页面一起横向滑动）
+  el.innerHTML = `<div class='hg-track' id='hg-track'>`
+    + `<div class='hg-page'>${cnPage}</div>`
+    + `<div class='hg-page'>${renderUsPageHtml()}</div>`
+    + `</div>`
+    + `<div class='hg-pager'>`
+    + `<span class='hg-dot' data-mkt='cn' role='button' aria-label='A股指数'></span>`
+    + `<span class='hg-dot' data-mkt='us' role='button' aria-label='美股指数'></span>`
+    + `</div>`;
+  applyHqTrack(false);
+  applyHqPager();
 
   attachMarketSearchResults();
   // 绑定自定义卡片的长按删除
   attachHangqingLongPress();
+  attachHqSwipe();
 
   // 若正处于行情搜索态，保留搜索结果（避免 5s 指数刷新覆盖）
   const hq = (state.searchQuery || '').trim();
@@ -4675,6 +4714,305 @@ function renderHangqingView() {
   loadIndexIntraday();
   // 异步拉取自定证券分时数据（有缓存则同步绘制）
   extras.forEach((s) => loadExtrasIntraday(s.code));
+  // 美股页：先用缓存补绘，仅在美股页可见时才请求（省流量）
+  paintUsIntraday();
+  if (state.hqMarket === 'us') loadUsIndexIntraday();
+  // 涨跌分布 / 两市成交额：跟随 5s 指数轮询，内部 30s 节流（美股页不刷新）
+  if (state.hqMarket === 'cn') maybeRefreshMarketBreadth();
+}
+
+// ========== 行情页翻页：左页美股 / 右页 A 股 ==========
+// 手势：向右滑揭示左页（美股），向左滑回 A 股；翻页条同理。
+function hqTrackOffset() {
+  // 左页 A 股（0%），右页美股（-50%）
+  return state.hqMarket === 'us' ? '-50%' : '0%';
+}
+
+function applyHqTrack(animate, extraPx) {
+  const t = document.getElementById('hg-track');
+  if (!t) return;
+  const base = hqTrackOffset();
+  const tx = extraPx ? `calc(${base} + ${extraPx}px)` : base;
+  if (animate) {
+    t.classList.add('animating');
+    t.style.transform = `translateX(${tx})`;
+    setTimeout(() => t.classList.remove('animating'), 280);
+  } else {
+    t.classList.remove('animating');
+    t.style.transform = `translateX(${tx})`;
+  }
+}
+
+// 切换标记在每页底部各有一份，统一刷新高亮
+function applyHqPager() {
+  const el = document.getElementById('hangqing-view');
+  if (!el) return;
+  el.querySelectorAll('.hg-dot').forEach((d) => {
+    d.classList.toggle('active', d.dataset.mkt === state.hqMarket);
+  });
+}
+
+function switchHqMarket(mkt, animate) {
+  if (mkt !== 'cn' && mkt !== 'us') return;
+  state.hqMarket = mkt;
+  applyHqTrack(!!animate);
+  applyHqPager();
+  if (mkt === 'us') {
+    paintUsIntraday();
+    loadUsIndexIntraday();
+  } else {
+    repaintHangqingIntraday();
+  }
+}
+
+// 横向滑动翻页（不抢纵向滚动：先判方向，纵向让给页面滚动）
+// 监听挂在 document 上：内容之外的空白区（页面底部、卡片右侧留白）也能翻页，
+// 用 activeTab/元素类型做白名单过滤，只在行情页生效。
+function attachHqSwipe() {
+  if (document._hqSwipeBound) return;
+  document._hqSwipeBound = true;
+  let pid = null, sx = 0, sy = 0, dx = 0, lastX = 0, lastT = 0, vx = 0;
+  let active = false, decided = false;
+
+  // 起点是否算「行情页的可翻页区域」
+  const allowStart = (target) => {
+    if (state.activeTab !== 'hangqing') return false;
+    if (state.searchMode === 'hangqing') return false;            // 搜索态不翻页
+    if (!target || typeof target.closest !== 'function') return false;
+    if (target.closest('.wx-header, .wx-tabbar, .hg-dot')) return false;
+    if (window.__hasActivePopup && window.__hasActivePopup()) return false; // 弹层打开时不翻页
+    return true;
+  };
+
+  document.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    if (!allowStart(e.target)) return;
+    pid = e.pointerId; sx = e.clientX; sy = e.clientY;
+    lastX = sx; lastT = e.timeStamp; vx = 0; dx = 0;
+    active = true; decided = false;
+  });
+
+  document.addEventListener('pointermove', (e) => {
+    if (!active || e.pointerId !== pid) return;
+    dx = e.clientX - sx;
+    const dy = e.clientY - sy;
+    if (!decided) {
+      if (Math.abs(dx) < 8 && Math.abs(dy) < 8) return;
+      if (Math.abs(dy) > Math.abs(dx)) { active = false; return; } // 纵向滚动
+      decided = true;
+      state._hqDragging = true;
+    }
+    const dt = Math.max(1, e.timeStamp - lastT);
+    vx = (e.clientX - lastX) / dt;
+    lastX = e.clientX; lastT = e.timeStamp;
+    // 越界（A 股页再右滑 / 美股页再左滑）阻尼减半
+    const d = (state.hqMarket === 'cn' && dx > 0) || (state.hqMarket === 'us' && dx < 0) ? dx * 0.35 : dx;
+    applyHqTrack(false, d);
+  });
+
+  const finish = () => {
+    if (!active) return;
+    active = false;
+    if (!decided) return;
+    decided = false;
+    state._hqDragging = false;
+    const commit = Math.abs(dx) > 60 || (Math.abs(vx) > 0.4 && Math.abs(dx) > 24);
+    let next = state.hqMarket;
+    if (commit) next = dx < 0 ? 'us' : 'cn'; // 左滑进美股，右滑回 A 股
+    switchHqMarket(next, true);
+  };
+  document.addEventListener('pointerup', (e) => { if (e.pointerId === pid) finish(); });
+  document.addEventListener('pointercancel', (e) => {
+    if (!active || e.pointerId !== pid) return;
+    active = false;
+    if (decided) { decided = false; state._hqDragging = false; switchHqMarket(state.hqMarket, true); }
+  });
+
+  // 翻页圆点：点击直接切换
+  document.addEventListener('click', (e) => {
+    const dot = e.target.closest && e.target.closest('.hg-dot');
+    if (!dot) return;
+    if (state.activeTab !== 'hangqing') return;
+    switchHqMarket(dot.dataset.mkt, true);
+  });
+}
+
+function renderUsPageHtml() {
+  const cards = US_INDEX_LIST.map((it) => {
+    const q = state.usQuotes[it.code];
+    const price = q && Number.isFinite(q.price) ? q.price.toFixed(2) : '—';
+    const pct = q && Number.isFinite(q.pct) ? q.pct : null;
+    const cls = pct == null ? '' : pct > 0 ? 'up' : pct < 0 ? 'down' : '';
+    const text = pct == null ? '—' : `${pct > 0 ? '+' : pct < 0 ? '' : ''}${pct.toFixed(2)}%`;
+    return `
+      <div class='index-card' data-code='${it.code}'>
+        <div class='index-card-head'>
+          <div class='index-name'>${it.label}</div>
+          <div class='index-code-row'>
+            <span class='index-code'>${it.code}</span>
+            <span class='index-change ${cls}'>${text}</span>
+          </div>
+        </div>
+        <div class='index-card-price'>
+          <div class='index-price'>${price}</div>
+        </div>
+        <div class='index-card-chart'>
+          <canvas class='index-intraday us-intraday' data-code='${it.secid}'></canvas>
+        </div>
+      </div>`;
+  }).join('');
+  return `<div class='index-grid' id='hg-us-cards'>${cards}</div>`;
+}
+
+function paintUsIntraday() {
+  for (const it of US_INDEX_LIST) {
+    const c = state.usIntraday[it.secid];
+    if (!c) continue;
+    const canvas = document.querySelector(`.us-intraday[data-code="${it.secid}"]`);
+    if (canvas) renderIndexIntraday(canvas, c);
+  }
+}
+
+async function loadUsIndexIntraday() {
+  for (const it of US_INDEX_LIST) {
+    const canvas = document.querySelector(`.us-intraday[data-code="${it.secid}"]`);
+    if (!canvas) continue;
+    try {
+      const cached = state.usIntraday[it.secid];
+      const now = Date.now();
+      if (cached && now - (cached.fetchedAt || 0) < 60000) {
+        renderIndexIntraday(canvas, cached);
+        continue;
+      }
+      const c = await fetchUsIndexIntraday(it.secid);
+      const data = { ...c, linearX: true, fetchedAt: now };
+      state.usIntraday[it.secid] = data;
+      renderIndexIntraday(canvas, data);
+    } catch (e) {
+      console.warn('loadUsIndexIntraday failed', it.secid, e);
+    }
+  }
+}
+
+// ========== 行情页底部：涨跌分布 + 成交量 ==========
+// 数据源：东方财富（全量 A 股涨跌幅统计 / 三市成交额），见 fetcher.js
+// 渲染策略：先用 state 缓存同步出图（避免 5s 重绘时闪烁），再按节流异步刷新并只替换本区块。
+// 刷新节奏：交易时段 10s（跟行情页实时涨跌分布一致）；非交易时段 5min（数据不再变化）。
+const BREADTH_MS_TRADING = 10000;
+const BREADTH_MS_IDLE = 300000;
+
+// 是否处于 A 股交易时段（含集合竞价与尾盘，不含节假日判断）
+function isTradingSession(now = new Date()) {
+  const day = now.getDay();
+  if (day === 0 || day === 6) return false;
+  const hm = now.getHours() * 60 + now.getMinutes();
+  return (hm >= 9 * 60 + 15 && hm <= 11 * 60 + 30) || (hm >= 13 * 60 && hm <= 15 * 60 + 5);
+}
+
+async function maybeRefreshMarketBreadth(force) {
+  if (state.activeTab !== 'hangqing') return;
+  if (typeof document !== 'undefined' && document.hidden) return; // 页面不可见时不刷新
+  const now = Date.now();
+  const gap = isTradingSession() ? BREADTH_MS_TRADING : BREADTH_MS_IDLE;
+  if (!force && now - (state._breadthAt || 0) < gap) return;
+  if (state._breadthLoading) return;
+  state._breadthLoading = true;
+  try {
+    const [b, a] = await Promise.all([
+      fetchMarketBreadth().catch(() => null),
+      fetchMarketAmount().catch(() => null),
+    ]);
+    if (b) state.marketBreadth = b;
+    if (a) state.marketAmount = a;
+    state._breadthErr = !(state.marketBreadth || state.marketAmount);
+    state._breadthAt = Date.now();
+  } catch (e) {
+    state._breadthErr = true;
+    state._breadthAt = Date.now(); // 失败也节流，避免每 5s 重试
+  } finally {
+    state._breadthLoading = false;
+  }
+  const box = document.getElementById('hg-breadth');
+  if (box) box.innerHTML = renderMarketBreadthHtml();
+}
+
+function fmtAmountYi(yuan) {
+  if (!Number.isFinite(yuan) || yuan <= 0) return '—';
+  const yi = yuan / 1e8;
+  return yi >= 1000 ? String(Math.round(yi)) : yi.toFixed(1);
+}
+
+// 从后台切回前台：立即补一次（节流判定在函数内部，刚刷新过则跳过）
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) maybeRefreshMarketBreadth();
+});
+
+function renderMarketBreadthHtml() {
+  const b = state.marketBreadth;
+  const a = state.marketAmount;
+  if (!b && !a) {
+    const txt = state._breadthErr ? '涨跌分布 / 成交额 暂不可用' : '涨跌分布 / 成交额 加载中…';
+    return `<div class='hg-bd-card'><div class='hg-bd-empty'>${txt}</div></div>`;
+  }
+
+  let chartHtml = '';
+  let headHtml = '';
+  if (b) {
+    // 卡片右上角一行汇总：涨:平:跌
+    headHtml = `<div class='hg-bd-head'><span class='hg-bd-sum'>涨跌分布`
+      + ` <b class='up'>${b.up}</b><span class='sep'>:</span>`
+      + `<b class='flat'>${b.flat}</b><span class='sep'>:</span>`
+      + `<b class='down'>${b.down}</b></span></div>`;
+    const max = Math.max(1, ...b.buckets.map((x) => x.value));
+    chartHtml = `<div class='hg-bd-chart'>` + b.buckets.map((x) => {
+      // 最小 4px：非零但很小的档位也要看得见
+      const h = x.value > 0 ? Math.max(4, Math.round((x.value / max) * 76)) : 0;
+      const dir = x.dir > 0 ? 'up' : x.dir < 0 ? 'down' : 'flat';
+      return `<div class='hg-bd-col ${dir}' data-lv='${x.lv}'>`
+        + `<div class='hg-bd-val'>${x.value}</div>`
+        + `<div class='hg-bd-bar' style='height:${h}px'></div>`
+        + `<div class='hg-bd-lab'>${x.label}</div>`
+        + `</div>`;
+    }).join('') + `</div>`;
+  }
+
+  let ratioHtml = '';
+  if (b) {
+    const total = b.up + b.down + b.flat || 1;
+    const upW = (b.up / total) * 100;
+    const flatW = (b.flat / total) * 100;
+    ratioHtml = `<div class='hg-bd-ratio'>`
+      + `<span class='hg-bd-seg up' style='width:${upW.toFixed(2)}%'></span>`
+      + `<span class='hg-bd-seg flat' style='width:${flatW.toFixed(2)}%'></span>`
+      + `<span class='hg-bd-seg down'></span>`
+      + `</div>`
+      + `<div class='hg-bd-counts'>`
+      + `<span class='up'>↑ 涨 ${b.up} 家</span>`
+      + `<span class='down'>跌 ${b.down} 家 ↓</span>`
+      + `</div>`;
+  }
+
+  let amtHtml = '';
+  if (a) {
+    let sub = '';
+    if (a.total > 0 && Number.isFinite(a.prevSame) && a.prevSame > 0) {
+      const d = a.total - a.prevSame;
+      const pct = (d / a.prevSame) * 100;
+      const word = Math.abs(d) < 1e6 ? '持平' : d > 0 ? '放量' : '缩量';
+      const cls = d > 0 ? 'up' : d < 0 ? 'down' : '';
+      const sign = d > 0 ? '+' : d < 0 ? '-' : '';
+      sub = `<span class='hg-bd-amt-sub'>较前一日同期 `
+        + `<b class='${cls}'>${word}${Math.round(Math.abs(d) / 1e8)}亿 ${sign}${Math.abs(pct).toFixed(2)}%</b></span>`;
+    }
+    const totalTxt = fmtAmountYi(a.total);
+    amtHtml = `<div class='hg-bd-amt'>`
+      + `<span class='hg-bd-amt-label'>三市成交额</span>`
+      + `<span class='hg-bd-amt-val'>${totalTxt === '—' ? '—' : totalTxt + '亿'}</span>`
+      + sub
+      + `</div>`;
+  }
+
+  return `<div class='hg-bd-card'>${headHtml}${chartHtml}${ratioHtml}${amtHtml}</div>`;
 }
 
 // 为自定义证券拉取分时数据
@@ -4752,8 +5090,10 @@ function renderIndexIntraday(canvas, c) {
   canvas._intradayPrevClose = c.prevClose;
   canvas._intradayDayStart = c.dayStart;
   canvas._intradayDayEnd = c.dayEnd;
-  canvas._intradayOpts = { height: 56 };
-  renderIntradayChart(canvas, c.bars, c.prevClose, { dayStart: c.dayStart, dayEnd: c.dayEnd, height: 56 });
+  // linearX：美股为连续交易时段，x 轴按时间线性铺满（A 股仍需剔除午休）
+  const opts = { height: 56, linearX: !!c.linearX };
+  canvas._intradayOpts = opts;
+  renderIntradayChart(canvas, c.bars, c.prevClose, { dayStart: c.dayStart, dayEnd: c.dayEnd, ...opts });
 }
 
 // 重绘所有 hangqing 视图内已缓存的分时图（用于搜索态切换回正常态后补绘）
@@ -5667,11 +6007,15 @@ async function searchByEastMoney(kw) {
 function renderMarketResults(items) {
   const results = document.getElementById('hg-search-results');
   const cards = document.getElementById('hg-cards');
+  const breadth = document.getElementById('hg-breadth');
+  const pager = document.querySelector('#hangqing-view .hg-pager');
   if (!results) return;
   state._marketResults = items;
   if (items === 'loading') {
     results.hidden = false;
     if (cards) cards.style.display = 'none';
+    if (breadth) breadth.style.display = 'none';
+    if (pager) pager.hidden = true;
     results.innerHTML = '<div class="hg-tip">搜索中…</div>';
     return;
   }
@@ -5679,10 +6023,14 @@ function renderMarketResults(items) {
     results.hidden = true;
     results.innerHTML = '';
     if (cards) cards.style.display = '';
+    if (breadth) breadth.style.display = '';
+    if (pager) pager.hidden = false;
     return;
   }
   results.hidden = false;
   if (cards) cards.style.display = 'none';
+  if (breadth) breadth.style.display = 'none';
+  if (pager) pager.hidden = true;
   if (!items.length) {
     results.innerHTML = '<div class="hg-tip">未找到匹配的 A 股证券，可尝试输入 6 位代码</div>';
     return;
@@ -5767,6 +6115,8 @@ function openHeaderSearch(tab) {
     input.value = '';
     input.placeholder = tab === 'hangqing' ? '搜索 A 股代码/名称，添加证券' : '搜索当前证券';
     if (tab === 'hangqing') {
+      // 搜索只针对 A 股页：若当前停在美股页，先翻回 A 股页
+      if (state.hqMarket !== 'cn') switchHqMarket('cn', false);
       state._marketResults = null;
       renderMarketResults(null);
     } else {
