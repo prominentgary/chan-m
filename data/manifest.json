@@ -54,9 +54,12 @@
         "1m",
         "5m",
         "15m",
+        "30m",
+        "60m",
+        "day",
         "week"
       ],
-      "a0Period": "1m",
+      "a0Period": "5m",
       "presets": [
         {
           "id": "default",

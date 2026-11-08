@@ -210,12 +210,14 @@ export function formatPrice(code, price) {
 // ---- 大盘涨跌分布（沪深京 A 股全量统计，口径对齐东方财富行情页）----
 // 说明：push2ex 的 getTopicZDFenBu 返回的是一份更新不及时/口径不同的快照，
 // 与东财行情页上的实时涨跌分布对不上（实测收盘时 涨家数 4716 vs 4869），故不用它。
-// 这里按东财行情页的口径自己统计：拉全量 A 股（约 5600 只，100 只/页，并发 6），
+// 这里按东财行情页的口径自己统计：拉全量 A 股（约 5900 只，100 只/页，并发 10），
 // 只取 f3（涨跌幅%）分档；涨停/跌停数取东财涨停池/跌停池的 tc（与图上「涨停/跌停」一致）。
 // 分档（与东财 9 根柱一致）：涨停 / 5%以上 / 1-5% / 0-1% / 平盘 / 0-1% / 1-5% / 5%以下 / 跌停
 const A_SHARE_FS = 'm:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048';
+// 注意：clist 的 pz 硬上限是 100（实测传 6000 仍只回 100 条），只能分页拉全量。
+// 并发从 6 提到 10，约 59 页的串行波次由 10 降到 6，实测耗时约减半。
 const BREADTH_PZ = 100;
-const BREADTH_CONCURRENCY = 6;
+const BREADTH_CONCURRENCY = 10;
 
 async function fetchAsharePage(pn) {
   const url = `https://push2.eastmoney.com/api/qt/clist/get?pn=${pn}&pz=${BREADTH_PZ}&np=1&fltt=2&invt=2&fid=f3&po=1&fs=${A_SHARE_FS}&fields=f3&_=${Date.now()}`;

@@ -1,6 +1,6 @@
 // app.js —— Chan-M 入口：一键导入站点全部画线，按「证券 → 周期」展示，联网算力
 // 注意：所有 import 路径均带版本号，每次发布新版本时请同步修改 html/js/sw 中的版本号
-import { fetchBars, fetchRealtimeMulti, formatTime, formatPrice, isETF, resolveCode, fetchMarketBreadth, fetchMarketAmount, US_INDEX_LIST, fetchUsIndexQuotes, fetchUsIndexIntraday } from './fetcher.js?v=20261105g';
+import { fetchBars, fetchRealtimeMulti, formatTime, formatPrice, isETF, resolveCode, fetchMarketBreadth, fetchMarketAmount, US_INDEX_LIST, fetchUsIndexQuotes, fetchUsIndexIntraday } from './fetcher.js?v=20261106a';
 import { computeMACD } from './macd.js?v=20260725f';
 import { buildQuadBrief, pickQuadLevels } from './quad_brief.js?v=20261025a';
 import { computeHideBefore, computeHideBeforeDetail, visibleSegsOf, visibleZsOf, getHigherPeriod } from './hide.js?v=20261104a';
@@ -105,8 +105,9 @@ const state = {
   // 行情页底部：涨跌分布 + 两市成交额
   marketBreadth: null,   // fetchMarketBreadth() 结果
   marketAmount: null,    // fetchMarketAmount() 结果
-  _breadthAt: 0,         // 上次成功拉取时间戳（30s 节流，跟随 5s 指数轮询刷新）
+  _breadthAt: 0,         // 上次发起拉取的时间戳（交易时段 10s / 其余 5min 节流，跟随 5s 指数轮询刷新）
   _breadthLoading: false,
+  _amountLoading: false, // 成交额单独占位：两路各自返回、各自上屏，互不等待
   _breadthErr: false,    // 两个接口都失败时置位，用于给出「暂不可用」提示
   // 行情页左右翻页：'cn' A 股指数（默认） | 'us' 美股指数（左滑到右页揭示，右滑进入）
   hqMarket: 'cn',
@@ -4754,12 +4755,15 @@ function applyHqPager() {
 
 function switchHqMarket(mkt, animate) {
   if (mkt !== 'cn' && mkt !== 'us') return;
+  const changed = state.hqMarket !== mkt;
   state.hqMarket = mkt;
   applyHqTrack(!!animate);
   applyHqPager();
   if (mkt === 'us') {
     paintUsIntraday();
     loadUsIndexIntraday();
+    // 首次进入美股页立即补报价，不等下一轮 5s 轮询
+    if (changed) refreshUsQuotesOnly();
   } else {
     repaintHangqingIntraday();
   }
@@ -4837,8 +4841,8 @@ function attachHqSwipe() {
   });
 }
 
-function renderUsPageHtml() {
-  const cards = US_INDEX_LIST.map((it) => {
+function renderUsCardsHtml() {
+  return US_INDEX_LIST.map((it) => {
     const q = state.usQuotes[it.code];
     const price = q && Number.isFinite(q.price) ? q.price.toFixed(2) : '—';
     const pct = q && Number.isFinite(q.pct) ? q.pct : null;
@@ -4861,7 +4865,10 @@ function renderUsPageHtml() {
         </div>
       </div>`;
   }).join('');
-  return `<div class='index-grid' id='hg-us-cards'>${cards}</div>`;
+}
+
+function renderUsPageHtml() {
+  return `<div class='index-grid' id='hg-us-cards'>${renderUsCardsHtml()}</div>`;
 }
 
 function paintUsIntraday() {
@@ -4873,25 +4880,41 @@ function paintUsIntraday() {
   }
 }
 
+// 切到美股页时立即补一次报价：5s 轮询里美股报价按 hqMarket 分支，
+// 不主动补的话首帧价格要等下一轮（最长 5s 全是「—」）。
+async function refreshUsQuotesOnly() {
+  try {
+    const q = await fetchUsIndexQuotes();
+    if (q) state.usQuotes = q;
+  } catch { return; }
+  const box = document.getElementById('hg-us-cards');
+  if (box) box.innerHTML = renderUsCardsHtml();
+  // 卡片重建后 canvas 是新的，用缓存的分时数据补绘
+  paintUsIntraday();
+}
+
+// 4 个指数并发拉取（原来 for + await 串行，4 次往返叠加才出图）
 async function loadUsIndexIntraday() {
-  for (const it of US_INDEX_LIST) {
+  const now = Date.now();
+  await Promise.all(US_INDEX_LIST.map(async (it) => {
     const canvas = document.querySelector(`.us-intraday[data-code="${it.secid}"]`);
-    if (!canvas) continue;
+    if (!canvas) return;
     try {
       const cached = state.usIntraday[it.secid];
-      const now = Date.now();
       if (cached && now - (cached.fetchedAt || 0) < 60000) {
         renderIndexIntraday(canvas, cached);
-        continue;
+        return;
       }
       const c = await fetchUsIndexIntraday(it.secid);
       const data = { ...c, linearX: true, fetchedAt: now };
       state.usIntraday[it.secid] = data;
-      renderIndexIntraday(canvas, data);
+      // 请求期间 5s 轮询可能已重建 DOM，渲染前重新查询，避免画到游离的 canvas
+      const target = document.querySelector(`.us-intraday[data-code="${it.secid}"]`) || canvas;
+      renderIndexIntraday(target, data);
     } catch (e) {
       console.warn('loadUsIndexIntraday failed', it.secid, e);
     }
-  }
+  }));
 }
 
 // ========== 行情页底部：涨跌分布 + 成交量 ==========
@@ -4901,6 +4924,43 @@ async function loadUsIndexIntraday() {
 const BREADTH_MS_TRADING = 10000;
 const BREADTH_MS_IDLE = 300000;
 
+// 首屏快照：涨跌分布要拉全量 A 股（约 59 个分页请求），刷新后必然有等待。
+// 把上次结果落 localStorage，刷新时先同步出图，再后台拉最新值覆盖。
+const BREADTH_SNAPSHOT_KEY = 'chanm_market_snapshot';
+const BREADTH_SNAPSHOT_TTL = 30 * 60 * 1000; // 超过 30 分钟的快照不用于首屏，避免展示过时数据
+
+// 两路各自记录成功时间：某项长期失败时，不会因为另一项更新而延长它的有效期
+let _breadthSnapAt = 0;
+let _amountSnapAt = 0;
+
+function loadBreadthSnapshot() {
+  try {
+    const raw = localStorage.getItem(BREADTH_SNAPSHOT_KEY);
+    if (!raw) return;
+    const o = JSON.parse(raw);
+    if (!o) return;
+    const now = Date.now();
+    if (o.b && Number.isFinite(o.bAt) && now - o.bAt <= BREADTH_SNAPSHOT_TTL) {
+      state.marketBreadth = o.b;
+      _breadthSnapAt = o.bAt;
+    }
+    if (o.a && Number.isFinite(o.aAt) && now - o.aAt <= BREADTH_SNAPSHOT_TTL) {
+      state.marketAmount = o.a;
+      _amountSnapAt = o.aAt;
+    }
+  } catch { /* 隐私模式 / file:// 下 localStorage 不可用，忽略 */ }
+}
+
+function saveBreadthSnapshot() {
+  try {
+    localStorage.setItem(BREADTH_SNAPSHOT_KEY, JSON.stringify({
+      at: Date.now(),
+      b: state.marketBreadth, bAt: _breadthSnapAt,
+      a: state.marketAmount, aAt: _amountSnapAt,
+    }));
+  } catch { /* 存储不可用或超配额，忽略 */ }
+}
+
 // 是否处于 A 股交易时段（含集合竞价与尾盘，不含节假日判断）
 function isTradingSession(now = new Date()) {
   const day = now.getDay();
@@ -4909,31 +4969,48 @@ function isTradingSession(now = new Date()) {
   return (hm >= 9 * 60 + 15 && hm <= 11 * 60 + 30) || (hm >= 13 * 60 && hm <= 15 * 60 + 5);
 }
 
+// 只替换涨跌分布这一块（5s 指数轮询会全量重建行情页，故每次重新查询 DOM）
+function paintMarketBreadthBlock() {
+  if (state.activeTab !== 'hangqing') return;
+  const box = document.getElementById('hg-breadth');
+  if (box) box.innerHTML = renderMarketBreadthHtml();
+}
+
 async function maybeRefreshMarketBreadth(force) {
   if (state.activeTab !== 'hangqing') return;
   if (typeof document !== 'undefined' && document.hidden) return; // 页面不可见时不刷新
   const now = Date.now();
   const gap = isTradingSession() ? BREADTH_MS_TRADING : BREADTH_MS_IDLE;
   if (!force && now - (state._breadthAt || 0) < gap) return;
-  if (state._breadthLoading) return;
-  state._breadthLoading = true;
-  try {
-    const [b, a] = await Promise.all([
-      fetchMarketBreadth().catch(() => null),
-      fetchMarketAmount().catch(() => null),
-    ]);
-    if (b) state.marketBreadth = b;
-    if (a) state.marketAmount = a;
-    state._breadthErr = !(state.marketBreadth || state.marketAmount);
-    state._breadthAt = Date.now();
-  } catch (e) {
-    state._breadthErr = true;
-    state._breadthAt = Date.now(); // 失败也节流，避免每 5s 重试
-  } finally {
-    state._breadthLoading = false;
+
+  // 两路各自独立：谁先回来谁先上屏。成交额只需 1 次 ulist（毫秒级），
+  // 涨跌分布要拉全量 A 股，不再把它绑在同一个 Promise.all 上一起等。
+  // 发起时即写 _breadthAt：请求进行中或失败都不会被 5s 轮询反复触发。
+  state._breadthAt = now;
+
+  if (!state._breadthLoading) {
+    state._breadthLoading = true;
+    fetchMarketBreadth()
+      .then((b) => { if (b) { state.marketBreadth = b; _breadthSnapAt = Date.now(); saveBreadthSnapshot(); } })
+      .catch(() => {})
+      .finally(() => {
+        state._breadthLoading = false;
+        state._breadthErr = !(state.marketBreadth || state.marketAmount);
+        paintMarketBreadthBlock();
+      });
   }
-  const box = document.getElementById('hg-breadth');
-  if (box) box.innerHTML = renderMarketBreadthHtml();
+
+  if (!state._amountLoading) {
+    state._amountLoading = true;
+    fetchMarketAmount()
+      .then((a) => { if (a) { state.marketAmount = a; _amountSnapAt = Date.now(); saveBreadthSnapshot(); } })
+      .catch(() => {})
+      .finally(() => {
+        state._amountLoading = false;
+        state._breadthErr = !(state.marketBreadth || state.marketAmount);
+        paintMarketBreadthBlock();
+      });
+  }
 }
 
 function fmtAmountYi(yuan) {
@@ -4974,6 +5051,10 @@ function renderMarketBreadthHtml() {
         + `<div class='hg-bd-lab'>${x.label}</div>`
         + `</div>`;
     }).join('') + `</div>`;
+  } else {
+    // 涨跌分布还没回来（成交额可能已经到了）：本块单独占位，不拖累成交额
+    headHtml = `<div class='hg-bd-head'><span class='hg-bd-sum'>涨跌分布</span></div>`;
+    chartHtml = `<div class='hg-bd-empty'>加载中…</div>`;
   }
 
   let ratioHtml = '';
@@ -5009,6 +5090,11 @@ function renderMarketBreadthHtml() {
       + `<span class='hg-bd-amt-label'>三市成交额</span>`
       + `<span class='hg-bd-amt-val'>${totalTxt === '—' ? '—' : totalTxt + '亿'}</span>`
       + sub
+      + `</div>`;
+  } else {
+    amtHtml = `<div class='hg-bd-amt'>`
+      + `<span class='hg-bd-amt-label'>三市成交额</span>`
+      + `<span>加载中…</span>`
       + `</div>`;
   }
 
@@ -6248,6 +6334,8 @@ function init() {
 
   // 行情页用户自定义证券：从 localStorage 恢复
   state._hangqingExtras = loadHangqingExtras();
+  // 涨跌分布/成交额上次快照：先同步出图，避免刷新后长时间停在「加载中…」
+  loadBreadthSnapshot();
 
   // 先校准 tabbar 视口位置，再渲染首屏；避免小米等机型首屏时 bottom 计算延迟
   initTabbarViewportFix();
@@ -6266,7 +6354,7 @@ function init() {
 
   if ('serviceWorker' in navigator && !window.__CHANM_NOCACHE__) {
     navigator.serviceWorker.addEventListener('controllerchange', () => location.reload());
-    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js?v=20260725i').catch(() => {}));
+    window.addEventListener('load', () => navigator.serviceWorker.register('sw.js?v=20261106a').catch(() => {}));
   }
 
   // 搜索模式下：屏幕内任意横向滑动（>60px）即可关闭搜索框，无需点 ✕
