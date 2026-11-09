@@ -1,7 +1,7 @@
 {
   "code": "sz399006",
   "period": "day",
-  "exportedAt": 1794153526537,
+  "exportedAt": 1794238926626,
   "segments": [
     {
       "id": "s_rrdcfiv1",
@@ -32,7 +32,7 @@
       }
     },
     {
-      "id": "s_hlsmxi9x",
+      "id": "s_9b6gt4us",
       "kind": "segment",
       "period": "day",
       "direction": "down",
@@ -46,7 +46,7 @@
       }
     },
     {
-      "id": "s_7kvzf0tw",
+      "id": "s_8h4p7zli",
       "kind": "segment",
       "period": "day",
       "direction": "up",
@@ -95,7 +95,7 @@
           }
         },
         {
-          "id": "s_hlsmxi9x",
+          "id": "s_9b6gt4us",
           "kind": "segment",
           "period": "day",
           "direction": "down",
@@ -109,7 +109,7 @@
           }
         },
         {
-          "id": "s_7kvzf0tw",
+          "id": "s_8h4p7zli",
           "kind": "segment",
           "period": "day",
           "direction": "up",
@@ -130,14 +130,6 @@
   "presetName": "",
   "a0Period": "1m",
   "bars": [
-    {
-      "time": "2023-07-19",
-      "open": 2196.590087890625,
-      "high": 2201.429931640625,
-      "low": 2170.330078125,
-      "close": 2177.25,
-      "volume": 102687152.0
-    },
     {
       "time": "2023-07-20",
       "open": 2180.7099609375,
@@ -6529,6 +6521,14 @@
       "low": 2438.719970703125,
       "close": 2465.22998046875,
       "volume": 189023616.0
+    },
+    {
+      "time": "2026-11-09",
+      "open": 2494.6298828125,
+      "high": 2511.7099609375,
+      "low": 2458.010009765625,
+      "close": 2458.56005859375,
+      "volume": 172690064.0
     }
   ]
 }
