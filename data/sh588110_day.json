@@ -1,7 +1,7 @@
 {
   "code": "sh588110",
   "period": "day",
-  "exportedAt": 1794496668249,
+  "exportedAt": 1794757533433,
   "segments": [
     {
       "id": "s_qu029c3k",
@@ -58,6 +58,34 @@
         "time": 1790006400,
         "price": 0.671999990940094
       }
+    },
+    {
+      "id": "s_dzklb6m3",
+      "kind": "segment",
+      "period": "day",
+      "direction": "down",
+      "start": {
+        "time": 1790006400,
+        "price": 0.671999990940094
+      },
+      "end": {
+        "time": 1793635200,
+        "price": 0.38199999928474426
+      }
+    },
+    {
+      "id": "s_7nre475g",
+      "kind": "segment",
+      "period": "day",
+      "direction": "up",
+      "start": {
+        "time": 1793635200,
+        "price": 0.38199999928474426
+      },
+      "end": {
+        "time": 1794499200,
+        "price": 0.4519999921321869
+      }
     }
   ],
   "zhongshus": [
@@ -82,6 +110,11 @@
           "time": 1790006400,
           "price": 0.591
         }
+      ],
+      "baseSegmentIds": [
+        "s_t503vtsw",
+        "s_r52ud97o",
+        "s_9zv0kgcz"
       ]
     }
   ],
@@ -145,6 +178,34 @@
             "time": 1790006400,
             "price": 0.671999990940094
           }
+        },
+        {
+          "id": "s_dzklb6m3",
+          "kind": "segment",
+          "period": "day",
+          "direction": "down",
+          "start": {
+            "time": 1790006400,
+            "price": 0.671999990940094
+          },
+          "end": {
+            "time": 1793635200,
+            "price": 0.38199999928474426
+          }
+        },
+        {
+          "id": "s_7nre475g",
+          "kind": "segment",
+          "period": "day",
+          "direction": "up",
+          "start": {
+            "time": 1793635200,
+            "price": 0.38199999928474426
+          },
+          "end": {
+            "time": 1794499200,
+            "price": 0.4519999921321869
+          }
         }
       ],
       "zhongshus": [
@@ -169,6 +230,11 @@
               "time": 1790006400,
               "price": 0.591
             }
+          ],
+          "baseSegmentIds": [
+            "s_t503vtsw",
+            "s_r52ud97o",
+            "s_9zv0kgcz"
           ]
         }
       ]
@@ -6424,6 +6490,14 @@
       "low": 0.43700000643730164,
       "close": 0.4399999976158142,
       "volume": 146352912.0
+    },
+    {
+      "time": "2026-11-13",
+      "open": 0.4440000057220459,
+      "high": 0.4519999921321869,
+      "low": 0.4169999957084656,
+      "close": 0.41999998688697815,
+      "volume": 242770208.0
     }
   ]
 }
