@@ -1,8 +1,8 @@
 {
   "securities": [
     {
-      "code": "sh000001",
-      "name": "上证指数",
+      "code": "sh588110",
+      "name": "科创成长",
       "periods": [
         "1m",
         "5m",
@@ -19,30 +19,7 @@
           "name": ""
         },
         {
-          "id": "preset_chf5cp9r",
-          "name": "中枢视角"
-        },
-        {
-          "id": "preset_64ou40pm",
-          "name": ""
-        }
-      ]
-    },
-    {
-      "code": "sz399006",
-      "name": "创业板指",
-      "periods": [
-        "1m",
-        "5m",
-        "15m",
-        "30m",
-        "60m",
-        "day"
-      ],
-      "a0Period": "1m",
-      "presets": [
-        {
-          "id": "default",
+          "id": "preset_nt8uyzl7",
           "name": ""
         }
       ]
@@ -68,8 +45,27 @@
       ]
     },
     {
-      "code": "sh588110",
-      "name": "科创成长",
+      "code": "sz399006",
+      "name": "创业板指",
+      "periods": [
+        "1m",
+        "5m",
+        "15m",
+        "30m",
+        "60m",
+        "day"
+      ],
+      "a0Period": "1m",
+      "presets": [
+        {
+          "id": "default",
+          "name": ""
+        }
+      ]
+    },
+    {
+      "code": "sh000001",
+      "name": "上证指数",
       "periods": [
         "1m",
         "5m",
@@ -86,30 +82,11 @@
           "name": ""
         },
         {
-          "id": "preset_nt8uyzl7",
-          "name": ""
-        }
-      ]
-    },
-    {
-      "code": "sh589850",
-      "name": "科创东财",
-      "periods": [
-        "1m",
-        "5m",
-        "15m",
-        "30m",
-        "60m",
-        "day"
-      ],
-      "a0Period": "1m",
-      "presets": [
-        {
-          "id": "default",
-          "name": ""
+          "id": "preset_chf5cp9r",
+          "name": "中枢视角"
         },
         {
-          "id": "preset_qjqejzbw",
+          "id": "preset_64ou40pm",
           "name": ""
         }
       ]
